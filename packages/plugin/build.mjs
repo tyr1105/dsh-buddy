@@ -45,7 +45,7 @@ report('lib/index.js')
 
 // 2) 界面半边：浏览器 CJS，React 四件套 external（运行时由 DSH 基座模块表提供）。
 //    banner/footer 把产物包成 window.__ModuleLoader__.load({ id, factory: function (require) { … } })。
-const clientBanner = `window.__ModuleLoader__.load({ id: 'dsh-agent-hub', factory: function (require) { var module = { exports: {} }; var exports = module.exports;`
+const clientBanner = `window.__ModuleLoader__.load({ id: '@tyr1105/dsh-buddy', factory: function (require) { var module = { exports: {} }; var exports = module.exports;`
 const clientFooter = `return module.exports } })`
 
 await build({

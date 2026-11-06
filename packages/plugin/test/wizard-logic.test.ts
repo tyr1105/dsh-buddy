@@ -118,7 +118,7 @@ describe('向导：草稿持久化（读写 try/catch，测试注入内存版 st
   })
   it('坏草稿读回 null（不把向导卡死）', () => {
     const store = memoryStorage()
-    store.setItem('dsh-agent-hub:wizard-draft:v1', '{oops')
+    store.setItem('dsh-buddy:wizard-draft:v1', '{oops')
     expect(loadDraft(store)).toBeNull()
   })
   it('storage 为 null（隐私模式）也不抛错', () => {

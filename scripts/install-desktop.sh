@@ -29,8 +29,8 @@ if [ ! -f "$PLUGIN_DIR/package.json" ]; then
   echo "[install] 请确认本脚本位于 agent-hub/scripts/ 目录中，或重新运行 scripts/make-entrypoints.sh 生成入口。"
   exit 1
 fi
-if ! grep -q '"name": *"dsh-agent-hub"' "$PLUGIN_DIR/package.json"; then
-  echo "[install] $PLUGIN_DIR/package.json 的 name 不是 dsh-agent-hub，这不是本项目的插件目录。"
+if ! grep -q '"name": *"@tyr1105/dsh-buddy"' "$PLUGIN_DIR/package.json"; then
+  echo "[install] $PLUGIN_DIR/package.json 的 name 不是 dsh-buddy，这不是本项目的插件目录。"
   exit 1
 fi
 
@@ -39,12 +39,12 @@ fi
 echo "[install] 正在构建插件……"
 BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/agent-hub-build.XXXXXX")"
 trap 'rm -f "$BUILD_LOG"' EXIT
-if ! (cd "$ROOT" && pnpm --filter dsh-agent-hub build) 2>&1 | tee "$BUILD_LOG"; then
+if ! (cd "$ROOT" && pnpm --filter @tyr1105/dsh-buddy build) 2>&1 | tee "$BUILD_LOG"; then
   echo "[install] 构建失败。上面的输出是 pnpm 的原始错误。"
   exit 1
 fi
 if grep -q "No projects found" "$BUILD_LOG"; then
-  echo "[install] 构建失败：pnpm 在 $ROOT 下找不到 dsh-agent-hub 项目（No projects found）。"
+  echo "[install] 构建失败：pnpm 在 $ROOT 下找不到 dsh-buddy 项目（No projects found）。"
   echo "[install] 请确认本脚本位于 agent-hub/scripts/ 目录中，或重新运行 scripts/make-entrypoints.sh 生成入口。"
   exit 1
 fi

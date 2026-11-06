@@ -1,5 +1,5 @@
 /**
- * dsh-agent-hub 界面半边入口：注册左栏「队友」入口与中栏三栏页面，建立唯一的
+ * dsh-buddy 界面半边入口：注册左栏「队友」入口与中栏三栏页面，建立唯一的
  * 数据仓库与一条 SSE 连接。样式在 apply 的 ctx.effect 里插入并返回移除函数
  * （官方作者规范：factory 无副作用，verified-T5 Q1-4）。
  * D03 新增：shell.overlay 上的 4 秒应用内提示（新 P0/P1 收件箱项，照 verified-T5
@@ -66,11 +66,11 @@ export function apply(ctx: any): void {
   try {
     ctx.effect(() => {
       const tag = document.createElement('style')
-      tag.dataset.plugin = 'dsh-agent-hub'
+      tag.dataset.plugin = 'dsh-buddy'
       tag.textContent = css
       document.head.appendChild(tag)
       return () => tag.remove()
-    }, 'dsh-agent-hub: styles')
+    }, 'dsh-buddy: styles')
   } catch (error) {
     console.error('[agent-hub] 插入样式失败:', error)
   }
@@ -81,7 +81,7 @@ export function apply(ctx: any): void {
       const close = connectEvents(hub)
       void hub.refreshAll()
       return close
-    }, 'dsh-agent-hub: sse')
+    }, 'dsh-buddy: sse')
     ctx.on('connection/reset', () => { void hub.refreshAll() })
   } catch (error) {
     console.error('[agent-hub] 建立推送连接失败:', error)
@@ -106,7 +106,7 @@ export function apply(ctx: any): void {
   // 5) 应用内提示（shell.overlay，list 插槽；照官方 toast 做法，verified-T5 Q4-2）。
   try {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
-      { name: 'shell.overlay', id: 'dsh-agent-hub-toast', order: 100 },
+      { name: 'shell.overlay', id: 'dsh-buddy-toast', order: 100 },
       () => HubToastOverlay({ hub, clientCtx: ctx }),
     ))
   } catch (error) {

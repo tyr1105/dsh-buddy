@@ -2,7 +2,7 @@
 
 ## 这是什么
 
-「DSH 版 Grok Bot」：在 DSH（DeepSeek Harness 桌面版）里养一群常驻、有名字、各有长期目标的机器人队友。中心插件 `dsh-agent-hub` 在 DSH 宿主进程里零成本地替它们盯着世界，评估出「有理由」才唤醒对应机器人的会话去想、去做；机器人想完自己决定下次什么时候再想、盯什么、要不要找主人。主人在一个像发短信的对话线程里和每个机器人说话，只在审批、提问、告警时被打扰。不是定时任务：主人从不设闹钟。
+「DSH 版 Grok Bot」：在 DSH（DeepSeek Harness 桌面版）里养一群常驻、有名字、各有长期目标的机器人队友。中心插件 `dsh-buddy` 在 DSH 宿主进程里零成本地替它们盯着世界，评估出「有理由」才唤醒对应机器人的会话去想、去做；机器人想完自己决定下次什么时候再想、盯什么、要不要找主人。主人在一个像发短信的对话线程里和每个机器人说话，只在审批、提问、告警时被打扰。不是定时任务：主人从不设闹钟。
 
 唯一权威的实现规格：`docs/build-spec.md`。设计背景（只读参考）：`docs/design/`（PRD 在 `docs/design/prd/spine.md`，DSH 接口手册在 `docs/design/build/dsh-plugin-handbook.md`）。
 
@@ -11,7 +11,7 @@
 | 目录 | 负责方 | 内容 |
 |---|---|---|
 | `packages/core/` | Codex（GPT） | 主动性引擎核心：纯 TypeScript，**不得 import 任何 DSH 包**；时间、文件、网络、子进程、宿主全部经注入接口访问；全部逻辑可单测、可仿真 |
-| `packages/plugin/` | DSH | DSH 插件 `dsh-agent-hub`：宿主半边（把 core 接到 DSH 会话、工具、钩子、权限档）与界面半边（总览、机器人线程、收件箱等） |
+| `packages/plugin/` | DSH | DSH 插件 `dsh-buddy`：宿主半边（把 core 接到 DSH 会话、工具、钩子、权限档）与界面半边（总览、机器人线程、收件箱等） |
 | `docs/tasks/` | 总控 Claude | 任务卡，**只读** |
 | `docs/build-spec.md` | 总控 Claude | 实现规格，**只读** |
 | `docs/progress/` | 实现方 | 每张卡一份进度记录 |

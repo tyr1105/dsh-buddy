@@ -1,5 +1,5 @@
-# 组合包补丁：把 dsh-agent-hub 插件插入 Loader 树（写法照官方 dsh-net-tuning 样板）。
+# 组合包补丁：把 dsh-buddy 插件插入 Loader 树（写法照官方 dsh-net-tuning 样板）。
 # 文件必须是顶层 YAML 数组；id 全局唯一且不与官方 required id 冲突。
 - insert:
     - id: agent-hub
-      name: dsh-agent-hub
+      name: "@tyr1105/dsh-buddy"

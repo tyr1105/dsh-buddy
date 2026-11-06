@@ -95,7 +95,7 @@ export function emptyDraft(): WizardDraft {
   }
 }
 
-const DRAFT_KEY = 'dsh-agent-hub:wizard-draft:v1'
+const DRAFT_KEY = 'dsh-buddy:wizard-draft:v1'
 
 /** 可注入的持久层（默认用浏览器 localStorage；测试传内存版）。 */
 type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>

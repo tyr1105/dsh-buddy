@@ -40,7 +40,7 @@ for p in "$PORT" 18080; do
 done
 
 echo "[ui-sandbox] 构建插件……"
-(cd "$ROOT" && pnpm --filter dsh-agent-hub build) >/dev/null || { echo "[ui-sandbox] 构建失败，先跑 pnpm --filter dsh-agent-hub build 看错误"; exit 1; }
+(cd "$ROOT" && pnpm --filter @tyr1105/dsh-buddy build) >/dev/null || { echo "[ui-sandbox] 构建失败，先跑 pnpm --filter @tyr1105/dsh-buddy build 看错误"; exit 1; }
 echo "[ui-sandbox] 确保插件已装进沙箱（重复执行无害）……"
 bash "$ROOT/scripts/sandbox.sh" install >/dev/null 2>&1 || { echo "[ui-sandbox] 沙箱安装失败，先跑 bash scripts/sandbox.sh install 看错误"; exit 1; }
 

@@ -134,7 +134,7 @@ wrong_name_case() {
   fake="$(mktemp -d "${TMPDIR:-/tmp}/agent-hub-entry-wrongname.XXXXXX")"
   mkdir -p "$fake/scripts" "$fake/packages/plugin"
   cp "$ROOT/scripts/install-desktop.sh" "$fake/scripts/install-desktop.sh"
-  # 假清单：name 不是 dsh-agent-hub（模拟入口被挪到别的项目里）。
+  # 假清单：name 不是 dsh-buddy（模拟入口被挪到别的项目里）。
   printf '{ "name": "some-other-plugin", "version": "0.0.1" }\n' > "$fake/packages/plugin/package.json"
   entry="$home/.agent-hub/install.sh"
   log_dsh="$home/dsh.log"
@@ -145,7 +145,7 @@ wrong_name_case() {
     bash "$entry" > "$home/install.log" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
     fail "wrong-name：name 不对不应安装成功"
-  elif ! grep -q "name 不是 dsh-agent-hub" "$home/install.log"; then
+  elif ! grep -q "name 不是 dsh-buddy" "$home/install.log"; then
     fail "wrong-name：没有中文说明 name 不对"
   elif [ -f "$log_dsh" ]; then
     fail "wrong-name：不应调用 dsh"
@@ -157,7 +157,7 @@ wrong_name_case() {
 wrong_name_case
 
 # D07 第 26 条：卸载入口确实执行 uninstall-desktop.sh，并调用
-# `dsh plugin --profile desktop remove dsh-agent-hub`。
+# `dsh plugin --profile desktop remove dsh-buddy`。
 uninstall_entry_case() {
   local home entry log_dsh rc=0
   home="$(new_env uninstall)"
@@ -179,10 +179,10 @@ uninstall_entry_case() {
     bash "$entry" > "$home/uninstall.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
     fail "uninstall：期望成功，退出码 $rc（$(tail -2 "$home/uninstall.log" | tr '\n' ' ')）"
-  elif ! grep -q "plugin --profile desktop remove dsh-agent-hub" "$log_dsh" 2>/dev/null; then
-    fail "uninstall：没有调用 dsh 移除 dsh-agent-hub"
+  elif ! grep -q "plugin --profile desktop remove dsh-buddy" "$log_dsh" 2>/dev/null; then
+    fail "uninstall：没有调用 dsh 移除 dsh-buddy"
   else
-    pass "uninstall：入口 exec 到卸载脚本并调用 plugin --profile desktop remove dsh-agent-hub"
+    pass "uninstall：入口 exec 到卸载脚本并调用 plugin --profile desktop remove dsh-buddy"
   fi
 }
 uninstall_entry_case

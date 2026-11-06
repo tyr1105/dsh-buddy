@@ -1,5 +1,5 @@
 #!/bin/bash
-# sandbox.sh —— 在隔离沙箱里跑 dsh-agent-hub 插件，完全不碰主人的桌面版（verified-T1 Q5-e）。
+# sandbox.sh —— 在隔离沙箱里跑 dsh-buddy 插件，完全不碰主人的桌面版（verified-T1 Q5-e）。
 # 用法：bash scripts/sandbox.sh install|run|dump|remove|status
 # 原理：独立的 DSH_HOME（profiles/、sessions/、凭据、日志都在沙箱里）、独立端口、
 #       web profile（与桌面版同为 base + web-app 组合，HMR 开着，行为最接近桌面版）。
@@ -44,7 +44,7 @@ case "${1:-}" in
     "$DSH_CLI" --profile web --dump-config 2>&1 | grep -i agent-hub || true
     ;;
   remove)
-    "$DSH_CLI" plugin --profile web remove dsh-agent-hub
+    "$DSH_CLI" plugin --profile web remove dsh-buddy
     ;;
   status)
     if nc -z 127.0.0.1 "$PORT" 2>/dev/null; then
@@ -67,7 +67,7 @@ case "${1:-}" in
     # 0) 每次从干净的中心数据开始（只清沙箱里的测试数据 .sandbox/AgentHub，让冒烟可重复运行）
     rm -rf "$AGENT_HUB_ROOT"
     # 1) 先构建插件（link 安装要求 lib/index.js、lib/client.js、cordis.patch.yml 都在）。
-    (cd "$ROOT" && pnpm --filter dsh-agent-hub build)
+    (cd "$ROOT" && pnpm --filter @tyr1105/dsh-buddy build)
     # 2) 安装插件（已安装时重复 add 允许失败）。
     "$DSH_CLI" plugin --profile web add "link:$PLUGIN_DIR" || echo "[sandbox] 插件可能已安装，继续"
     # 3) 沙箱 home 补丁：默认模型指向 deepseek-official/deepseek-flash（配合假 BASE_URL），
@@ -125,7 +125,7 @@ PATCH
     prepare_dirs
     rm -rf "$AGENT_HUB_ROOT"
     # 1) 先构建插件。
-    (cd "$ROOT" && pnpm --filter dsh-agent-hub build)
+    (cd "$ROOT" && pnpm --filter @tyr1105/dsh-buddy build)
     # 2) 安装插件（已安装时重复 add 允许失败）。
     "$DSH_CLI" plugin --profile web add "link:$PLUGIN_DIR" || echo "[sandbox] 插件可能已安装，继续"
     # 3) 沙箱 home 补丁：只插冒烟跑者这一行；不写 agent-default-model（真实模型走主人配置）。

@@ -1,8 +1,14 @@
 {
-  "name": "dsh-agent-hub",
+  "name": "@tyr1105/dsh-buddy",
   "private": true,
   "version": "0.1.0",
   "description": "Agent 中心（DSH 版 Grok Bot）：常驻、有名字、会自己决定何时思考的主动型机器人队友",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tyr1105/dsh-buddy.git",
+    "directory": "packages/plugin"
+  },
+  "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
