@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+# 包缓存固定在项目内：DSH 的工作区沙箱不能写家目录缓存，两边必须用同一个位置
+storeDir: .pnpm-store
+# 允许 esbuild 运行安装脚本（下载本机平台的二进制）
+allowBuilds:
+  esbuild: true

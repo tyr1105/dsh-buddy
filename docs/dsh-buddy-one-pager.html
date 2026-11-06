@@ -1,0 +1,111 @@
+<title>DSH-Buddy</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* 版式：一栏文档，固定浅色背景，只用黑白灰和一种强调色，读起来像一份普通文档。 */
+:root {
+  --paper: #FFFFFF;
+  --ink: #1D2129;
+  --muted: #5C6470;
+  --line: #D5DAE0;
+  --accent: #1F5FBF;
+  --sans: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+}
+body { background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 17px; line-height: 1.85; }
+.page {
+  max-width: 680px; margin: 0 auto;
+  padding-block: 56px 72px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+h1 { margin: 0 0 20px; font-size: 40px; line-height: 1.2; font-weight: 700; }
+h2 { margin: 44px 0 12px; font-size: 22px; line-height: 1.4; font-weight: 700; }
+p { margin: 0 0 14px; }
+ol { margin: 0 0 14px; padding-left: 1.5em; }
+ol li { margin-bottom: 10px; padding-left: .2em; }
+
+/* 框架图：三个框加两条连线，窄屏改成上下排列 */
+.arch { display: grid; grid-template-columns: minmax(0, 1fr) 7.5em minmax(0, 1fr) 7.5em minmax(0, 1fr); align-items: stretch; margin: 20px 0 10px; }
+.box { padding: 12px 14px; border: 1px solid var(--line); border-radius: 4px; font-size: 15px; line-height: 1.6; }
+.box b { display: block; font-weight: 700; margin-bottom: 2px; }
+.box.model { border-color: var(--accent); }
+.box.model b { color: var(--accent); }
+.link { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 0 6px; font-size: 13px; line-height: 1.4; color: var(--muted); text-align: center; }
+.note { font-size: 15px; color: var(--muted); margin-bottom: 18px; }
+
+/* 模块表 */
+.wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 16px; line-height: 1.65; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 14px; padding: 6px 16px 6px 0; border-bottom: 1px solid var(--ink); }
+td { padding: 8px 16px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:first-child { white-space: nowrap; font-weight: 500; }
+
+.foot { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+
+@media (max-width: 620px) {
+  .page { padding-block: 36px 52px; }
+  h1 { font-size: 34px; }
+  .arch { grid-template-columns: minmax(0, 1fr); }
+  .link { flex-direction: row; justify-content: flex-start; gap: 14px; padding: 6px 2px; text-align: left; }
+}
+</style>
+
+<main class="page">
+  <h1>DSH-Buddy</h1>
+  <p>DeepSeek Harness（DSH）是一个桌面 AI 客户端，可以让 AI 写代码、跑任务。DSH-Buddy 是它的一个插件，用来在 DSH 里创建几个一直在后台待命的 AI 助手，界面上叫「队友」。</p>
+  <p>你给每个队友定好名字、职责和长期目标，告诉它要关注什么。之后插件在后台检查这些内容，遇到值得处理的变化，或者到了该复查的时候，就让队友开始工作，只有这时才用到模型、花额度。需要你决定的事，队友会在对话里问你。你不用设定时任务。</p>
+
+  <h2>一个例子</h2>
+  <p>你在对话里让队友关注每天早上的数据任务日志，要求工作日 08:20 前有更新。队友提议，你点接受后生效。</p>
+  <p>有一天过了 08:20 日志还没更新，插件就让队友开始工作。队友看了日志，在对话里告诉你任务没跑成和可能的原因，问你怎么处理。第二天的日报里也会记下这天的日志没按时出现。</p>
+  <p>日志按时更新时不会有这些提醒。不过更新本身也算小变化，攒够两条，队友会工作一次看看情况，这也花额度。</p>
+
+  <h2>框架</h2>
+  <div class="arch" role="img" aria-label="框架图：队友页面和插件后台之间传消息、批准、回复和通知；插件后台把工作说明发给队友的 DSH 会话，会话把结果汇报发回插件后台。只有队友的 DSH 会话用到模型。">
+    <div class="box"><b>队友页面</b>你在这里对话、批准操作、看日报</div>
+    <div class="link"><span>消息、批准 →</span><span>← 回复、通知</span></div>
+    <div class="box"><b>插件后台</b>发现变化，决定哪个队友什么时候开始工作，在每次操作前判断风险</div>
+    <div class="link"><span>工作说明 →</span><span>← 结果汇报</span></div>
+    <div class="box model"><b>队友的 DSH 会话</b>队友在这里用模型和工具工作。每个队友一个会话（DSH 里的一段 AI 对话），配一个专属文件夹</div>
+  </div>
+  <p class="note">插件后台是一段普通程序，随 DSH 一起运行，不用模型，一直开着也不花额度。用到模型的只有队友的 DSH 会话。</p>
+
+  <h2>运行过程</h2>
+  <ol>
+    <li>插件持续检查队友关注的内容：文件、日志、网页、RSS、脚本输出和其他 DSH 会话。本该出现却没出现的内容，也算一条变化。</li>
+    <li>插件按相关程度、变化大小和紧急程度给每条变化打分，过了分数线才让队友开始工作。没过线的小变化会先攒着，攒够了也可能让它开始工作。队友当天自己工作的次数越多，分数线就越高。你发的消息不用打分，队友会尽快处理。</li>
+    <li>没有外部变化时，这些情况也会让队友开始工作：目标长时间没有进展，答应你的事快到期，它上次给自己定的复查时间到了，或者它已经太久没工作。有目标的队友隔 48 小时没工作，就会做一次简短复查。</li>
+    <li>队友开始工作时，插件把这次工作的原因、变化内容、你说的话、目标和待办，以及长期记忆的开头部分整理成一份工作说明发给它。它用 DSH 自带的工具处理，比如读文件、运行命令。每次工作的操作步数、时长和模型用量都有上限。</li>
+    <li>工作结束时，队友写一份结果汇报：做了什么，依据是什么，有什么要问你，打算下次什么时候再看、为什么。插件根据汇报更新对话和目标进度，继续检查变化。</li>
+  </ol>
+
+  <h2>模块</h2>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>模块</th><th>负责什么</th></tr></thead>
+      <tbody>
+        <tr><td>变化检查</td><td>关注文件、日志、网页、RSS、脚本和其他会话</td></tr>
+        <tr><td>打分与调度</td><td>给变化打分，决定哪个队友什么时候开始工作，控制每个队友每天的工作次数</td></tr>
+        <tr><td>单次工作</td><td>准备工作说明，限制每次工作的步数、时长和模型用量，接收结果汇报</td></tr>
+        <tr><td>操作检查与审批</td><td>每次调用工具前判断风险，高风险操作交给你批准</td></tr>
+        <tr><td>消息</td><td>和队友的对话、收件箱（集中放等你回答或批准的事）、日报、通知</td></tr>
+        <tr><td>记忆</td><td>保存队友的名字和职责、目标、需要长期记住的事、工作日志和学会的操作步骤</td></tr>
+        <tr><td>协作</td><td>队友之间发消息、交接任务，避免同时做一件事</td></tr>
+        <tr><td>额度与运行状态</td><td>统计模型用量；额度紧张时拉长工作间隔，再紧张就只处理紧急的事和你的消息；DSH 重开后补看错过的变化</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>权限</h2>
+  <p>队友正常写文件时，只能写在自己的文件夹和共享文件夹里，写到别处要你批准。命令里写明的对外操作和不可逆操作，也要你批准才执行，批准只对那一次操作有效。默认权限下，队友不能自己增加目标和关注内容，只能提出来，等你同意才生效。</p>
+  <p>这套检查目前还有漏洞。它只看队友写明的操作内容，比如读哪个文件、运行什么命令，看不到脚本运行时在内部做了什么。保护名单只列了存放密钥和登录信息的常见位置，名单外的文件队友都读得到。打开网页的请求直接放行，内容可以夹在网址里发出去。队友还能把自己文件夹里的脚本交给插件运行，这一步不用批准，也不受 DSH 的写入限制，能改动这台电脑上的其他文件，对话里也看不到。所以现在不要让队友读陌生网页这类不可信的内容。</p>
+
+  <h2>现状</h2>
+  <p>插件已经装进作者自己的 DSH 桌面版。在隔离的测试环境里，这些流程用模拟的模型回复实际跑通过：创建队友、对话、提问和审批等卡片、批准后发出一次网络请求、中途打断队友、额度用完时暂停、日报。真实模型 GLM-5.3 试跑过三次，每次两轮，内容是自我介绍和检查一个文件。</p>
+  <p>写好、有自动测试，但还没在真实 DSH 里跑过：按时检查、插件运行命令、多个队友协作、关注网页、RSS、脚本和其他会话、把你在 DSH 里手动做过的操作教给队友、队友定期回顾工作并总结教训、DSH 重开后补看、系统通知。</p>
+  <p>还没做：让队友操作浏览器、手机端、接入飞书和邮件。目前界面只有中文，DSH 关着或电脑休眠时队友不工作。队友自己建的关注内容 30 天后自动失效，不会提醒你。</p>
+
+  <p class="foot">产品形态参考了 xAI 和 Cursor 联合运营的 Grok Bot，调度和记忆的做法参考了 OpenClaw、Claude Code 等产品和相关研究。这是个人项目，和 DeepSeek、xAI、Cursor 都没有官方关系。</p>
+</main>

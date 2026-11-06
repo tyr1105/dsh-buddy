@@ -1,0 +1,6 @@
+{
+  "name": "agent-hub-smoke-runner",
+  "private": true,
+  "type": "module",
+  "description": "agent-hub 端到端冒烟跑者（测试专用，不入插件市场）"
+}
