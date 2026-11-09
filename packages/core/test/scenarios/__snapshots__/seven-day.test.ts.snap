@@ -1,0 +1,122 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`18：三个机器人完整七天，事件可复现且并发、预算、夜间通知和理由始终守界 1`] = `
+{
+  "bots": [
+    {
+      "botId": "b_0000000001",
+      "intervalCv": 1.0475,
+      "reasons": {
+        "next_think": 4,
+        "owner_message": 7,
+        "peer_message": 5,
+        "percept": 19,
+        "reflection": 1,
+      },
+      "selfInitiated": 2,
+      "selfPacedRatio": 0.9722,
+      "turns": 36,
+      "turnsByDay": {
+        "2026-11-05": 5,
+        "2026-11-06": 6,
+        "2026-11-07": 6,
+        "2026-11-08": 3,
+        "2026-11-09": 2,
+        "2026-11-10": 3,
+        "2026-11-11": 2,
+        "2026-11-12": 2,
+      },
+    },
+    {
+      "botId": "b_0000000002",
+      "intervalCv": 1.085,
+      "reasons": {
+        "next_think": 1,
+        "peer_message": 5,
+        "percept": 18,
+        "reflection": 1,
+      },
+      "selfInitiated": 2,
+      "selfPacedRatio": 0.96,
+      "turns": 25,
+      "turnsByDay": {
+        "2026-11-05": 5,
+        "2026-11-06": 6,
+        "2026-11-07": 5,
+        "2026-11-08": 3,
+        "2026-11-09": 1,
+        "2026-11-10": 1,
+        "2026-11-11": 2,
+        "2026-11-12": 2,
+      },
+    },
+    {
+      "botId": "b_0000000003",
+      "intervalCv": 1.1818,
+      "reasons": {
+        "next_think": 5,
+        "owner_message": 2,
+        "peer_message": 2,
+        "percept": 18,
+        "reflection": 1,
+      },
+      "selfInitiated": 2,
+      "selfPacedRatio": 0.9643,
+      "turns": 28,
+      "turnsByDay": {
+        "2026-11-05": 6,
+        "2026-11-06": 6,
+        "2026-11-07": 6,
+        "2026-11-08": 2,
+        "2026-11-09": 2,
+        "2026-11-10": 1,
+        "2026-11-11": 2,
+        "2026-11-12": 1,
+      },
+    },
+  ],
+  "elapsedDays": 7,
+  "injected": {
+    "file": 34,
+    "http": 46,
+    "owner": 9,
+    "peer": 26,
+  },
+  "maxRunning": 1,
+  "notificationSources": {
+    "alert": 4,
+    "approval": 0,
+    "digest": 8,
+    "question": 0,
+  },
+  "pushes": {
+    "byDay": {
+      "2026-11-05": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-06": {
+        "daytime": 0,
+        "quiet": 1,
+        "quietP0": 1,
+      },
+      "2026-11-07": {
+        "daytime": 0,
+        "quiet": 2,
+        "quietP0": 2,
+      },
+    },
+    "daytime": 1,
+    "quiet": 3,
+    "quietP0": 3,
+  },
+  "reasons": {
+    "next_think": 10,
+    "owner_message": 9,
+    "peer_message": 12,
+    "percept": 55,
+    "reflection": 3,
+  },
+}
+`;

@@ -1,0 +1,19 @@
+{
+  "name": "@agent-hub/core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "主动性引擎核心：纯 TypeScript，不依赖任何 DSH 包；时间、文件、网络、子进程、宿主全部通过注入的接口访问",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "build:check": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=.tmp/core-bundle.mjs && node --input-type=module -e 'const c = await import(\"./.tmp/core-bundle.mjs\"); const t = c.testing.createTestContext(); const hub = c.createHub(t); await hub.start(); await hub.tick(); await hub.stop(); console.log(\"core 单文件导入与启动检查通过\");'"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
+  }
+}
