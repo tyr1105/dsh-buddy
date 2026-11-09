@@ -12,7 +12,7 @@ export const botFixture: m.Bot = {
   homeDir: `/hub/bots/${botId}`, sessionId: null, sessionStartedAt: null, createdAt: at, probationEndsAt: null,
   noChangeStreak: 0, lastThinkAt: null, nextThinkAt: null, nextThinkReason: null, nextThinkBy: null, nextThinkMode: null,
   lightCheckAt: null, expectedBy: null, consecutiveErrors: 0, consecutiveNoCommit: 0, violations: 0,
-  retryAt: null, quarantineReason: null, workDataAllowed: false, updatedAt: at,
+  retryAt: null, quarantineReason: null, workDataAllowed: false, presetSkillIds: [], updatedAt: at,
 };
 export const goalFixture: m.Goal = {
   id: id('g'), botId, aspirationId: id('asp'), title: '核实三条公开事实', doneWhen: '每条有可查看的来源', period: 'week',

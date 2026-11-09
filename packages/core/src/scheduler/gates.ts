@@ -20,6 +20,13 @@ export function evaluateGates(entry: QueueEntry, snapshot: GateSnapshot, now: nu
   const hasOwnerInput = entry.ownerInitiated || ['owner_message', 'inbox_reply'].includes(entry.reason.kind)
     || entry.reason.evidence.some(id => s.ownerEvidenceIds?.has(id));
   if (s.openQuestionSubjects.has(entry.subjectKey) && !hasOwnerInput) return blocked('waiting_owner_same_subject', null, true);
+  // F07：提问或审批还在等主人时，这个机器人先不自己找新事做；候选保留，答复后可以接着判断。
+  // 紧急、主人消息、审批结果仍放行，否则会连「去回答主人」都被自己的等待挡住。
+  // 复盘回合是只读的（不改中心状态、不能单推或找人），不会打扰主人，也允许在等待期间继续整理经验。
+  if (s.openOwnerAskCount > 0 && !hasOwnerInput && !entry.urgent
+    && entry.reason.kind !== 'approval_decided' && entry.variant !== 'reflection') {
+    return blocked('waiting_owner', s.openOwnerAskUntil);
+  }
   // 4–5：紧急与审批可越过节奏；主人主动发起也不用等最短间隔。
   const previous = s.subjectWakeAt.get(entry.subjectKey);
   if (previous !== undefined && now < previous + settings.subjectCooldownMs && !entry.urgent && !entry.ownerInitiated && !['owner_message', 'approval_decided'].includes(entry.reason.kind)) {

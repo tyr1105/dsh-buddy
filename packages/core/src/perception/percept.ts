@@ -9,7 +9,7 @@ import { fingerprint } from '../util/hash.js';
 import { newId } from '../util/ids.js';
 import { computeSalience, tierFor, roundScore } from '../appraisal/salience.js';
 import { logAppraisal } from '../appraisal/log.js';
-import { fatigueFor, thresholdFor } from '../appraisal/think.js';
+import { thresholdForCandidate } from '../appraisal/think.js';
 import { ownerPerceptSummary } from '../util/owner-text.js';
 import { matchesWatchFilter } from './filter.js';
 
@@ -35,7 +35,11 @@ export function recordPercept(ctx: HubContext, raw: PerceptInput): Percept | nul
   const history = ctx.store.table('percepts').list(p => p.botId === input.botId && p.createdAt <= now);
   const recent = history.filter(p => p.createdAt > now - ctx.settings.dedupWindowMs);
   // 疲劳直接由今天的实际回合账本计算，避免内驱快照尚未刷新时使用旧门槛。
-  const threshold = thresholdFor(fatigueFor(ctx, input.botId, now), bot.pace, ctx.settings);
+  const thresholdInput = { botId: bot.id, kind: input.source === 'owner' && input.kind === 'owner_message' ? 'owner_message' as const
+    : input.source === 'inbox' && input.kind === 'inbox_reply' ? 'inbox_reply' as const
+      : input.source === 'inbox' && input.kind === 'approval_decided' ? 'approval_decided' as const
+        : input.source === 'peer' ? 'peer_message' as const : 'percept' as const, anomaly: input.anomaly };
+  const threshold = thresholdForCandidate(ctx, { ...thresholdInput, score: 0 }, now);
   if (recent.some(p => p.fingerprint === mark)) {
     logAppraisal(ctx, { botId: input.botId, at: now, perceptIds: [], score: 0, threshold,
       decision: 'record_only', suppressedBy: 'dedup', text: '相同内容在去重窗口内已出现，本次只记录，不重复产生感知' });
@@ -64,6 +68,10 @@ export function recordPercept(ctx: HubContext, raw: PerceptInput): Percept | nul
   else if (input.source === 'system' && input.kind === 'team_attention') salience = ctx.settings.salienceCandidate;
   // 特殊来源的可覆盖分值也统一四位小数，再进入分档与日志。
   salience = roundScore(salience);
+  // 紧急分数应使用原门槛；与 buildCandidate 一致，历史日志不出现两套性格口径。
+  // 普通分数沿用已算好的门槛，避免每条感知都再扫描一次今日用量；仅紧急分数需解除性格偏移。
+  const scoredThreshold = salience >= ctx.settings.salienceUrgent
+    ? thresholdForCandidate(ctx, { ...thresholdInput, score: salience }, now) : threshold;
   // 模型的摘要限额按 UTF-16 字符计数；不在代理对中间截断。
   let summary = input.summary.slice(0, rules.summaryMaxChars);
   if (/[\uD800-\uDBFF]$/.test(summary)) summary = summary.slice(0, -1);
@@ -75,7 +83,7 @@ export function recordPercept(ctx: HubContext, raw: PerceptInput): Percept | nul
   ctx.store.table('percepts').put(percept);
   if (salience >= ctx.settings.noChangeResetSalience && bot.noChangeStreak !== 0) ctx.store.table('bots').patch(bot.id, { noChangeStreak: 0, updatedAt: now });
   const decision = percept.tier === 'pile' ? 'pile' : percept.tier === 'record' ? 'record_only' : 'queued';
-  logAppraisal(ctx, { botId: input.botId, at: now, perceptIds: [percept.id], score: salience, threshold, decision,
+  logAppraisal(ctx, { botId: input.botId, at: now, perceptIds: [percept.id], score: salience, threshold: scoredThreshold, decision,
     suppressedBy: null, text: `${ownerPerceptSummary(ctx, percept)}，显著性 ${salience.toFixed(2)}，${decision === 'pile' ? '进入待处理堆' : decision === 'queued' ? '等待候选评估' : '只记录'}` });
   // 日志写入已发出变化通知，同一条感知不再重复通知界面。
   return percept;

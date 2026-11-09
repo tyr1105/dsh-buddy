@@ -1,3 +1,4 @@
+import { recordViolation } from '../gate/guard.js';
 /** 交账先锁定唯一记录，再更新状态与派生文件；文件失败保留真实交账并显式报告，避免重复执行副作用。 */
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import type { HubContext } from '../engine/context.js';
@@ -12,11 +13,14 @@ import { applyNextThink } from '../agenda/next-think.js';
 import { afterOutcome } from '../scheduler/pacing.js';
 import { computeExpectedBy } from '../health/deadman.js';
 import { appendJournal, refreshBotFiles, verifyProtectedFiles } from '../memory/index.js';
-import { routeCommit, updateCommitGoals } from './effects.js';
+import { PathContainmentError } from '../io/interfaces.js';
+import { relatedGoals, routeCommit, updateCommitGoals } from './effects.js';
+import { recordResultCheck } from './result-check.js';
 import { backoffReviewsAfterCommit } from '../tools/review-backoff.js';
 import { removeEntry } from '../scheduler/queue.js';
 import { computeDrives } from '../drives/compute.js';
 import { optionalMessageText } from '../util/text.js';
+import { archiveCommitArtifacts } from '../artifacts/archive.js';
 /** 核对回合身份后只接收一次交账，更新目标与下次思考，并隔离各项派生写入失败。 */
 export async function processCommit(ctx: HubContext, rawContext: ToolContext, rawArgs: unknown): Promise<ToolResult> {
     try {
@@ -55,6 +59,19 @@ export async function processCommit(ctx: HubContext, rawContext: ToolContext, ra
         // 交账重设了时间意图，旧时钟候选不能再触发第二轮轻复查。
         for (const entry of ctx.store.table('queue').list(q => q.botId === bot.id && q.enqueuedAt <= now && ['light_check', 'next_think'].includes(q.reason.kind)))
             removeEntry(ctx, entry.id);
+        // 先独立实查，再发布验收卡；唯一交账已锁住，等待文件接口不会接受第二次交账。
+        let archiveWarning = '';
+        if (args.outcome === 'done' || args.outcome === 'progress') {
+            try {
+                const archived = await archiveCommitArtifacts(ctx, commit, relatedGoals(ctx, commit, wake));
+                const missed = archived.items.filter(item => !item.versionId).length;
+                archiveWarning = missed ? `注意：${missed} 个位置未归档，原因见产物列表。` : '';
+            } catch {
+                archiveWarning = '注意：产物归档失败，交账已保留。';
+                ctx.logger.warn('产物归档失败，交账已保留', { commitId: commit.id });
+            }
+            await recordResultCheck(ctx, commit, relatedGoals(ctx, commit, wake));
+        }
         const goalQuestions = updateCommitGoals(ctx, commit, wake);
         const patch = applyNextThink(updated, args.nextThink, now, { settings: ctx.settings,
             hasActiveGoal: ctx.store.table('goals').count(g => g.botId === bot.id && g.status === 'active') > 0,
@@ -70,6 +87,7 @@ export async function processCommit(ctx: HubContext, rawContext: ToolContext, ra
                 ? { stagnation: 0, obligation: 0, waiting: 0, frustration: 0, updatedAt: now } : { ...values, updatedAt: now });
         }
         const failures: string[] = [];
+        let containmentRecorded = false;
         for (const [label, effect] of [
             ['保护核对', () => verifyProtectedFiles(ctx, bot.id)],
             ['结果路由', () => routeCommit(ctx, commit, wake, goalQuestions)], ['日志追加', () => appendJournal(ctx, updated, commit, wake)],
@@ -81,13 +99,18 @@ export async function processCommit(ctx: HubContext, rawContext: ToolContext, ra
             catch (error) {
                 failures.push(`${label}失败`);
                 ctx.logger.error(`${label}失败，交账 ${commit.id} 已保留`, error);
+                // 家目录里出现指向别处的链接，只可能是有人放进去的；同一次交账连带失败几项也只算一次越界。
+                if (error instanceof PathContainmentError && !containmentRecorded) {
+                    containmentRecorded = true;
+                    await recordViolation(ctx, bot.id, error.message);
+                }
                 ctx.store.log('audit').append({ id: newId('au', ctx.rng), at: now, actor: bot.id, action: 'commit_effect_error', detail: `${commit.id} ${label}：${String(error)}` });
             }
         }
         ctx.emit(HUB_EVENT_SCOPES.activity, bot.id);
         ctx.emit(HUB_EVENT_SCOPES.bot, bot.id);
         const when = updated.nextThinkAt === null ? '有新事件时（保留轻复查）' : formatShort(updated.nextThinkAt, now, ctx.settings.timezone);
-        return { ok: true, text: `已交账：${args.outcome}。下次思考：${when}（理由已记录）。${warning ?? ''}${reviewWarning}${failures.length ? `注意：${failures.join('、')}，详见中心日志。` : ''}` };
+        return { ok: true, text: `已交账：${args.outcome}。下次思考：${when}（理由已记录）。${warning ?? ''}${reviewWarning}${archiveWarning}${failures.length ? `注意：${failures.join('、')}，详见中心日志。` : ''}` };
     }
     catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };

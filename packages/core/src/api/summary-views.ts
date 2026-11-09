@@ -13,6 +13,7 @@ import { coefficientOfVariation } from '../util/stats.js';
 import { isInQuietHours, formatDuration, parseFlexibleTime } from '../util/time.js';
 import { agoTime, shortTime } from './common.js';
 import type { BotCard, BotView, OverviewView } from './types.js';
+import { costView } from './cost-views.js';
 
 /** 只统计真实投递的回合；失败的投递尝试仍在活动流，但不能冒充一次模型思考。 */
 export function isDispatched(wake: WakeTicket): boolean {
@@ -32,6 +33,7 @@ export function botCard(ctx: HubContext, bot: Bot): BotCard {
   const nextThinkText = when ? `${when}${bot.nextThinkBy === 'bot' ? `（它自己定的：${bot.nextThinkReason ?? '跟进变化'}）` : ''}`
     : `有变化时${fallback ? `，最晚${fallback}` : ''}`;
   return { id: bot.id, name: bot.name, role: bot.role, roleLabel: ROLE_LABELS[bot.role], color: bot.color,
+    archived: bot.archivedAt != null,
     initials: Array.from(bot.name).slice(0, 2).join(''), lifecycle: bot.lifecycle, lifecycleLabel: LIFECYCLE_LABELS[bot.lifecycle],
     activity: bot.activity, activityLabel: ACTIVITY_LABELS[bot.activity], activityText,
     nextThinkAt: bot.nextThinkAt, nextThinkText, lightCheckAt: bot.lightCheckAt,
@@ -71,15 +73,18 @@ export function overview(ctx: HubContext): OverviewView {
   const alerts = ctx.store.table('alerts').list(row => row.status === 'open');
   const downtime = ctx.store.table('downtime').list().sort((a, b) => b.to - a.to)[0];
   const heartbeatAt = ctx.runtime.lastHeartbeatAt;
-  return { bots: ctx.store.table('bots').list().map(bot => botCard(ctx, bot)),
+  return { bots: ctx.store.table('bots').list().map(bot => botCard(ctx, bot)), costs: costView(ctx, now),
     inbox: { total: items.length, approvals: items.filter(row => row.type === 'approval').length,
       questions: items.filter(row => row.type === 'question').length, proposals: items.filter(row => row.type === 'proposal').length,
       alerts: items.filter(row => row.type === 'alert').length },
     team: { unread: team.filter(row => row.readAt === null && row.from !== 'owner').length, lastMessageText: team.at(-1)?.text ?? null },
     quota: { light: quota.light, lightLabel: QUOTA_LIGHT_LABELS[quota.light], usedText: `${quota.botTurns} / ${quota.turnLimit} 回合，${quota.botTokens} token`,
       resetAt, resetText: shortTime(ctx, resetAt) },
-    health: { ok: alerts.length === 0 && heartbeatAt !== null && now - heartbeatAt <= ctx.settings.hostDownAfterMs,
+    health: { ok: alerts.length === 0 && heartbeatAt !== null && now - heartbeatAt <= ctx.settings.hostDownAfterMs
+        && ctx.runtime.sandboxUnavailable === null,
       heartbeatAt, heartbeatText: agoTime(ctx, heartbeatAt) ?? '尚无心跳', downtimeAt: downtime?.to ?? null,
-      downtimeText: downtime ? `${shortTime(ctx, downtime.to)}恢复，停机 ${formatDuration(downtime.to - downtime.from)}` : null, openAlerts: alerts.length },
+      downtimeText: downtime ? `${shortTime(ctx, downtime.to)}恢复，停机 ${formatDuration(downtime.to - downtime.from)}` : null, openAlerts: alerts.length,
+      // 沙箱不可用时宿主命令全部失败关闭；把原因放到总览，主人不至于以为命令只是执行失败。
+      sandboxWarning: ctx.runtime.sandboxUnavailable },
     nowAt: now, nowText: shortTime(ctx, now)!, quietNow: isInQuietHours(now, ctx.settings.quietHours, ctx.settings.timezone), pushesLeftToday: pushesLeft(ctx) };
 }

@@ -14,13 +14,13 @@ const buttonsOf = (lifecycle: Parameters<typeof lifecycleButtons>[0]) =>
   lifecycleButtons(lifecycle).map(button => `${button.action}:${button.label}`)
 
 describe('lifecycleButtons（D07 第 24 条，与 core 的资格校验一致）', () => {
-  it('probation：暂停 + 提前转正 + 退役（无恢复/解除停用）', () => {
-    expect(buttonsOf('probation')).toEqual(['pause:暂停', 'promote:提前转正', 'retire:退役'])
+  it('probation：暂停 + 转正 + 退役（无恢复/解除停用）', () => {
+    expect(buttonsOf('probation')).toEqual(['pause:暂停', 'promote:转正', 'retire:退役'])
   })
-  it('active：暂停 + 退役（无恢复/提前转正/解除停用）', () => {
+  it('active：暂停 + 退役（无恢复/转正/解除停用）', () => {
     expect(buttonsOf('active')).toEqual(['pause:暂停', 'retire:退役'])
   })
-  it('paused：恢复 + 退役（无暂停/提前转正）', () => {
+  it('paused：恢复 + 退役（无暂停/转正）', () => {
     expect(buttonsOf('paused')).toEqual(['resume:恢复', 'retire:退役'])
   })
   it('quarantined：解除停用（发 release_quarantine 而不是 resume）+ 退役', () => {

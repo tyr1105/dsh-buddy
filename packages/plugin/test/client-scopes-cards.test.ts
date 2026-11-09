@@ -2,7 +2,7 @@
  * D06 第 4/5 条的客户端纯逻辑测试：
  * - 卡片提交分流（logic/cards.ts）：审批用 approvalId 走 decideApproval（绝不把
  *   inboxId 当 approvalId），其他卡走 answerInbox 且原样回传选项；提问自由文本放行。
- * - 推送范围刷新计划（logic/scopes.ts）：六个范围各自刷新对应视图，团队线程用
+ * - 推送范围刷新计划（logic/scopes.ts）：九个范围各自刷新对应视图，团队线程用
  *   botId=null 归位到 'team'，未知范围兜底刷总览 + 活动流。
  */
 import { describe, expect, it } from 'vitest'
@@ -50,46 +50,60 @@ describe('cardSubmission：卡片提交分流（D06 第 4 条）', () => {
   })
 })
 
-describe('refreshPlan：六范围刷新计划（D06 第 5 条 / D07 第 25 条加强）', () => {
+describe('refreshPlan：九范围刷新计划（D06 第 5 条 / D07 第 25 条加强 / F03 办公室 / V2-PH4-02 项目页）', () => {
   it('词表与 core 的 HUB_EVENT_SCOPES 逐项一致（core 改名/加项时这里要报警）', () => {
     expect(Object.keys(HUB_SCOPES).sort()).toEqual(Object.keys(HUB_EVENT_SCOPES).sort())
     for (const key of Object.keys(HUB_EVENT_SCOPES) as Array<keyof typeof HUB_EVENT_SCOPES>) {
       expect(HUB_SCOPES[key as keyof typeof HUB_SCOPES]).toBe(HUB_EVENT_SCOPES[key])
     }
-    expect(Object.values(HUB_SCOPES).sort()).toEqual(['activity', 'bot', 'inbox', 'overview', 'settings', 'thread'])
+    expect(Object.values(HUB_SCOPES).sort()).toEqual(['activity', 'bot', 'inbox', 'ledger', 'office', 'overview', 'project', 'settings', 'thread'])
   })
   // D07 第 25 条：每个 scope 用 toEqual 断言**完整**刷新计划（弱断言会让错接存活）。
-  it('overview：全局只刷总览；带 id 顺带刷详情', () => {
-    expect(refreshPlan('overview', null)).toEqual({ overview: true, bots: [], threads: [], inbox: false, activity: false, settings: false })
-    expect(refreshPlan('overview', 'b_1')).toEqual({ overview: true, bots: ['b_1'], threads: [], inbox: false, activity: false, settings: false })
+  // 编制取消后不再有 org scope；资料变化在 core 里走 overview scope（资料随 overview/bot 刷）。
+  it('overview：全局只刷总览 + 办公室 + 资料；带 id 顺带刷详情', () => {
+    expect(refreshPlan('overview', null)).toEqual({ overview: true, bots: [], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: true, resource: true, project: false })
+    expect(refreshPlan('overview', 'b_1')).toEqual({ overview: true, bots: ['b_1'], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: true, resource: true, project: false })
   })
-  it('bot：必带 botId → 刷该机器人详情 + 总览，不动线程/收件箱/活动/设置', () => {
-    expect(refreshPlan('bot', 'b_1')).toEqual({ overview: true, bots: ['b_1'], threads: [], inbox: false, activity: false, settings: false })
-    expect(refreshPlan('bot', null)).toEqual({ overview: true, bots: [], threads: [], inbox: false, activity: false, settings: false })
+  it('bot：必带 botId → 刷该机器人详情 + 总览 + 办公室 + 资料，不动线程/收件箱/活动/设置', () => {
+    expect(refreshPlan('bot', 'b_1')).toEqual({ overview: true, bots: ['b_1'], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: true, resource: true, project: false })
+    expect(refreshPlan('bot', null)).toEqual({ overview: true, bots: [], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: true, resource: true, project: false })
   })
-  it('thread：机器人线程带 id；null 专指 team；同时刷总览（未读汇总）', () => {
-    expect(refreshPlan('thread', 'b_2')).toEqual({ overview: true, bots: [], threads: ['b_2'], inbox: false, activity: false, settings: false })
-    expect(refreshPlan('thread', null)).toEqual({ overview: true, bots: [], threads: ['team'], inbox: false, activity: false, settings: false })
+  it('thread：机器人线程带 id；null 专指 team；同时刷总览（未读汇总），不额外刷办公室/资料', () => {
+    expect(refreshPlan('thread', 'b_2')).toEqual({ overview: true, bots: [], threads: ['b_2'], ledgers: false, inbox: false, activity: false, settings: false, office: false, resource: false, project: false })
+    expect(refreshPlan('thread', null)).toEqual({ overview: true, bots: [], threads: ['team'], ledgers: false, inbox: false, activity: false, settings: false, office: false, resource: false, project: false })
   })
-  it('inbox：刷收件箱 + 总览计数', () => {
-    expect(refreshPlan('inbox', null)).toEqual({ overview: true, bots: [], threads: [], inbox: true, activity: false, settings: false })
+  it('inbox：刷收件箱 + 总览计数 + 办公室（座位门口与房间总信箱）', () => {
+    expect(refreshPlan('inbox', null)).toEqual({ overview: true, bots: [], threads: [], ledgers: false, inbox: true, activity: false, settings: false, office: true, resource: false, project: false })
   })
   it('activity：只刷活动流', () => {
-    expect(refreshPlan('activity', 'b_1')).toEqual({ overview: false, bots: [], threads: [], inbox: false, activity: true, settings: false })
+    expect(refreshPlan('activity', 'b_1')).toEqual({ overview: false, bots: [], threads: [], ledgers: false, inbox: false, activity: true, settings: false, office: false, resource: false, project: false })
   })
   it('settings：只刷设置视图', () => {
-    expect(refreshPlan('settings', null)).toEqual({ overview: false, bots: [], threads: [], inbox: false, activity: false, settings: true })
+    expect(refreshPlan('settings', null)).toEqual({ overview: false, bots: [], threads: [], ledgers: false, inbox: false, activity: false, settings: true, office: false, resource: false, project: false })
+  })
+  it('ledger：刷该机器人详情 + 总览 + 办公室，并重拉已展开的账本（按需缓存）', () => {
+    expect(refreshPlan('ledger', 'b_1')).toEqual({ overview: true, bots: ['b_1'], threads: [], ledgers: true, inbox: false, activity: false, settings: false, office: true, resource: false, project: false })
+    expect(refreshPlan('ledger', null)).toEqual({ overview: true, bots: [], threads: [], ledgers: true, inbox: false, activity: false, settings: false, office: true, resource: false, project: false })
+  })
+  it('旧的 org scope 已随编制移除：按未知范围兜底刷总览 + 活动流', () => {
+    expect(refreshPlan('org', null)).toEqual({ overview: true, bots: [], threads: [], ledgers: false, inbox: false, activity: true, settings: false, office: false, resource: false, project: false })
+  })
+  it('office：只刷办公室，不连带总览/线程/收件箱/资料', () => {
+    expect(refreshPlan('office', null)).toEqual({ overview: false, bots: [], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: true, resource: false, project: false })
+  })
+  it('project：项目/任务变化刷总览 + 定向刷项目页，不动办公室/资料', () => {
+    expect(refreshPlan('project', null)).toEqual({ overview: true, bots: [], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: false, resource: false, project: true })
   })
   it('未知 scope（向前兼容）兜底刷总览 + 活动流；内部表名不再是特殊分支（逐项断言）', () => {
     for (const scope of ['wakes', 'bots', 'watches', 'queue', 'no-such']) {
-      expect(refreshPlan(scope)).toEqual({ overview: true, bots: [], threads: [], inbox: false, activity: true, settings: false })
+      expect(refreshPlan(scope)).toEqual({ overview: true, bots: [], threads: [], ledgers: false, inbox: false, activity: true, settings: false, office: false, resource: false, project: false })
     }
   })
 })
 
 describe('cardResultText / expiryMeaningOf（D07 第 11/18 条）', () => {
-  it('只有主人亲手作答才写「你选了：X」', () => {
-    expect(cardResultText(card({ status: 'answered', answer: '可以' }))).toBe('你选了：可以')
+  it('只有主人亲手作答才写「已选：X」', () => {
+    expect(cardResultText(card({ status: 'answered', answer: '可以' }))).toBe('已选：可以')
   })
   it('过期/撤回/关闭按状态如实写，不冒充主人选的', () => {
     expect(cardResultText(card({ status: 'expired', answer: '先不要' }))).toBe('已过期，已按默认：先不要')
@@ -105,5 +119,10 @@ describe('cardResultText / expiryMeaningOf（D07 第 11/18 条）', () => {
     expect(expiryMeaningOf(card({ type: 'proposal', expiresText: '7 天后' }))).toBe('7 天前未答复自动撤回')
     expect(expiryMeaningOf(card({ type: 'alert', expiresText: '长期' }))).toBe('长期')
     expect(expiryMeaningOf(card({ type: 'question', expiresText: null }))).toBeNull()
+  })
+  it('视图已经带后果说明时不重复拼接（避免「前有效前有效」）', () => {
+    expect(expiryMeaningOf(card({ type: 'approval', expiresText: '今晚 20:00 前有效' }))).toBe('今晚 20:00 前有效')
+    expect(expiryMeaningOf(card({ type: 'question', expiresText: '周五 09:00 按默认处理', defaultOption: '可以，只读' }))).toBe('周五 09:00 按默认处理')
+    expect(expiryMeaningOf(card({ type: 'proposal', expiresText: '周五 09:00 按默认处理' }))).toBe('周五 09:00 按默认处理')
   })
 })

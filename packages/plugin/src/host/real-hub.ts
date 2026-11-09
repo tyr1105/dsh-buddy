@@ -8,7 +8,7 @@
  * - DisabledHub：rootDir/.hub/DISABLED 存在时只提供界面（显示已停用），不启动引擎。
  */
 import type { Hub, UiApi, CommandResult } from '@agent-hub/core'
-import type { BotView, SettingsView, ThreadView } from '../shared/views.js'
+import type { BotView, ProjectView, ResourceView, SettingsView, ThreadView } from '../shared/views.js'
 import type { HubFacade, ChangedEvent, ChangeListener } from './hub-facade.js'
 
 // ---------- 参数校验小工具（中文错误，说清哪一项不对） ----------
@@ -45,6 +45,11 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'setLifecycle': return run(() => api.setLifecycle(reqStr(raw, 'botId'), reqStr(raw, 'lifecycle') as never))
       // M07：生命周期动作与主人打断都改走 core 的命令入口（UiApi 内部再用 zod 校验）。
       case 'lifecycleAction': return run(() => api.lifecycleAction(raw))
+      // P48：归档/恢复/删除都只收 botId，业务校验在 core 用中文错误说明缺哪一项。
+      case 'archiveBotCheck': return run(() => api.archiveBotCheck(reqStr(raw, 'botId')))
+      case 'archiveBot': return run(() => api.archiveBot(reqStr(raw, 'botId')))
+      case 'restoreArchivedBot': return run(() => api.restoreArchivedBot(reqStr(raw, 'botId')))
+      case 'deleteArchivedBot': return run(() => api.deleteArchivedBot(reqStr(raw, 'botId')))
       case 'interruptBot': return run(() => api.interruptBot(raw))
       case 'sendMessage': return run(() => api.sendMessage(reqStr(raw, 'threadId'), reqStr(raw, 'text')))
       case 'answerInbox': return run(() => api.answerInbox(reqStr(raw, 'id'), reqStr(raw, 'answer')))
@@ -52,6 +57,9 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'upsertAspiration': return run(() => api.upsertAspiration(raw))
       case 'upsertGoal': return run(() => api.upsertGoal(raw))
       case 'closeGoal': return run(() => api.closeGoal(reqStr(raw, 'id'), raw.outcome as boolean | 'done' | 'active' | 'abandoned'))
+      case 'readArtifactVersion': return run(() => api.readArtifactVersion(raw))
+      case 'officeReplay': return run(() => api.officeReplay(raw))
+      case 'reviewArtifact': return run(() => api.reviewArtifact(raw))
       case 'upsertWatch': return run(() => api.upsertWatch(raw))
       case 'decideWatchProposal': return run(() => api.decideWatchProposal(reqStr(raw, 'id'), reqBool(raw, 'approve')))
       case 'upsertRule': return run(() => api.upsertRule(raw))
@@ -59,7 +67,40 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'teach': return run(() => api.teach(reqStr(raw, 'botId'), reqStr(raw, 'sessionId'), reqStr(raw, 'note')))
       case 'pokeBot': return run(() => api.pokeBot(reqStr(raw, 'botId'), optStr(raw, 'text')))
       case 'updateSettings': return run(() => api.updateSettings(raw))
+      // P38：连接草稿只读自检，整对象透传给 core zod 校验；不落设置、不产生审批。
+      case 'testKnowledgeConnection': return run(() => api.testKnowledgeConnection(raw))
       case 'markThreadRead': return run(() => api.markThreadRead(reqStr(raw, 'threadId')))
+      // 资料三条（V2-PH2-04）：saveResource/setGrant 整对象透传给 core zod 校验；
+      // archiveResource 只收 id，缺参在边界直接中文报错、不进引擎。
+      case 'saveResource': return run(() => api.saveResource(raw))
+      case 'setGrant': return run(() => api.setGrant(raw))
+      case 'revokeGrant': return run(() => api.revokeGrant(raw))
+      case 'archiveResource': return run(() => api.archiveResource(reqStr(raw, 'id')))
+      // 项目与任务（V2-PH4-02 / F12 / V2-PH4-04）：saveProject/saveTask/rejectTask/assignTask/
+      // dispatchTask 整对象透传给 core zod 校验；派活三 id（projectId/taskId/botId）与 note
+      // 的形状全部由 core DispatchTaskSchema 把关，边界不挑字段。其余状态流转只收 id，
+      // 缺参在边界直接中文报错、不进引擎。
+      case 'saveProject': return run(() => api.saveProject(raw))
+      case 'pauseProject': return run(() => api.pauseProject(reqStr(raw, 'id')))
+      case 'resumeProject': return run(() => api.resumeProject(reqStr(raw, 'id')))
+      case 'completeProject': return run(() => api.completeProject(reqStr(raw, 'id')))
+      case 'archiveProject': return run(() => api.archiveProject(reqStr(raw, 'id')))
+      case 'restoreProject': return run(() => api.restoreProject(reqStr(raw, 'id')))
+      // P39 项目共享上下文：saveProjectContext 整对象透传；采纳/驳回只收建议 id。
+      case 'saveProjectContext': return run(() => api.saveProjectContext(raw))
+      case 'approveProjectContextProposal': return run(() => api.approveProjectContextProposal(reqStr(raw, 'id')))
+      case 'rejectProjectContextProposal': return run(() => api.rejectProjectContextProposal(reqStr(raw, 'id')))
+      case 'saveTask': return run(() => api.saveTask(raw))
+      case 'assignTask': return run(() => api.assignTask(raw))
+      // V2-PH4-04：派活/恢复/催办/改派统一入口，整对象透传，三 id 与留言由 core zod 校验。
+      case 'dispatchTask': return run(() => api.dispatchTask(raw))
+      case 'taskBlock': return run(() => api.taskBlock(reqStr(raw, 'id')))
+      case 'taskResume': return run(() => api.taskResume(reqStr(raw, 'id')))
+      case 'reportDone': return run(() => api.reportDone(reqStr(raw, 'id')))
+      case 'acceptTask': return run(() => api.acceptTask(reqStr(raw, 'id')))
+      case 'rejectTask': return run(() => api.rejectTask(raw))
+      // 任务关联产物（F08 尾巴）：整对象透传，任务/产物是否存在与上限由 core 判定。
+      case 'attachTaskArtifact': return run(() => api.attachTaskArtifact(raw))
       default: return Promise.resolve(bad(`未知命令：${name}；请更新插件后重试`))
     }
   } catch (error) {
@@ -108,7 +149,18 @@ export class RealHubFacade implements HubFacade {
   async inbox() { return this.hub.api.inbox() }
   async activity(opts?: { before?: string | number; limit?: number }) { return this.hub.api.activity(opts) }
   async settings() { return this.hub.api.settings() }
+  /** 办公室是 core 的纯投影，读一次就给一屏，不写任何状态。 */
+  async office() { return this.hub.api.officeView() }
+  /** 资料授权矩阵也是只读组装：资料、授权、中文名全部由 core 的 resourceView 给出。 */
+  async resource() { return this.hub.api.resourceView() }
+  /** 项目容器同样是只读组装：项目、成员、验收项、任务分组与问题都由 core 的 projectView 给出。 */
+  async project() { return this.hub.api.projectView() }
   async recentSessions() { return this.hub.api.recentSessions() }
+  /** 账本读法：core 的接口是同步读存储，门面统一成 Promise 保持调用方一致。 */
+  async wakeLedger(botId: string, opts?: { limit?: number; before?: number }) {
+    return this.hub.api.wakeLedgerList(botId, opts?.limit, opts?.before)
+  }
+  async wakeLedgerDetail(wakeId: string) { return this.hub.api.wakeLedgerDetail(wakeId) }
   async command(name: string, input: Record<string, unknown>): Promise<CommandResult> {
     return dispatchCommand(this.hub.api, name, input)
   }
@@ -184,7 +236,12 @@ export class LazyHubFacade implements HubFacade {
   async inbox() { return this.facade().inbox() }
   async activity(opts?: { before?: string; limit?: number }) { return this.facade().activity(opts) }
   async settings() { return this.facade().settings() }
+  async office() { return this.facade().office() }
+  async resource() { return this.facade().resource() }
+  async project() { return this.facade().project() }
   async recentSessions() { return this.facade().recentSessions() }
+  async wakeLedger(botId: string, opts?: { limit?: number; before?: number }) { return this.facade().wakeLedger(botId, opts) }
+  async wakeLedgerDetail(wakeId: string) { return this.facade().wakeLedgerDetail(wakeId) }
   async command(name: string, input: Record<string, unknown>) { return this.facade().command(name, input) }
   subscribe(fn: ChangeListener): () => void {
     // 记在本地（emitInApp 与 setImpl 重挂都用它）；引擎已就绪时同时挂到引擎上。
@@ -209,8 +266,20 @@ export class LazyHubFacade implements HubFacade {
 const emptyOverview = {
   bots: [], inbox: { total: 0, approvals: 0, questions: 0, proposals: 0, alerts: 0 },
   team: { unread: 0, lastMessageText: null }, quota: { light: 'green', lightLabel: '未知', usedText: '已停用', resetText: null },
-  health: { ok: false, heartbeatText: '已停用', downtimeText: null, openAlerts: 0 },
+  health: { ok: false, heartbeatText: '已停用', downtimeText: null, openAlerts: 0, sandboxWarning: null },
   nowText: '已停用', quietNow: false, pushesLeftToday: 0,
+}
+
+/** 停用后的空资料矩阵：没有资料也没有授权，页面显示正常空态而不是整页错误。 */
+const emptyResource: ResourceView = {
+  asOf: 0, resources: [], grants: [],
+  counts: { total: 0, active: 0, archived: 0, grants: 0 },
+}
+
+/** 停用后的空项目视图：没有项目与任务，项目页显示正常空态而不是整页错误。 */
+const emptyProject: ProjectView = {
+  asOf: 0, projects: [],
+  counts: { active: 0, paused: 0, done: 0, archived: 0, total: 0, tasksTotal: 0, tasksPendingCheck: 0 },
 }
 
 export class DisabledHub implements HubFacade {
@@ -222,7 +291,23 @@ export class DisabledHub implements HubFacade {
   async inbox() { return { items: [] } }
   async activity() { return { rows: [], hasMore: false } }
   async settings(): Promise<SettingsView> { return this.denied() }
+  /** 停用后办公室没有可投影的数据：给一间空房间并如实说明，不把整页打成错误。 */
+  async office() {
+    return {
+      asOf: 0, seats: [],
+      doorway: { count: 0, items: [], refs: [], ref: 'inbox' },
+      health: { quotaLight: 'green' as const, quotaLightLabel: '未知', openAlerts: 0, sandboxOk: false, ok: false },
+      truncated: false,
+    }
+  }
+  /** 停用后资料矩阵没有数据可看：给一份空矩阵（计数全 0），不把整页打成错误。 */
+  async resource(): Promise<ResourceView> { return structuredClone(emptyResource) }
+  /** 停用后项目页没有数据可看：给一份空项目视图（计数全 0），不把整页打成错误。 */
+  async project(): Promise<ProjectView> { return structuredClone(emptyProject) }
   async recentSessions() { return [] }
+  /** 停用后账本只读视图没有数据可看：列表为空、详情为空，不把整页打成错误。 */
+  async wakeLedger(_botId: string, _opts?: { limit?: number; before?: number }) { return [] }
+  async wakeLedgerDetail(_wakeId: string) { return null }
   async command(): Promise<CommandResult> { return { ok: false, error: this.reason } }
   subscribe(): () => void { return () => undefined }
 }

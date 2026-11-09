@@ -12,19 +12,23 @@ import { rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { testing } from '@agent-hub/core'
+import { testing, type Hub } from '@agent-hub/core'
 import { createEngineHub } from '../src/host/index.js'
 import { RealHubFacade } from '../src/host/real-hub.js'
 
 let rootDir: string
 let host: testing.FakeHost
+let hubs: Hub[]
 
 beforeEach(() => {
   rootDir = mkdtempSync(join(tmpdir(), 'agent-hub-engine-'))
   host = new testing.FakeHost()
+  hubs = []
 })
 
 afterEach(async () => {
+  // 同步动作守卫会排队异步落盘；必须先等中心串行收口，再移除自己的测试目录。
+  for (const hub of hubs) await hub.stop()
   // 只删自己建在系统临时目录下的引擎根目录。
   await rm(rootDir, { recursive: true, force: true })
 })
@@ -32,6 +36,7 @@ afterEach(async () => {
 /** 建一个真实引擎（FakeHost）并创建一个机器人，返回引擎拼装件与机器人 id。 */
 async function engineWithBot() {
   const parts = createEngineHub(rootDir, host)
+  hubs.push(parts.hub)
   await parts.hub.start()
   const created = await parts.hub.api.createBot({
     name: '守门员', role: 'sentinel', persona: '测试用', aspirations: ['看好门'],

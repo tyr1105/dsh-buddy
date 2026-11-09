@@ -29,12 +29,19 @@ export interface CardActions {
   onPick(card: CardPayload, option: string, note?: string): Promise<string | null>
 }
 
-export function InboxCard(props: { card: CardPayload; actions: CardActions; busy: boolean }): ReactNode {
+export function InboxCard(props: {
+  card: CardPayload
+  actions: CardActions
+  busy: boolean
+  /** 收件箱平铺后，紧急程度只由卡片自己的标签表达；线程内卡片不传。 */
+  priority?: 'P0' | 'P1' | 'P2'
+}): ReactNode {
   const c = props.card
   const [picked, setPicked] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [freeText, setFreeText] = useState('')
   const [note, setNote] = useState('')
+  const [rejectingGoal, setRejectingGoal] = useState(false)
   const resultText = cardResultText(c)
   const answered = resultText !== null
   const busy = props.busy || picked !== null
@@ -52,6 +59,7 @@ export function InboxCard(props: { card: CardPayload; actions: CardActions; busy
     <div className={`ah-card ah-card-${c.type}${answered ? ' ah-card-done' : ''}`} data-answered={answered ? 'true' : 'false'}>
       <div className="ah-card-head">
         <span className="ah-card-type">{CARD_TYPE_LABELS[c.type]}</span>
+        {props.priority ? <span className={`ah-card-priority ah-card-priority-${props.priority.toLowerCase()}`}>{props.priority}</span> : null}
         <span className="ah-card-title">{c.title}</span>
       </div>
       <p className="ah-card-body">{c.body}</p>
@@ -62,25 +70,35 @@ export function InboxCard(props: { card: CardPayload; actions: CardActions; busy
         <>
           <div className="ah-card-options">
             {/* 全部按钮按视图 options 渲染：审批的「批准」主色、「拒绝」警示色，其余默认项主色。 */}
-            {c.options.map(option => (
+            {!rejectingGoal && c.options.map(option => (
               <button key={option} type="button"
                 className={c.type === 'approval'
                   ? (isApproveOption(option) ? 'ah-btn ah-btn-primary' : 'ah-btn ah-btn-danger')
                   : option === c.defaultOption ? 'ah-btn ah-btn-primary' : 'ah-btn'}
                 disabled={busy}
-                onClick={() => pick(option)}>
+                onClick={() => c.goalId && option === '未通过' ? setRejectingGoal(true) : pick(option)}>
                 {option}{option === c.defaultOption && c.type !== 'approval' ? '（默认）' : ''}
               </button>
             ))}
           </div>
+          {rejectingGoal ? (
+            <div className="ah-card-options" aria-label="验收未通过原因">
+              {['没做', '做错', '不符预期', '未通过'].map(reason => (
+                <button key={reason} type="button" className="ah-btn" disabled={busy} onClick={() => pick(reason === '不符预期' ? '不是你要的' : reason)}>{reason}</button>
+              ))}
+              <button type="button" className="ah-btn ah-btn-ghost" disabled={busy} onClick={() => setRejectingGoal(false)}>取消</button>
+            </div>
+          ) : null}
+          {/* 仅有 placeholder 不构成稳定可达名称（WCAG 4.1.2）：补 aria-label，读屏直接报「审批附言」。 */}
           {c.type === 'approval' && picked === null ? (
-            <input className="ah-card-note" value={note} placeholder="附一句话（可不填）" disabled={busy}
+            <input className="ah-card-note" aria-label="审批附言（可不填）" value={note} placeholder="附一句话（可不填）" disabled={busy}
               onChange={e => setNote(e.target.value)} />
           ) : null}
           {c.type === 'question' && picked === null ? (
             <div className="ah-card-freetext">
               {/* 失败后草稿保留（D07 第 11 条）：输入框回到可用状态，freeText 没被清。 */}
-              <input value={freeText} placeholder="或者写一句你的回答" disabled={busy}
+              {/* 同上：placeholder 只作视觉提示，可达名称由 aria-label 承担。 */}
+              <input aria-label="或填写回答" value={freeText} placeholder="或填写回答" disabled={busy}
                 onChange={e => setFreeText(e.target.value)}
                 onKeyDown={e => {
                   // 中文输入法组合态的回车只是上屏候选词，不算发送（交互审查第 3 条）。

@@ -9,6 +9,8 @@ import { createInboxItem, retireProposalRecord } from './inbox.js';
 import { postThread } from './thread.js';
 import { readAuditDetail, writeOutreachAudit } from './audit.js';
 import { proposalAnswer } from './inbox-options.js';
+import { botMbti } from '../personality/profile.js';
+import { personalityBehavior } from '../personality/behavior.js';
 const ProposalSchema = z.strictObject({ title: nonempty, detail: nonempty, value: ratio, confidence: ratio, refId: nonempty.nullable().optional(), subjectKey: nonempty.optional() });
 export type ProposalInput = z.infer<typeof ProposalSchema>;
 /** 按价值、置信度、周限额和拒绝冷却决定提议入箱或进点子池，避免重复打扰主人。 */
@@ -35,10 +37,16 @@ export async function submitProposal(ctx: HubContext, botId: string, input: Prop
     const weekStart = startOfLocalDay(now - ((localParts(now, ctx.settings.timezone).weekday + 6) % 7) * ctx.settings.c03.dayMs, ctx.settings.timezone);
     const proposed = ctx.store.table('inbox').count(row => row.botId === botId && row.type === 'proposal' && row.createdAt >= weekStart && row.createdAt <= now && row.answer !== 'idea_pool');
     const limited = (bot.lifecycle === 'probation' || bot.autonomy === 'L1') && proposed >= ctx.settings.l1WeeklyProposalCap;
-    const admitted = !limited && value.value >= ctx.settings.proposalMinValue && value.confidence >= ctx.settings.proposalMinConfidence;
+    // 性格只能提高提议底线，不能越过周上限、拒绝冷却或后续的权限审批。
+    const mbti = botMbti(ctx, botId);
+    const behavior = personalityBehavior(mbti, ctx.settings);
+    const minValue = behavior?.proposalMinValue ?? ctx.settings.proposalMinValue;
+    const minConfidence = behavior?.proposalMinConfidence ?? ctx.settings.proposalMinConfidence;
+    const admitted = !limited && value.value >= minValue && value.confidence >= minConfidence;
     const item = createInboxItem(ctx, { botId, type: 'proposal', title: value.title, body: value.detail, options: ['接受', '不做'], defaultOption: null,
         priority: 'P2', refId: value.refId ?? null, subjectKey: value.subjectKey ?? `proposal:${botId}:${value.title}`, status: admitted ? 'open' : 'closed', answer: admitted ? null : 'idea_pool' });
-    writeOutreachAudit(ctx, 'proposal_submitted', { id: item.id, value: value.value, confidence: value.confidence, admitted, limited }, botId);
+    writeOutreachAudit(ctx, 'proposal_submitted', { id: item.id, value: value.value, confidence: value.confidence,
+        admitted, limited, mbti, minValue, minConfidence }, botId);
     if (!admitted)
         await retireProposalRecord(ctx, item);
     if (admitted)

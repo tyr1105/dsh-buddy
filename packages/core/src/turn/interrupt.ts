@@ -7,6 +7,7 @@ import { refreshExpectedBy } from '../commit/process.js';
 import { postThread } from '../outreach/thread.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
+import { sealLedgerForWake } from '../ledger/service.js';
 
 /** 此函数无 await：标记、恢复感知、解绑旧会话与释放投递等待必须先于宿主 cancel。 */
 export function interruptWake(ctx: HubContext, wakeId: string, at: number): WakeTicket | null {
@@ -42,6 +43,9 @@ export function interruptWake(ctx: HubContext, wakeId: string, at: number): Wake
   postThread(ctx, { thread: wake.botId, from: 'hub', kind: 'system',
     text: '你打断了它；它会在下次醒来时接着处理', refId: wake.id });
   writeOutreachAudit(ctx, 'owner_interrupted', { botId: wake.botId, wakeId: wake.id }, 'owner', at);
+  // 打断是明确的终态，账本必须同步收口；投递中还没有开账的唤醒没有账本行，直接跳过。
+  try { sealLedgerForWake(ctx, wake.id); }
+  catch (error) { try { ctx.logger.error('打断后封存唤醒账本失败', error); } catch { /* 账本故障不阻断打断。 */ } }
   ctx.emit(HUB_EVENT_SCOPES.bot, wake.botId);
   ctx.emit(HUB_EVENT_SCOPES.activity, wake.botId);
   return canceled;

@@ -194,8 +194,37 @@ describe('refreshSettings：设置读不到不等于连不上（D07 第 2 条）
   })
 })
 
+describe('refreshActivity：动态读不到不等于连不上（U01 第 32 轮）', () => {
+  it('首屏 500 → 不标 connectionDown，activityError 记中文原因；再拉成功清掉', async () => {
+    let broken = true
+    stubFetch(async url => url.includes('activity')
+      ? broken
+        ? { status: 500, body: { ok: false, error: '动态查询失败：索引损坏' } }
+        : { status: 200, body: { rows: [], hasMore: false } }
+      : { status: 200, body: {} })
+    const hub = createHubStore()
+    await hub.refreshActivity()
+    let state = hub.getSnapshot()
+    expect(state.connectionDown).toBe(false)
+    expect(state.activityError).toBe('动态查询失败：索引损坏')
+    broken = false
+    await hub.refreshActivity()
+    state = hub.getSnapshot()
+    expect(state.activityError).toBeNull()
+    expect(state.activity).not.toBeNull()
+  })
+  it('网络错误仍然整页提示，activityError 不滥用', async () => {
+    stubFetch(async () => ({ status: 500, body: { ok: false, error: '连不上 Agent 中心（网络错误）' } }))
+    const hub = createHubStore()
+    await hub.refreshActivity()
+    const state = hub.getSnapshot()
+    expect(state.connectionDown).toBe(true)
+    expect(state.activityError).toBeNull()
+  })
+})
+
 describe('onChanged：每种 scope 实际请求了哪些接口（D07 第 25 条）', () => {
-  it('六范围 + 未知 scope 的实际请求逐项断言（假 fetch）', async () => {
+  it('已知 scope + 未知 scope 的实际请求逐项断言（假 fetch）', async () => {
     vi.useFakeTimers()
     const { fetchCalls } = stubFetch(async url => {
       if (url.includes('overview')) return { status: 200, body: { bots: [] } }
@@ -209,13 +238,18 @@ describe('onChanged：每种 scope 实际请求了哪些接口（D07 第 25 条�
     const hub = createHubStore()
     const pathsOf = (): string[] => fetchCalls.map(u => u.replace(/^.*agent-hub\//, '').split('?')[0]!)
     const cases: Array<{ event: { scope: string; botId?: string }; expectPaths: string[] }> = [
-      { event: { scope: 'overview', botId: 'b_1' }, expectPaths: ['overview', 'bot'] },
-      { event: { scope: 'bot', botId: 'b_1' }, expectPaths: ['overview', 'bot'] },
+      // F03：总览/详情/账本/收件箱变化都会改变房间里的灯、桌面或门口，顺带刷办公室。
+      // V2-PH2-04：overview/bot 同口径顺带刷资料授权矩阵（resource）。
+      { event: { scope: 'overview', botId: 'b_1' }, expectPaths: ['overview', 'bot', 'office', 'resource'] },
+      { event: { scope: 'bot', botId: 'b_1' }, expectPaths: ['overview', 'bot', 'office', 'resource'] },
       { event: { scope: 'thread', botId: 'b_1' }, expectPaths: ['overview', 'thread'] },
       { event: { scope: 'thread', botId: undefined }, expectPaths: ['overview', 'thread'] },
-      { event: { scope: 'inbox' }, expectPaths: ['overview', 'inbox'] },
+      { event: { scope: 'inbox' }, expectPaths: ['overview', 'inbox', 'office'] },
       { event: { scope: 'activity' }, expectPaths: ['activity'] },
       { event: { scope: 'settings' }, expectPaths: ['settings'] },
+      { event: { scope: 'office' }, expectPaths: ['office'] },
+      // V2-PH4-02：项目/任务变化刷总览计数并定向重拉项目页，不连带其它视图。
+      { event: { scope: 'project' }, expectPaths: ['overview', 'project'] },
       { event: { scope: 'wakes' }, expectPaths: ['overview', 'activity'] },
     ]
     for (const { event, expectPaths } of cases) {

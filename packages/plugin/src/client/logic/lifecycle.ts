@@ -19,7 +19,7 @@ export function lifecycleButtons(lifecycle: Lifecycle): LifecycleButton[] {
   if (lifecycle === 'active' || lifecycle === 'probation') buttons.push({ action: 'pause', label: '暂停' })
   if (lifecycle === 'paused') buttons.push({ action: 'resume', label: '恢复' })
   if (lifecycle === 'quarantined') buttons.push({ action: 'release_quarantine', label: '解除停用' })
-  if (lifecycle === 'probation') buttons.push({ action: 'promote', label: '提前转正' })
+  if (lifecycle === 'probation') buttons.push({ action: 'promote', label: '转正' })
   if (lifecycle !== 'retired') buttons.push({ action: 'retire', label: '退役' })
   return buttons
 }

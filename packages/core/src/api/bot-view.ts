@@ -4,25 +4,45 @@ import type { HubContext } from '../engine/context.js';
 import { AGENDA_KIND_LABELS, APPRAISAL_DECISION_LABELS, AUTONOMY_LABELS, GOAL_PERIOD_LABELS, GOAL_STATUS_LABELS,
   OUTCOME_LABELS, PACE_PROFILE_LABELS, VARIANT_LABELS, WATCH_KIND_LABELS } from '../model/enums.js';
 import { C04_DEFAULTS } from '../config/defaults.js';
+import { mbtiLabel } from '../model/mbti.js';
 import { readMemorySummary } from '../memory/files.js';
 import { formatDuration } from '../util/time.js';
 import { formatExpectation } from '../util/expectation-text.js';
 import { botCard, botStats } from './summary-views.js';
 import { agoTime, requireBot, shortTime } from './common.js';
 import type { BotView } from './types.js';
+import { ARTIFACT_CHECK_LABELS, RESULT_VERDICT_LABELS } from '../model/result-check.js';
+import { artifactList } from '../artifacts/views.js';
+import { botMbti } from '../personality/profile.js';
+import { personalityBehavior } from '../personality/behavior.js';
 
 /** 每条时间同时给格式化文案和毫秒；内存摘要从注入文件接口读取，不暴露整个文件系统。 */
 export async function botView(ctx: HubContext, botId: string): Promise<BotView> {
   const bot = requireBot(ctx, botId);
-  return { card: botCard(ctx, bot), profile: { persona: bot.persona, autonomy: bot.autonomy, autonomyLabel: AUTONOMY_LABELS[bot.autonomy],
+  // MBTI 存在独立档案表；没有档案行按未设置显示，不替旧机器人补默认型。
+  const mbti = botMbti(ctx, botId);
+  // 一次建立 wakeId → 账本 id 的索引，避免每条唤醒都全表扫描。
+  const ledgerByWake = new Map(ctx.store.table('wakeLedger').list().map(row => [row.wakeId, row.id]));
+  const checks = ctx.store.table('resultChecks').list(row => row.botId === botId).reverse().sort((a, b) => b.createdAt - a.createdAt);
+  return { artifacts: await artifactList(ctx, botId, { kind: 'owner' }),
+    card: botCard(ctx, bot), profile: { persona: bot.persona, mbti, mbtiLabel: mbtiLabel(mbti), behavior: personalityBehavior(mbti, ctx.settings),
+    autonomy: bot.autonomy, autonomyLabel: AUTONOMY_LABELS[bot.autonomy],
     pace: bot.pace, paceLabel: PACE_PROFILE_LABELS[bot.pace], model: bot.model, modelText: bot.model ? `${bot.model.provider} / ${bot.model.model}` : '跟随宿主默认模型',
     homeDir: bot.homeDir, sessionId: bot.sessionId, createdAt: bot.createdAt, createdText: shortTime(ctx, bot.createdAt)!,
-    probationAt: bot.probationEndsAt, probationText: shortTime(ctx, bot.probationEndsAt), workDataAllowed: bot.workDataAllowed },
+    probationAt: bot.probationEndsAt, probationText: shortTime(ctx, bot.probationEndsAt), workDataAllowed: bot.workDataAllowed,
+    presetSkillIds: [...bot.presetSkillIds] },
     aspirations: ctx.store.table('aspirations').list(row => row.botId === botId).map(row => ({ id: row.id, text: row.text, status: row.status })),
     goals: ctx.store.table('goals').list(row => row.botId === botId).map(row => ({ id: row.id, title: row.title, doneWhen: row.doneWhen,
       period: row.period, periodAt: row.periodEndsAt, periodText: `${GOAL_PERIOD_LABELS[row.period]}${row.periodEndsAt === null ? '' : `，截至${shortTime(ctx, row.periodEndsAt)}`}`,
       status: row.status, statusLabel: GOAL_STATUS_LABELS[row.status], lastProgressAt: row.lastProgressAt,
-      lastProgressText: agoTime(ctx, row.lastProgressAt)!, createdBy: row.createdBy })),
+      lastProgressText: agoTime(ctx, row.lastProgressAt)!, createdBy: row.createdBy,
+      checkText: (() => {
+        const check = checks.find(item => item.goals.some(goal => goal.id === row.id));
+        if (!check) return '尚无中心实查记录';
+        const verdict = check.decisions.find(item => item.goalId === row.id);
+        return verdict ? RESULT_VERDICT_LABELS[verdict.verdict]
+          : `中心实查：${check.artifacts.map(item => ARTIFACT_CHECK_LABELS[item.status]).join('；') || '未提供可实查的交付位置'}；内容待你验收`;
+      })() })),
     agenda: ctx.store.table('agenda').list(row => row.botId === botId).sort((a, b) => a.priority - b.priority || (a.dueAt ?? Infinity) - (b.dueAt ?? Infinity))
       .map(row => ({ id: row.id, kind: row.kind, kindLabel: AGENDA_KIND_LABELS[row.kind], title: row.title, dueAt: row.dueAt,
         dueText: shortTime(ctx, row.dueAt), priority: row.priority, toOwner: row.toOwner, source: row.source, status: row.status })),
@@ -42,7 +62,8 @@ export async function botView(ctx: HubContext, botId: string): Promise<BotView> 
         reasonText: ownerReasonSummary(row.reason, ctx), score: row.reason.score, threshold: row.reason.threshold, status: row.status,
         outcome: commit?.outcome ?? null, outcomeLabel: commit ? OUTCOME_LABELS[commit.outcome] : null, summary: commit?.summary ?? null,
         steps: row.steps, tokens: row.tokens, durationMs, durationText: durationMs === null ? null : formatDuration(durationMs),
-        startedAt: row.startedAt, timeText: shortTime(ctx, row.startedAt)!, startedText: shortTime(ctx, row.startedAt)! };
+        startedAt: row.startedAt, timeText: shortTime(ctx, row.startedAt)!, startedText: shortTime(ctx, row.startedAt)!,
+        ledgerId: ledgerByWake.get(row.id) ?? null, hasLedger: ledgerByWake.has(row.id) };
     }),
     appraisals: ctx.store.log('appraisals').recent(C04_DEFAULTS.VIEW_APPRAISAL_LIMIT, row => row.botId === botId).map(row => ({ id: row.id,
       at: row.at, timeText: shortTime(ctx, row.at)!, decision: row.decision, decisionLabel: APPRAISAL_DECISION_LABELS[row.decision],

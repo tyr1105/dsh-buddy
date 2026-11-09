@@ -67,6 +67,14 @@ export function textOfContent(content: unknown): string {
   return content.filter((b: any) => b?.type === 'text').map((b: any) => String(b.text ?? '')).join('')
 }
 
+/** 工具结果摘要：只取文本块或错误消息，最多 2000 字；完整输出留给 DSH 会话，不写账本。 */
+export function resultSummaryOf(data: any): string {
+  const fromContent = textOfContent(data?.message?.content)
+  const raw = fromContent !== '' ? fromContent : String(data?.error?.message ?? data?.error?.code ?? '')
+  const chars = Array.from(raw.replace(/\s+/g, ' ').trim())
+  return chars.slice(0, 2_000).join('')
+}
+
 /** 桥投递的 requestId 前缀（dsh-claude-bridge 的约定），不算主人亲手发言。 */
 export const BRIDGE_RPC_PREFIX = 'claude-bridge-'
 /** 中心替主人转发原话时的 requestId 前缀（手册 3.3 relayOwnerWords），不算主人亲手发言。 */
@@ -93,6 +101,8 @@ interface TurnState {
   usageByStep: Map<string, number>
   /** (turn:step) 已重试次数：每收到一次 llm/retry-started 加一，下一份用量记进新槽。 */
   retries: Map<string, number>
+  /** 已发出、还没收到结果的工具调用；过程下钻要把名字和参数带到结果事件里。 */
+  calls: Map<string, { name: string; args: unknown }>
 }
 
 /** 未决审批：审批 id → 等待配对 decided 的记录（含 30 秒定时器句柄）。 */
@@ -174,7 +184,7 @@ export class SessionEventTranslator {
       if (typeof event.data?.title === 'string') this.titles.set(String(session?.id), event.data.title)
       return
     }
-    if (!['turn/start', 'turn/end', 'tool/call', 'assistant/message', 'assistant/attempt', 'llm/retry-started', 'approval/asked', 'approval/decided', 'user/message'].includes(event?.type)) return
+    if (!['turn/start', 'turn/end', 'tool/call', 'tool/result', 'assistant/message', 'assistant/attempt', 'llm/retry-started', 'approval/asked', 'approval/decided', 'user/message'].includes(event?.type)) return
     const sessionId = String(session?.id ?? '')
     if (sessionId === '' || session?.header?.origin === 'subagent') return
     const at = typeof event.time === 'number' ? event.time : this.deps.now()
@@ -189,14 +199,36 @@ export class SessionEventTranslator {
     switch (event.type) {
       case 'turn/start':
         this.clearSessionApprovals(sessionId) // 兜底清掉上一回合漏网的未决审批
-        this.turns.set(sessionId, { steps: 0, finalText: '', usageByStep: new Map(), retries: new Map() })
+        this.turns.set(sessionId, { steps: 0, finalText: '', usageByStep: new Map(), retries: new Map(), calls: new Map() })
         void hub.onTurnEvent({ type: 'started', sessionId, at })
         return
       case 'tool/call': {
         const turn = this.turns.get(sessionId)
         if (!turn) return
         turn.steps += 1
+        // 先记住名字与参数；等 tool/result 到了再报给 core，避免把「发起」当成「成功」。
+        const callId = String(event.data?.callId ?? '')
+        if (callId !== '') turn.calls.set(callId, { name: String(event.data?.name ?? '未知工具'), args: event.data?.arguments })
         void hub.onTurnEvent({ type: 'step', sessionId, at, steps: turn.steps, tokens: this.tokensOf(turn) })
+        return
+      }
+      case 'tool/result': {
+        // 一次工具调用有了真实结果：把工具名、参数与失败标记写进账本（F02 过程下钻）。
+        const turn = this.turns.get(sessionId)
+        if (!turn) return
+        const callId = String(event.data?.message?.toolCallId ?? '')
+        const call = callId === '' ? undefined : turn.calls.get(callId)
+        if (callId !== '') turn.calls.delete(callId)
+        // 找不到配对的 call 时只报名字占位：宁可显示「未知工具」，也不能丢掉一次真实动作。
+        const resultText = resultSummaryOf(event.data)
+        void hub.onTurnEvent({
+          type: 'tool_call', sessionId, at,
+          name: call?.name ?? '未知工具',
+          callId,
+          args: call?.args,
+          isError: event.data?.message?.isError === true || event.data?.error !== undefined,
+          resultText,
+        })
         return
       }
       case 'assistant/message':

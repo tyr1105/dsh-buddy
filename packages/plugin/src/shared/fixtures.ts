@@ -52,9 +52,36 @@ export const fixtureOverview: OverviewView = {
   ],
   inbox: { total: 3, approvals: 1, questions: 1, proposals: 1, alerts: 0 },
   team: { unread: 0, lastMessageText: '探路：数据日报的事我在查，第 12 步了，有结果告诉你。' },
-  quota: { light: 'green', lightLabel: '绿灯', usedText: '约 12.1 万 token（估算）', resetText: '明天 00:00 恢复' },
-  health: { ok: true, heartbeatText: '心跳正常（刚刚）', downtimeText: null, openAlerts: 0 },
+  // lightLabel 以 core 的 QUOTA_LIGHT_LABELS 为准（green 是「充足」）；顶栏不直接用它，
+  // 但夹具要照 core 的真实形状摆，避免以后有人直接渲染时冒出「绿灯」这种旧叫法。
+  quota: { light: 'green', lightLabel: '充足', usedText: '约 12.1 万 token（估算）', resetText: '明天 00:00 恢复' },
+  health: { ok: true, heartbeatText: '心跳正常（刚刚）', downtimeText: null, openAlerts: 0, sandboxWarning: null },
   nowText: '今天 14:20', quietNow: false, pushesLeftToday: 3,
+  // 成本数据（走查夹具也要有，否则设置页会显示「尚未读到成本记录」的空态；
+  // 真实 DSH 由 core costView 从账本计算，夹具只摆形状——数字随便填，目的是让界面能正常渲染成本表）。
+  costs: {
+    asOf: NOW, timezone: 'Asia/Shanghai', projectStatus: 'unallocated' as const,
+    days: [
+      {
+        date: '2026-11-06',
+        total: { turns: 6, ownerTurns: 2, unknownOwnerTurns: 0, tokens: 82000, hostTokens: 42000, estimatedTokens: 38000, unknownTokens: 2000, unknownMeasurements: 0, pending: 1 },
+        bots: [
+          { botId: 'bot-tanlu', name: '探路', archived: false, turns: 3, ownerTurns: 0, unknownOwnerTurns: 0, tokens: 41000, hostTokens: 20000, estimatedTokens: 20000, unknownTokens: 1000, unknownMeasurements: 0, pending: 1 },
+          { botId: 'bot-xunjian', name: '巡检员', archived: false, turns: 2, ownerTurns: 0, unknownOwnerTurns: 0, tokens: 24000, hostTokens: 12000, estimatedTokens: 11000, unknownTokens: 1000, unknownMeasurements: 0, pending: 0 },
+          { botId: 'bot-zongguan', name: '总管', archived: false, turns: 1, ownerTurns: 0, unknownOwnerTurns: 0, tokens: 5000, hostTokens: 2000, estimatedTokens: 3000, unknownTokens: 0, unknownMeasurements: 0, pending: 0 },
+        ],
+      },
+      {
+        date: '2026-11-05',
+        total: { turns: 8, ownerTurns: 3, unknownOwnerTurns: 1, tokens: 96000, hostTokens: 50000, estimatedTokens: 42000, unknownTokens: 4000, unknownMeasurements: 1, pending: 0 },
+        bots: [
+          { botId: 'bot-tanlu', name: '探路', archived: false, turns: 4, ownerTurns: 0, unknownOwnerTurns: 1, tokens: 52000, hostTokens: 26000, estimatedTokens: 24000, unknownTokens: 2000, unknownMeasurements: 1, pending: 0 },
+          { botId: 'bot-xunjian', name: '巡检员', archived: false, turns: 2, ownerTurns: 2, unknownOwnerTurns: 0, tokens: 28000, hostTokens: 16000, estimatedTokens: 10000, unknownTokens: 2000, unknownMeasurements: 0, pending: 0 },
+          { botId: 'bot-zongguan', name: '总管', archived: false, turns: 2, ownerTurns: 1, unknownOwnerTurns: 0, tokens: 16000, hostTokens: 8000, estimatedTokens: 8000, unknownTokens: 0, unknownMeasurements: 0, pending: 0 },
+        ],
+      },
+    ],
+  },
 }
 
 // ---------- 线程 ----------
@@ -127,7 +154,7 @@ export const fixtureInbox: InboxView = {
 
 export const fixtureActivity: ActivityView = {
   rows: [
-    { id: 'ac10', at: NOW - 4 * 60_000, timeText: '4 分钟前', botId: 'bot-tanlu', botName: '探路', botColor: 'var(--dsw-alias-success)', kind: 'wake', text: '被叫醒：变化——数据日报依赖服务今天又超时了 1 次。正在处理（第 12/30 步）。' },
+    { id: 'ac10', at: NOW - 4 * 60_000, timeText: '4 分钟前', botId: 'bot-tanlu', botName: '探路', botColor: 'var(--dsw-alias-success)', kind: 'wake', text: '唤醒：变化——数据日报依赖服务今天又超时了 1 次。正在处理（第 12/30 步）。' },
     { id: 'ac9', at: NOW - 6 * 60_000, timeText: '6 分钟前', botId: 'bot-zongguan', botName: '总管', botColor: 'var(--dsw-alias-warning)', kind: 'commit', text: '交账：汇总了全队今天的状态，等你对巡检频率的提议拍板。' },
     { id: 'ac8', at: NOW - 20 * 60_000, timeText: '20 分钟前', botId: 'bot-xunjian', botName: '巡检员', botColor: 'var(--dsw-alias-accent)', kind: 'commit', text: '交账：第 4 次自查完成，无变化。' },
     { id: 'ac7', at: NOW - 26 * 60_000, timeText: '26 分钟前', botId: null, botName: null, botColor: null, kind: 'system', text: '日报已送达到团队线程（免打扰时段外）。' },
@@ -151,9 +178,11 @@ export const fixtureBots: Record<string, BotView> = {
     card: fixtureOverview.bots[0]!,
     profile: {
       persona: '话少、只报事实，异常才开口。口头禅：「记下了。」',
+      mbti: 'ISTJ', mbtiLabel: 'ISTJ（物流师）',
       autonomy: 'L1', autonomyLabel: 'L1 建议', pace: 'normal', paceLabel: '适中',
       model: null, modelText: '跟随宿主默认模型',
       createdAt: NOW - 9 * 24 * 60 * 60_000, homeDir: '~/AgentHub/bots/xunjian', sessionId: 'sess-xunjian-demo', createdText: '10-28', probationText: null, workDataAllowed: false,
+      presetSkillIds: ['owner-brief', 'incident-triage'],
     },
     aspirations: [{ id: 'asp1', text: '让盯着的每一项都有「期望」：什么算正常、什么该叫人。', status: 'active' }],
     goals: [
@@ -175,9 +204,9 @@ export const fixtureBots: Record<string, BotView> = {
     ],
     memoryExcerpt: '主人关心的是「别出事」，不是「每行都知道」。归档行噪音已被降级到日报。',
     wakes: [
-      { id: 'wk3', variant: 'light_check', variantLabel: '轻复查', reasonKind: 'light_check', reasonText: '到自查时刻，快速看一眼', score: 0.4, threshold: 0.6, status: 'committed', outcome: 'no_change', outcomeLabel: '无变化', summary: '3 项全部正常', steps: 3, tokens: 2100, durationText: '2 分钟', startedAt: NOW - 20 * 60_000, timeText: '20 分钟前' },
-      { id: 'wk2', variant: 'regular', variantLabel: '常规', reasonKind: 'percept', reasonText: '变化：收藏服务运行记录：新增 1 行，1495/1495', score: 0.9, threshold: 0.6, status: 'committed', outcome: 'progress', outcomeLabel: '有进展', summary: '新增行是正常归档，规则判断无需打扰', steps: 8, tokens: 9400, durationText: '6 分钟', startedAt: NOW - 12 * 60 * 60_000, timeText: '昨天 14:20' },
-      { id: 'wk1', variant: 'regular', variantLabel: '常规', reasonKind: 'next_think', reasonText: '它自己约的时刻到了', score: 0.5, threshold: 0.6, status: 'committed', outcome: 'no_change', outcomeLabel: '无变化', summary: '全量自查一次，无变化', steps: 12, tokens: 13000, durationText: '9 分钟', startedAt: NOW - 26 * 60 * 60_000, timeText: '昨天 12:20' },
+      { id: 'wk3', variant: 'light_check', variantLabel: '轻复查', reasonKind: 'light_check', reasonText: '到自查时刻，快速看一眼', score: 0.4, threshold: 0.6, status: 'committed', outcome: 'no_change', outcomeLabel: '无变化', summary: '3 项全部正常', steps: 3, tokens: 2100, durationText: '2 分钟', startedAt: NOW - 20 * 60_000, timeText: '20 分钟前', ledgerId: null, hasLedger: false },
+      { id: 'wk2', variant: 'regular', variantLabel: '常规', reasonKind: 'percept', reasonText: '变化：收藏服务运行记录：新增 1 行，1495/1495', score: 0.9, threshold: 0.6, status: 'committed', outcome: 'progress', outcomeLabel: '有进展', summary: '新增行是正常归档，规则判断无需打扰', steps: 8, tokens: 9400, durationText: '6 分钟', startedAt: NOW - 12 * 60 * 60_000, timeText: '昨天 14:20', ledgerId: 'wl_wk2', hasLedger: true },
+      { id: 'wk1', variant: 'regular', variantLabel: '常规', reasonKind: 'next_think', reasonText: '它自己约的时刻到了', score: 0.5, threshold: 0.6, status: 'committed', outcome: 'no_change', outcomeLabel: '无变化', summary: '全量自查一次，无变化', steps: 12, tokens: 13000, durationText: '9 分钟', startedAt: NOW - 26 * 60 * 60_000, timeText: '昨天 12:20', ledgerId: null, hasLedger: false },
     ],
     appraisals: [
       { id: 'ap8', at: NOW - 20 * 60_000, timeText: '20 分钟前', decision: 'woke', decisionLabel: '已唤醒', suppressedBy: null, text: '轻复查：到时刻了，看一眼不花钱', score: 0.4, threshold: 0.6 },
@@ -195,9 +224,11 @@ export const fixtureBots: Record<string, BotView> = {
     card: fixtureOverview.bots[1]!,
     profile: {
       persona: '好奇心重，喜欢把一件事追到根因。汇报时先给结论再给证据。',
+      mbti: 'INTP', mbtiLabel: 'INTP（逻辑学家）',
       autonomy: 'L1', autonomyLabel: 'L1 建议', pace: 'active', paceLabel: '积极',
       model: { provider: 'deepseek-official', model: 'deepseek-flash' }, modelText: 'deepseek-official / deepseek-flash',
       createdAt: NOW - 5 * 24 * 60 * 60_000, homeDir: '~/AgentHub/bots/tanlu', sessionId: 'sess-tanlu-demo', createdText: '11-02', probationText: '试岗第 5/7 天', workDataAllowed: false,
+      presetSkillIds: ['data-check'],
     },
     aspirations: [
       { id: 'asp1', text: '把数据日报链路彻底查明白，让它别再半夜出问题。', status: 'active' },
@@ -217,8 +248,8 @@ export const fixtureBots: Record<string, BotView> = {
     rules: [{ id: 'ru1', text: '读服务器文件前先问主人。', redLine: false, scope: 'global' }],
     memoryExcerpt: '数据日报依赖一个内部服务，它超时后任务不会重试。主人允许只读日志，不许改配置。',
     wakes: [
-      { id: 'wk2', variant: 'regular', variantLabel: '常规', reasonKind: 'percept', reasonText: '变化：任务日志：依赖服务今天又超时了 1 次', score: 1.1, threshold: 0.6, status: 'running', outcome: null, outcomeLabel: null, summary: null, steps: 12, tokens: 41000, durationText: null, startedAt: NOW - 18 * 60_000, timeText: '18 分钟前' },
-      { id: 'wk1', variant: 'regular', variantLabel: '常规', reasonKind: 'agenda_due', reasonText: '答应你的：周五前给的清单，还剩 2 小时', score: 0.8, threshold: 0.6, status: 'committed', outcome: 'progress', outcomeLabel: '有进展', summary: '定位到依赖服务超时，证据链已存', steps: 18, tokens: 52000, durationText: '14 分钟', startedAt: NOW - 6 * 60 * 60_000, timeText: '6 小时前' },
+      { id: 'wk2', variant: 'regular', variantLabel: '常规', reasonKind: 'percept', reasonText: '变化：任务日志：依赖服务今天又超时了 1 次', score: 1.1, threshold: 0.6, status: 'running', outcome: null, outcomeLabel: null, summary: null, steps: 12, tokens: 41000, durationText: null, startedAt: NOW - 18 * 60_000, timeText: '18 分钟前', ledgerId: 'wl_gc_wk2', hasLedger: true },
+      { id: 'wk1', variant: 'regular', variantLabel: '常规', reasonKind: 'agenda_due', reasonText: '答应你的：周五前给的清单，还剩 2 小时', score: 0.8, threshold: 0.6, status: 'committed', outcome: 'progress', outcomeLabel: '有进展', summary: '定位到依赖服务超时，证据链已存', steps: 18, tokens: 52000, durationText: '14 分钟', startedAt: NOW - 6 * 60 * 60_000, timeText: '6 小时前', ledgerId: 'wl_gc_wk1', hasLedger: true },
     ],
     appraisals: [
       { id: 'ap4', at: NOW - 18 * 60_000, timeText: '18 分钟前', decision: 'woke', decisionLabel: '已唤醒', suppressedBy: null, text: '依赖服务又超时，正是要抓的现场', score: 1.1, threshold: 0.6 },
@@ -232,9 +263,11 @@ export const fixtureBots: Record<string, BotView> = {
     card: fixtureOverview.bots[2]!,
     profile: {
       persona: '全局视角，擅长把复杂的事说成三句话。不打扰人，但 deadlines 从不漏。',
+      mbti: 'ENTJ', mbtiLabel: 'ENTJ（指挥官）',
       autonomy: 'L1', autonomyLabel: 'L1 建议', pace: 'normal', paceLabel: '适中',
       model: null, modelText: '跟随宿主默认模型',
       createdAt: NOW - 17 * 24 * 60 * 60_000, homeDir: '~/AgentHub/bots/zongguan', sessionId: 'sess-zongguan-demo', createdText: '10-20', probationText: null, workDataAllowed: false,
+      presetSkillIds: ['owner-brief', 'project-handoff'],
     },
     aspirations: [{ id: 'asp1', text: '让全队的每次思考都花在刀刃上。', status: 'active' }],
     goals: [{ id: 'g1', title: '本月把全队的无变化思考占比降到 40% 以下', doneWhen: '统计口径下连续一周达标', period: 'month', periodText: '月', status: 'active', statusLabel: '进行中', lastProgressText: '本周 41%，接近达标', createdBy: 'bot' }],
@@ -247,7 +280,7 @@ export const fixtureBots: Record<string, BotView> = {
     rules: [{ id: 'ru1', text: '收件箱里同一时间不超过 5 件，能合并的合并。', redLine: false, scope: 'bot' }],
     memoryExcerpt: '主人喜欢先看结论。巡检项最近一周全正常，所以提了降频的提议。',
     wakes: [
-      { id: 'wk1', variant: 'regular', variantLabel: '常规', reasonKind: 'reflection', reasonText: '复盘：最近 7 天 21 次处理', score: 0.7, threshold: 0.6, status: 'committed', outcome: 'progress', outcomeLabel: '有进展', summary: '提出巡检降频提议', steps: 10, tokens: 15000, durationText: '8 分钟', startedAt: NOW - 26 * 60 * 60_000, timeText: '26 小时前' },
+      { id: 'wk1', variant: 'regular', variantLabel: '常规', reasonKind: 'reflection', reasonText: '复盘：最近 7 天 21 次处理', score: 0.7, threshold: 0.6, status: 'committed', outcome: 'progress', outcomeLabel: '有进展', summary: '提出巡检降频提议', steps: 10, tokens: 15000, durationText: '8 分钟', startedAt: NOW - 26 * 60 * 60_000, timeText: '26 小时前', ledgerId: null, hasLedger: false },
     ],
     appraisals: [
       { id: 'ap2', at: NOW - 26 * 60 * 60_000, timeText: '26 小时前', decision: 'woke', decisionLabel: '已唤醒', suppressedBy: null, text: '复盘时刻到了', score: 0.7, threshold: 0.6 },
@@ -267,6 +300,13 @@ export const fixtureSettings: SettingsView = {
     { value: null, label: '跟随宿主默认模型' },
     { value: { provider: 'deepseek-official', model: 'deepseek-flash' }, label: 'deepseek-flash（快）' },
     { value: { provider: 'deepseek-official', model: 'deepseek-chat' }, label: 'deepseek-chat（均衡）' },
+  ],
+  // P40：与 core 内置清单同文案的只读候选；样例里给不同队友勾不同的项，走查看差异。
+  presetSkillOptions: [
+    { id: 'owner-brief', name: '给主人的简报', purpose: '汇报先把结论写在第一句，再补证据与下一步，避免主人从头读。', condition: 'every_wake', conditionLabel: '每次唤醒' },
+    { id: 'project-handoff', name: '项目交接核对', purpose: '在项目里动手前先核对共享上下文、交接目录与待领清单，避免重复劳动。', condition: 'project_work', conditionLabel: '仅项目工作' },
+    { id: 'incident-triage', name: '异常排查四步', purpose: '遇到异常按「确认现象、定位范围、找最近变化、给下一步」推进，不猜结论。', condition: 'task_type', conditionLabel: '特定任务类型' },
+    { id: 'data-check', name: '数据核对清单', purpose: '交付数字前先核对口径、时间范围与总量，避免把错数送给主人。', condition: 'task_type', conditionLabel: '特定任务类型' },
   ],
 }
 

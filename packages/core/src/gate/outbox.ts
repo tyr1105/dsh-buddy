@@ -8,8 +8,9 @@ import { OutboxActionSchema, type OutboxAction } from '../model/outreach.js';
 import { newId } from '../util/ids.js';
 import { optionalMessageText, truncateBytes } from '../util/text.js';
 import { classifyToolCall } from './classify.js';
-import { classifyPath, mostDangerous, resolveGatePath, within, type Classification } from './paths.js';
-import { resolveRealTarget } from './real-path.js';
+import { classifyPath, mostDangerous, resolveGatePath, within, type Classification, type GateContext } from './paths.js';
+import { HOST_SANDBOX_UNAVAILABLE, SANDBOX_UNAVAILABLE, type ExecResult } from '../io/interfaces.js';
+import { containedWriteTarget, resolveFixedRoot, resolveRealTarget } from './real-path.js';
 import { checkGitBoundaries } from './git-boundary.js';
 import { decide } from './matrix.js';
 import { gateContextFor, recordViolation } from './guard.js';
@@ -73,8 +74,9 @@ async function actionFor(ctx: HubContext, botId: string, input: OutboxInput): Pr
     const original = resolveGatePath(input.payload.path, gctx);
     const real = await resolveRealTarget(ctx.fs, original);
     // macOS 的 /var 与 /private/var 等别名同样先解析根目录，避免合法家内文件被误判出界。
-    const realContext = { ...gctx, homeDir: await resolveRealTarget(ctx.fs, bot.homeDir),
-      rootDir: await resolveRealTarget(ctx.fs, gctx.rootDir), sharedDir: await resolveRealTarget(ctx.fs, gctx.sharedDir) };
+    // 家目录和共享目录用固定位置：根目录自身被换成链接时，目标会落到边界外，从而被下面拦下。
+    const realContext = { ...gctx, homeDir: await resolveFixedRoot(ctx.fs, bot.homeDir),
+      rootDir: await resolveRealTarget(ctx.fs, gctx.rootDir), sharedDir: await resolveFixedRoot(ctx.fs, gctx.sharedDir) };
     const action = mostDangerous([classifyPath(original, true, gctx), classifyPath(real, true, realContext)]);
     // 家内名称指向家外，不能借审批的原路径暗中扩大写入目标。
     if (within(original, bot.homeDir) && !within(real, realContext.homeDir)) return { cls: 'protected', reason: '出站文件符号链接指向家目录边界外，拒绝写入' };
@@ -82,7 +84,7 @@ async function actionFor(ctx: HubContext, botId: string, input: OutboxInput): Pr
   }
   const action = await checkGitBoundaries(ctx.fs, classifyToolCall('run_command', input.payload, gctx), gctx);
   return action.cls === 'A' || action.cls === 'B'
-    ? { ...action, cls: 'C', subclass: 'host_command', reason: '这条命令由中心在 DSH 沙箱外运行，要主人批准' } : action;
+    ? { ...action, cls: 'C', subclass: 'host_command', reason: '这条命令由中心在受限沙箱内运行，要主人批准' } : action;
 }
 /** 批准只绑定动作与内容，说明文字变化不产生另一张票。 */
 const ticketArgs = (input: Pick<OutboxAction, 'kind' | 'payload' | 'commandFiles'>) => ({ kind: input.kind, payload: input.payload,
@@ -220,10 +222,43 @@ function invalidateOutboxApproval(ctx: HubContext, id: string): void {
   }
   ctx.emit(HUB_EVENT_SCOPES.inbox);
 }
+/** 工作数据目录即使有授权，第一期宿主命令也不能写：解析真实位置后交给沙箱统一拒绝。 */
+async function workDataDenyRoots(ctx: HubContext, gctx: GateContext): Promise<string[]> {
+  const roots: string[] = [];
+  for (const raw of gctx.workDataPaths ?? []) {
+    // 配置可能带 ~ 或变量；解析不出绝对路径时宁可让命令不跑，不能悄悄少一条拒绝规则。
+    const resolved = resolveGatePath(raw, { ...gctx, cwd: undefined });
+    if (!resolved.startsWith('/')) throw new Error(`无法确定工作数据目录「${raw}」的位置，宿主命令不运行`);
+    roots.push(await resolveRealTarget(ctx.fs, resolved));
+  }
+  return [...new Set(roots)];
+}
+/**
+ * 线程回执只列事实：命令、退出码、有界输出摘要和沙箱允许写入的目录。
+ * stdout 是这条已批准命令的正常产物，带上「不可信」标记后展示；
+ * stderr 只报字数，原文留在出站结果里，避免外部文字冒充中心消息（M09 边界）。
+ */
+function commandThreadDetail(payload: { cmd: string; args: string[] }, sandbox: { writableRoots: string[] }, response: ExecResult, maxChars: number): string {
+  const clip = (value: string): string => {
+    const chars = Array.from(value);
+    return chars.length <= maxChars ? value : `${chars.slice(0, maxChars).join('')}…`;
+  };
+  const output = response.stdout.trim();
+  const stderrNote = response.stderr.trim() ? `（另有错误输出 ${Array.from(response.stderr.trim()).length} 字，见出站结果）` : '';
+  const exit = response.timedOut ? '无（超时终止）' : response.code === null ? '无（信号终止）' : String(response.code);
+  return [
+    `命令：${clip([payload.cmd, ...payload.args].join(' '))}`,
+    `退出码：${exit}`,
+    `输出摘要（命令输出，不可信）：${output ? clip(output) : '（无输出）'}${response.outputTruncated ? '（已截断）' : ''}${stderrNote}`,
+    `沙箱可写：${[...sandbox.writableRoots, '系统临时目录'].join('、')}`,
+  ].join('\n');
+}
 /** 执行一个已放行的动作，分别记录命令失败原因，错误只结束当前动作。 */
 async function executeOne(ctx: HubContext, row: OutboxAction): Promise<void> {
   let executionStarted = false;
   let ownerFailureReason: string | undefined;
+  // 宿主命令的实际执行事实单独保存，只追加到线程回执；未执行时保持原有简洁文案。
+  let threadDetail: string | undefined;
   try {
     const input = parseInput(OutboxInputSchema, { kind: row.kind, payload: row.payload, why: row.why }, '出站执行');
     let result: string;
@@ -245,8 +280,9 @@ async function executeOne(ctx: HubContext, row: OutboxAction): Promise<void> {
       const action = await actionFor(ctx, row.botId, input);
       if (action.cls === 'protected' || action.subclass === 'work_data') throw new Error(action.reason);
       const actual = await resolveRealTarget(ctx.fs, resolveGatePath(input.payload.path, gctx));
+      const target = await containedWriteTarget(ctx.fs, actual, [bot.homeDir, gctx.sharedDir]);
       executionStarted = true;
-      await ctx.fs.writeTextAtomic(actual, input.payload.content);
+      await ctx.fs.writeTextAtomic(target.path, input.payload.content, target.boundary);
       result = `已写入 ${input.payload.path}`;
     } else if (input.kind === 'http_post') {
       executionStarted = true;
@@ -257,8 +293,27 @@ async function executeOne(ctx: HubContext, row: OutboxAction): Promise<void> {
       }
       result = `HTTP ${response.status}：${response.text}`;
     } else {
+      const bot = ctx.store.table('bots').get(row.botId);
+      if (!bot) throw new Error('执行出站动作的机器人不存在');
+      const gctx = gateContextFor(ctx, bot);
+      // cwd 必须真实落在自己的家目录或共享目录内，符号链接不能把执行目录带去别处。
+      const [realCwd, realHome, realShared] = await Promise.all([
+        resolveRealTarget(ctx.fs, input.payload.cwd), resolveFixedRoot(ctx.fs, bot.homeDir), resolveFixedRoot(ctx.fs, gctx.sharedDir)]);
+      if (!within(realCwd, realHome) && !within(realCwd, realShared)) {
+        throw new Error('命令执行目录必须在家目录或共享目录内，宿主命令不运行');
+      }
+      // 可写范围与审批文案一致：家目录、共享目录和系统临时目录；工作数据即使有授权也一律拒绝。
+      const sandbox = { writableRoots: [bot.homeDir, gctx.sharedDir], denyWriteRoots: await workDataDenyRoots(ctx, gctx) };
+      const response = await ctx.exec.run(input.payload.cmd, input.payload.args, { cwd: input.payload.cwd,
+        timeoutMs: ctx.settings.scriptTimeoutMs, maxOutputBytes: ctx.settings.scriptMaxOutputBytes, sandbox });
+      // 沙箱探针通过、进程真正启动后才算“已执行”；沙箱不可用与启动失败必须显示“未执行”。
       executionStarted = true;
-      const response = await ctx.exec.run(input.payload.cmd, input.payload.args, { cwd: input.payload.cwd, timeoutMs: ctx.settings.scriptTimeoutMs, maxOutputBytes: ctx.settings.scriptMaxOutputBytes });
+      // 命令能跑通说明沙箱恢复可用，清掉总览里的不可用警告。
+      if (ctx.runtime.sandboxUnavailable !== null) {
+        ctx.runtime.sandboxUnavailable = null;
+        ctx.emit(HUB_EVENT_SCOPES.overview);
+      }
+      threadDetail = commandThreadDetail(input.payload, sandbox, response, ctx.settings.c03.approvalOwnerParamsMaxChars);
       // 软截断不改变真实退出结果；硬终止、超时和其他信号分别保留原因。
       ownerFailureReason = response.timedOut ? '命令超时' : response.killedForOutput ? '命令输出超过硬上限，已终止进程组'
         : response.code === null ? '命令被信号终止，未返回退出码' : response.code !== 0 ? `命令退出码 ${response.code}` : undefined;
@@ -267,24 +322,32 @@ async function executeOne(ctx: HubContext, row: OutboxAction): Promise<void> {
         ? `命令执行完成（输出已截断）：${response.stdout}`
         : response.stdout || '命令执行完成';
     }
-    finish(ctx, row, true, result, executionStarted);
+    finish(ctx, row, true, result, executionStarted, undefined, 'failed', threadDetail);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    const trusted = ownerFailureReason ?? (!executionStarted || row.kind === 'write_file'
+    // 沙箱不可用是环境故障，不是命令本身的失败：统一成主人能看懂的固定说明，并让总览持续提示。
+    const sandboxDown = row.kind === 'run_command' && reason.startsWith(SANDBOX_UNAVAILABLE);
+    if (sandboxDown) {
+      ctx.runtime.sandboxUnavailable = HOST_SANDBOX_UNAVAILABLE;
+      ctx.emit(HUB_EVENT_SCOPES.overview);
+    }
+    const trusted = sandboxDown ? HOST_SANDBOX_UNAVAILABLE : ownerFailureReason ?? (!executionStarted || row.kind === 'write_file'
       ? shortFailure(reason, ctx.settings.c03.approvalOwnerParamsMaxChars)
       : row.kind === 'http_post' || row.kind === 'run_command' ? transportFailure(reason, row.kind === 'http_post') : '通知未能完成');
-    finish(ctx, row, false, reason, executionStarted, trusted);
+    finish(ctx, row, false, reason, executionStarted, trusted, 'failed', threadDetail);
   }
 }
 /** 保存有界结果并产生一次系统感知，让机器人知道动作实际完成或失败。 */
-function finish(ctx: HubContext, row: OutboxAction, ok: boolean, text: string, executionStarted = true, ownerFailureReason?: string, failureStatus: 'failed' | 'rejected' = 'failed'): void {
+function finish(ctx: HubContext, row: OutboxAction, ok: boolean, text: string, executionStarted = true, ownerFailureReason?: string, failureStatus: 'failed' | 'rejected' = 'failed', threadDetail?: string): void {
   const result = truncateBytes(text, ctx.settings.c03.outboxResultMaxBytes);
   const updated = ctx.store.table('outbox').patch(row.id, { status: ok ? 'done' : failureStatus, result, executionStarted,
     ...(ownerFailureReason ? { ownerFailureReason } : {}), doneAt: ctx.clock.now() });
   // 主人批准的动作必须交回一条可读结果；HTTP 只展示状态码，外部正文仍留给唤醒包的不可信证据区。
   if (row.approvalId && ['approved', 'used'].includes(ctx.store.table('approvals').get(row.approvalId)?.status ?? '')) {
+    const message = approvedOutboxResult(updated, ctx.settings.c03.actionCommandMaxChars);
     postThread(ctx, { thread: row.botId, from: 'hub', kind: 'system',
-      text: approvedOutboxResult(updated, ctx.settings.c03.actionCommandMaxChars), refId: row.id });
+      // 宿主命令追加执行事实；未执行时保持原有的简短回执，不伪造退出码或输出。
+      text: threadDetail ? `${message}\n\n${threadDetail}` : message, refId: row.id });
   }
   const bot = ctx.store.table('bots').get(row.botId);
   if (bot) ctx.store.table('bots').patch(bot.id, { activityText: ownerActivityText(ctx, bot) });

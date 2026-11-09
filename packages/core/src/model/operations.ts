@@ -11,6 +11,10 @@ export const LedgerEntrySchema = z.strictObject({
   tokens: count, // token 用量
   kind: e.LedgerKindSchema, // 回合、上下文压缩或其他用量
   at: timestamp, // 发生时间（Unix 毫秒）
+  tokenSource: z.enum(['host', 'estimate']).optional(), // 缺省表示旧记录来源未知，不猜测
+  tokenBase: z.number().finite().nonnegative().optional(), // 宿主原数或估算基数，不含记账保护倍率
+  accountingMultiplier: z.number().finite().positive().optional(), // 保存当时倍率，设置变化不重算历史
+  ownerInitiated: bool.optional(), // 记录当时发起者，唤醒单清理后仍能核对成本
 });
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
 /** 校验额度窗口单例，保持预算、额度灯与恢复探针一致。 */

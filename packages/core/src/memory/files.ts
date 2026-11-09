@@ -13,6 +13,7 @@ import { postThread } from '../outreach/thread.js';
 import { loadThreadReadState } from '../outreach/read-state.js';
 import { writeOutreachAudit, readAuditDetail } from '../outreach/audit.js';
 import { renderBotAgentsMd, renderRootAgentsMd, renderMindFiles } from './render.js';
+import { syncPresetSkills } from './preset-skills.js';
 /** 校验并取得机器人档案，让文件操作只针对中心名册中存在的身份。 */
 function botById(ctx: HubContext, botId: string): Bot {
     const bot = ctx.store.table('bots').get(parseInput(nonempty, botId, 'botId'));
@@ -49,11 +50,13 @@ export async function initRoot(ctx: HubContext): Promise<void> {
 export async function createBotHome(ctx: HubContext, input: Bot): Promise<void> {
     const bot = parseInput(BotSchema, input, '机器人家目录');
     for (const path of ['', 'mind', 'memory/journal', 'playbooks', '.agents/skills', 'work'])
-        await ctx.fs.mkdirp(posix.join(bot.homeDir, path));
+        await ctx.fs.mkdirp(posix.join(bot.homeDir, path), { within: bot.homeDir });
     const memoryPath = posix.join(bot.homeDir, 'memory/MEMORY.md');
     if (await ctx.fs.readText(memoryPath) === null)
-        await ctx.fs.writeTextAtomic(memoryPath, '# 长期记忆\n\n只记录已经确认、适合长期保留的事实与经验。\n');
+        await ctx.fs.writeTextAtomic(memoryPath, '# 长期记忆\n\n只记录已经确认、适合长期保留的事实与经验。\n', { within: bot.homeDir });
     await refreshBotFiles(ctx, bot.id);
+    // P40：家目录建好后立刻物化主人在向导里勾选的预置 skill；空数组时什么都不写。
+    await syncPresetSkills(ctx, bot);
 }
 /** 每次合法修改都记最新基线，审计不在家目录中，机器人不能通过改文件改掉基线。 */
 export async function refreshBotFiles(ctx: HubContext, botId: string): Promise<void> {
@@ -71,7 +74,7 @@ async function refreshFiles(ctx: HubContext, botId: string): Promise<void> {
     const previous = last ? readAuditDetail<{ files: Record<string, { hash: string }> }>(last.detail)?.files : null;
     for (const [path, content] of Object.entries(files))
         if (previous?.[path]?.hash !== hashes[path]?.hash)
-            await ctx.fs.writeTextAtomic(posix.join(bot.homeDir, path), content);
+            await ctx.fs.writeTextAtomic(posix.join(bot.homeDir, path), content, { within: bot.homeDir });
     // 恢复正文单独覆盖保存一份；审计仅保留文件名与哈希，避免每轮复制全部历史。
     await ctx.fs.writeTextAtomic(posix.join(ctx.settings.rootDir, '.hub', 'protected-files', `${bot.id}.json`), JSON.stringify(files));
     if (JSON.stringify(previous) !== JSON.stringify(hashes))
@@ -105,7 +108,7 @@ async function verifyFiles(ctx: HubContext, botId: string): Promise<string[]> {
         const recovery = snapshot[path] ?? expected.content ?? content;
         if (baseline?.[path] && sha256Hex(recovery) !== expected.hash)
             throw new Error(`保护文件 ${path} 的中心快照损坏，无法安全恢复`);
-        await ctx.fs.writeTextAtomic(posix.join(bot.homeDir, path), recovery);
+        await ctx.fs.writeTextAtomic(posix.join(bot.homeDir, path), recovery, { within: bot.homeDir });
     }
     if (changed.length) {
         // 同一轮核对多个文件仍计一次越界，下一轮再次篡改才产生新的一次。
@@ -131,5 +134,5 @@ export async function appendJournal(ctx: HubContext, bot: Bot, commit: Commit, t
         return;
     const p = localParts(commit.createdAt, ctx.settings.timezone);
     const time = `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
-    await ctx.fs.appendText(path, `\n${marker}\n## ${time} ${commit.outcome}\n\n理由：${ticket.reason.summary}\n结果：${commit.summary}\n世界变化：${commit.worldChanges.map(row => `${row.what}（${row.whoCanSee}，${row.where}）`).join('；') || '无'}\n证据：${commit.evidence.join('；') || '无'}\n验证：${commit.verification.level}；未覆盖：${commit.verification.notCovered || '无'}\n下次思考：${commit.nextThink.mode}；${commit.nextThink.reason}\n`);
+    await ctx.fs.appendText(path, `\n${marker}\n## ${time} ${commit.outcome}\n\n理由：${ticket.reason.summary}\n结果：${commit.summary}\n世界变化：${commit.worldChanges.map(row => `${row.what}（${row.whoCanSee}，${row.where}）`).join('；') || '无'}\n证据：${commit.evidence.join('；') || '无'}\n验证：${commit.verification.level}；未覆盖：${commit.verification.notCovered || '无'}\n下次思考：${commit.nextThink.mode}；${commit.nextThink.reason}\n`, { within: bot.homeDir });
 }

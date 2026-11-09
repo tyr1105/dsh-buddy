@@ -32,6 +32,7 @@ import { registerBotToolsLifecycle, type BotToolsInstaller } from './bot-tools.j
 import { registerGuardHooks } from './hooks.js'
 import { createTickScheduler } from './tick.js'
 import { loadSessionRoster, rosterFilePath, inMemoryRoster, type SessionRoster } from './session-roster.js'
+import { engineIncompatibleReason, hasCapability, probeHarness, shellIncompatibleReason } from './harness-compat.js'
 
 export const name = 'agent-hub'
 export const inject = ['connection', 'sessionController', 'workspaceRegistry', 'agents']
@@ -110,6 +111,9 @@ export function createEngineHub(rootDir: string, host: HostPort, listModels?: Li
 export function apply(ctx: any, config: HostConfig = {}): void {
   const rootDir = resolveRootDir(config)
   const facade = new LazyHubFacade()
+  // E04：启动时先探测宿主能力（纯读，不调用任何服务方法）。三档结果分别决定：
+  // 外壳缺 → 直接停用；引擎缺 → 不启动引擎；可选缺 → 降级继续并写日志。
+  const compat = probeHarness(ctx)
   // 会话名册（sessionId → botId）：真引擎模式换成持久化名册（D07 第 15 条：重启后
   // 仍认得被 interruptBot 解绑的旧会话，它们的工具照样过闸、事件照样交给 core）。
   // 样例/停用模式用内存版即可。
@@ -119,11 +123,20 @@ export function apply(ctx: any, config: HostConfig = {}): void {
 
   // 界面接口与 SSE 先挂门面（引擎异步就绪后门面自动接通）；注册失败只记日志。
   // 注册返回的路由表留给诊断服务：进程内插件经它走与真实 HTTP 同一组处理函数。
+  // 能力探测说没有连接路由时直接跳过，不发注定失败的调用。
   let httpRoutes: ReturnType<typeof registerRoutes> = []
-  try { httpRoutes = registerRoutes(ctx, facade) } catch (error) { console.error('[agent-hub] 注册路由失败:', error) }
-  ctx.inject(['webServer'], (sub: any) => {
-    sub.effect(() => registerEvents(sub, facade), 'agent-hub: sse')
-  })
+  if (hasCapability(compat, 'connection.fetch.register')) {
+    try { httpRoutes = registerRoutes(ctx, facade) } catch (error) { console.error('[agent-hub] 注册路由失败:', error) }
+  }
+  // SSE 需要 webServer 与鉴权两件都齐：缺鉴权时宁可不推，也不开一条未鉴权的长连接。
+  // ctx.inject 本身属于外壳能力，shellOk 为假时连这一步都不能走。
+  if (compat.shellOk
+    && hasCapability(compat, 'webServer.register')
+    && hasCapability(compat, 'connection.requestRejection')) {
+    ctx.inject(['webServer'], (sub: any) => {
+      sub.effect(() => registerEvents(sub, facade), 'agent-hub: sse')
+    })
+  }
 
   // 给冒烟跑者等测试插件用的诊断服务（同名已存在会抛错，兜住）。
   try {
@@ -136,6 +149,8 @@ export function apply(ctx: any, config: HostConfig = {}): void {
         command: (name: string, input: Record<string, unknown>) => facade.command(name, input),
       },
       status: () => facade.status(),
+      // E04：兼容探测报告。界面不依赖它；排障时用它一眼看到缺了哪些宿主能力。
+      compat: () => compat,
       // H7 诊断（D05 第 19 条 / D07 第 23 条）：预登记 id → 实际 id 的映射（不随名册
       // 迁移），冒烟跑者据此比对 DSH 有没有另铸会话 id。
       sessionMints: () => [...mints.entries()],
@@ -158,6 +173,19 @@ export function apply(ctx: any, config: HostConfig = {}): void {
     })
   } catch { /* 已有同名服务（例如重复挂载），忽略 */ }
 
+  // 外壳能力缺失：界面接口和清理都挂不上，插件没法安全运行，直接停用并说明原因。
+  if (!compat.shellOk) {
+    const reason = shellIncompatibleReason(compat)
+    console.error(`[agent-hub] ${reason}`)
+    facade.setImpl(new DisabledHub(reason))
+    return
+  }
+
+  // 可选能力缺失只降级对应功能（推送、模型目录、权限、落盘等），引擎继续跑。
+  if (compat.degradedOptional.length > 0) {
+    console.warn(`[agent-hub] 以下可选能力缺失，已降级继续运行：${compat.degradedOptional.join('、')}`)
+  }
+
   // 模式一：样例数据（AGENT_HUB_FIXTURE=1）。
   if (process.env.AGENT_HUB_FIXTURE === '1') {
     console.log(`[agent-hub] 已启动（样例数据模式）rootDir=${rootDir}`)
@@ -174,7 +202,16 @@ export function apply(ctx: any, config: HostConfig = {}): void {
     return
   }
 
-  // 模式三：真引擎。先挂清理（引擎可能还没起来，stop 幂等），再异步启动。
+  // 模式三：真引擎。启动前再检查引擎能力：缺了就不启动，免得起一个「能开界面、
+  // 一唤醒就报 TypeError」的半残引擎。界面显示缺了哪几项，主人知道该升哪一边。
+  if (!compat.engineOk) {
+    const reason = engineIncompatibleReason(compat)
+    console.error(`[agent-hub] ${reason}`)
+    facade.setImpl(new DisabledHub(reason))
+    return
+  }
+
+  // 先挂清理（引擎可能还没起来，stop 幂等），再异步启动。
   // 清理函数返回 Promise：cordis 卸载时会等它结算，保证旧引擎排空落盘后才挂新实例。
   roster = loadSessionRoster(rosterFilePath(rootDir))
   const engineState: { handle: EngineHandle | null; stopped: boolean } = { handle: null, stopped: false }

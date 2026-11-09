@@ -56,11 +56,23 @@ export function shouldStickToBottom(input: StickInput): boolean {
 /** 判定一次键盘事件是不是「用户真的想发送」（交互审查第 3 条）：
  *  中文输入法在拼音组合态按回车只是上屏候选词（isComposing / keyCode 229），
  *  这时不算发送；否则打一半的拼音会被直接发出去。 */
-export function isSendEnter(event: { key: string; isComposing?: boolean; keyCode?: number }): boolean {
+export function isSendEnter(event: { key: string; isComposing?: boolean; keyCode?: number; shiftKey?: boolean }): boolean {
   if (event.key !== 'Enter') return false
   if (event.isComposing === true) return false
   if (event.keyCode === 229) return false
+  if (event.shiftKey === true) return false
   return true
+}
+
+/** 历史前插补回新增高度；新回复仅在原来接近底部时跟随，计算不依赖宿主滚动。 */
+export function threadScrollTop(input: {
+  previousHeight: number; previousTop: number; viewportHeight: number
+  height: number; previousLastId: string | null; lastId: string | null
+}): number {
+  if (input.previousLastId === null) return Math.max(0, input.height - input.viewportHeight)
+  if (input.previousLastId === input.lastId) return input.previousTop + Math.max(0, input.height - input.previousHeight)
+  const nearBottom = input.previousHeight - input.previousTop - input.viewportHeight < 120
+  return nearBottom ? Math.max(0, input.height - input.viewportHeight) : input.previousTop
 }
 
 /**
@@ -95,7 +107,7 @@ export function openBotSessionWith(ctx: unknown, sessionId: string): OpenSession
 /** 各分支给主人看的一句话。 */
 export const OPEN_SESSION_HINTS: Readonly<Record<OpenSessionResult, string | null>> = {
   opened: null,
-  loading: '会话列表还在加载，稍等一下再试。',
-  archived: '它的工作会话被归档了，先在会话列表里恢复它。',
-  unavailable: '现在打不开它的工作会话：可以在左侧栏的项目里找它的会话。',
+  loading: '会话列表加载中。请稍后重试。',
+  archived: '工作会话已归档。请先在会话列表中恢复。',
+  unavailable: '工作会话打开失败。请确认会话仍存在。',
 }

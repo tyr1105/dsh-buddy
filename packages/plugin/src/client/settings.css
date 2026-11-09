@@ -1,0 +1,146 @@
+/*
+ * 设置页样式（P51）：左边分区、右边内容、底部保存条。
+ * 颜色、圆角只用宿主主题变量，浅色和深色跟随 DSH。
+ */
+.ah-set {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+}
+
+/* 左边分区：和主内容用一条分隔线隔开，选中态沿用左侧导航的强调色。 */
+.ah-set-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 20px 10px;
+  overflow-y: auto;
+  border-right: 1px solid var(--dsw-alias-separator);
+}
+.ah-set-nav .ah-pane-heading { padding: 0 10px 12px; }
+.ah-set-nav .ah-pane-heading h2 { white-space: nowrap; }
+.ah-set-usage { margin-top: 28px; }
+.ah-set-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dsw-alias-text-primary);
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-md, 8px);
+}
+.ah-set-nav-item:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
+.ah-set-nav-item.ah-selected { background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent-text, var(--dsw-alias-accent)); font-weight: 500; }
+.ah-set-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.ah-set-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-accent); }
+
+.ah-set-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ah-set-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 32px 40px; }
+.ah-set-body { max-width: 680px; }
+.ah-set-head { margin-bottom: 16px; }
+.ah-set-head h3 { margin: 0; font-size: 16px; font-weight: 500; color: var(--dsw-alias-text-primary); }
+.ah-set-head p { margin: 4px 0 0; font-size: 13px; color: var(--dsw-alias-text-secondary); }
+
+/* 一行一项：左边是含义，右边是控件；放不下时控件自然换行。 */
+.ah-set-rows { margin: 0; border-top: 1px solid var(--dsw-alias-separator); }
+.ah-set-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 32px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--dsw-alias-separator);
+}
+.ah-set-row-text { flex: 1 1 240px; min-width: 0; }
+.ah-set-row-text label, .ah-set-row-label { font-size: 13px; color: var(--dsw-alias-text-primary); }
+.ah-set-hint { margin: 3px 0 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-text-secondary); }
+.ah-set-row-control { display: grid; justify-items: end; gap: 6px; max-width: 100%; }
+.ah-set-inline { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dsw-alias-text-secondary); }
+
+.ah-set-row-control input:not([type='checkbox']),
+.ah-set-row-control select {
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  padding: 5px 10px;
+  border: 1px solid var(--dsw-alias-control-border, var(--dsw-alias-separator));
+  border-radius: var(--dsw-radius-md, 8px);
+  background: var(--dsw-alias-bg-inset);
+}
+.ah-set-row-control input:focus-visible,
+.ah-set-row-control select:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
+.ah-set-row-control input[type='number'] { width: 72px; }
+.ah-set-row-control input.ah-set-wide-number { width: 120px; }
+.ah-set-row-control input.ah-set-text { width: 280px; max-width: 100%; }
+.ah-set-row-control select { max-width: 280px; }
+.ah-set-switch { width: 16px; height: 16px; accent-color: var(--dsw-alias-accent); cursor: pointer; }
+
+.ah-set-facts dt { font-size: 13px; color: var(--dsw-alias-text-secondary); }
+.ah-set-facts dd { margin: 0; font-size: 13px; color: var(--dsw-alias-text-primary); text-align: right; overflow-wrap: anywhere; }
+.ah-set-path { max-width: 420px; }
+.ah-set-subhead { margin: 28px 0 4px; font-size: 13px; font-weight: 500; color: var(--dsw-alias-text-primary); }
+.ah-set-note { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-text-secondary); }
+.ah-set-subhead + .ah-set-note { margin-top: 0; }
+.ah-set-actions { margin-top: 12px; }
+.ah-set-result { font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+
+/* 保存条只在有改动时出现，固定在内容底部，不随内容滚走。 */
+.ah-set-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 32px;
+  border-top: 1px solid var(--dsw-alias-separator);
+  background: var(--dsw-alias-bg-elevated, var(--dsw-alias-bg-base));
+}
+.ah-set-bar p { margin: 0; flex: 1 1 200px; min-width: 0; }
+.ah-set-bar-text { font-size: 13px; color: var(--dsw-alias-text-primary); }
+
+/* 资料嵌在设置里：标题层级下移一级，字号和其他分区对齐。 */
+.ah-res-head-main h3 { margin: 0; font-size: 16px; font-weight: 500; }
+
+/* 资料表单里的「谁能读」。 */
+.ah-res-access { margin: 0; padding: 0; border: 0; display: grid; gap: 8px; }
+.ah-res-access legend { padding: 0; margin-bottom: 4px; font-size: 13px; }
+.ah-res-access-option { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.ah-res-access-option input { margin-top: 3px; accent-color: var(--dsw-alias-accent); }
+.ah-res-access-option small { display: block; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-res-bots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px 12px;
+  margin-left: 24px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-separator);
+  border-radius: var(--dsw-radius-md, 8px);
+}
+.ah-res-bots label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; min-width: 0; }
+.ah-res-bots input { accent-color: var(--dsw-alias-accent); }
+
+/* 左侧导航底部的设置入口。 */
+.ah-nav-settings { margin-top: 6px; width: 100%; }
+.ah-nav-settings svg { flex: none; }
+
+/* 窄窗：分区改成顶部横排，避免内容被挤窄。 */
+@container buddy (max-width: 760px) {
+  .ah-set { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ah-set-nav { flex-direction: row; align-items: center; overflow-x: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-separator); }
+  .ah-set-nav .ah-pane-heading { padding: 0 8px 0 2px; }
+  .ah-set-nav-item { width: auto; white-space: nowrap; }
+  .ah-set-scroll { padding: 16px 16px 32px; }
+  .ah-set-bar { padding: 10px 16px; }
+  .ah-set-row-control { justify-items: start; }
+}

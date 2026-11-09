@@ -22,7 +22,7 @@ export class BlockBoundary extends Component<BoundaryProps, BoundaryState> {
 
   override render(): ReactNode {
     if (this.state.failed) {
-      return <div className="ah-empty" role="alert">这块没显示出来，刷新试试。</div>
+      return <div className="ah-empty" role="alert">界面加载失败。刷新页面重试；仍失败请检查 DSH 运行状态。</div>
     }
     return this.props.children
   }

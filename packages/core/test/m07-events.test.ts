@@ -26,8 +26,8 @@ function expectBotChanges(events: Change[], botId: string, scopes: string[] = [H
 }
 
 describe('M07 公开推送词表与机器人归属', () => {
-  it('从包入口导出且只包含六个面向视图的范围', () => {
-    expect(HUB_EVENT_SCOPES).toEqual({ overview: 'overview', bot: 'bot', thread: 'thread', inbox: 'inbox', activity: 'activity', settings: 'settings' });
+  it('从包入口导出且包含九个面向视图的范围', () => {
+    expect(HUB_EVENT_SCOPES).toEqual({ overview: 'overview', bot: 'bot', thread: 'thread', inbox: 'inbox', activity: 'activity', settings: 'settings', ledger: 'ledger', project: 'project', office: 'office' });
   });
 
   it('交账同时刷新机器人详情和活动，失败交账不发虚假变化', async () => {

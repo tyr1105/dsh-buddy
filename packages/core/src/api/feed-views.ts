@@ -7,6 +7,7 @@ import type { InboxItem, ModelChoice, ThreadMessage } from '../model/index.js';
 import { INBOX_TYPE_LABELS, LIFECYCLE_LABELS, OUTCOME_LABELS, PUSH_CHANNELS } from '../model/enums.js';
 import { nonempty } from '../model/primitives.js';
 import { C04_DEFAULTS } from '../config/defaults.js';
+import { presetSkillOptions } from '../config/preset-skills.js';
 import { readModelCatalog } from './models.js';
 import { threadMessages } from '../outreach/thread.js';
 import { readAuditDetail } from '../outreach/audit.js';
@@ -20,6 +21,12 @@ function approvalCardView(ctx: HubContext, row: InboxItem): InboxItem {
   if (!approval || approval.botId !== row.botId || approval.actionTextVersion === 2) return row;
   return { ...row, ...approvalDisplayText(approval, ctx.settings.c03.actionCommandMaxChars, ctx.settings.c03.approvalOwnerParamsMaxChars) };
 }
+/** 只给确有目标关联的验收题加身份，不靠标题或正文猜业务类型。 */
+function goalCheckId(ctx: HubContext, item: InboxItem): string | null {
+  const goal = item.type === 'question' && item.refId && item.subjectKey === `goal_check:${item.refId}`
+    ? ctx.store.table('goals').get(item.refId) : null;
+  return goal?.botId === item.botId ? goal.id : null;
+}
 
 /** 线程消息关联实际收件箱状态，历史卡片在主人处理后立即显示真实答案。 */
 function messageView(ctx: HubContext, row: ThreadMessage): ThreadMessageView {
@@ -29,17 +36,20 @@ function messageView(ctx: HubContext, row: ThreadMessage): ThreadMessageView {
     ? ctx.store.table('inbox').get(row.refId) : null;
   const visible = referenced?.status === 'closed' && referenced.answer === 'idea_pool' ? null : referenced;
   const inbox = visible ? approvalCardView(ctx, visible) : null;
-  return { id: row.id, thread: row.thread, from: row.from, fromName: row.from === 'owner' ? '主人' : row.from === 'hub' ? 'Agent 中心' : sender?.name ?? '机器人',
+  // P48：队友被删除后历史消息仍可读；查不到发送者时只显示「已删除的队友」，不暴露内部 id。
+  return { id: row.id, thread: row.thread, from: row.from, fromName: row.from === 'owner' ? '主人' : row.from === 'hub' ? 'Agent 中心' : sender?.name ?? '已删除的队友',
     fromColor: sender?.color ?? null, kind: row.kind, text: row.kind === 'approval' && inbox?.type === 'approval' ? inbox.body : row.text, createdAt: row.createdAt,
     timeText: shortTime(ctx, row.createdAt)!, createdText: shortTime(ctx, row.createdAt)!,
-    card: inbox ? { inboxId: inbox.id, approvalId: inbox.type === 'approval' ? inbox.refId : null,
+    card: inbox ? { inboxId: inbox.id, approvalId: inbox.type === 'approval' ? inbox.refId : null, goalId: goalCheckId(ctx, inbox),
       type: inbox.type, status: inbox.status, title: inbox.title, body: inbox.body,
       options: inboxOptions(inbox), defaultOption: inboxDefaultOption(inbox), answer: inbox.answer, expiresAt: inbox.expiresAt, expiresText: shortTime(ctx, inbox.expiresAt) } : null };
 }
 /** 查询最新一页后按阅读顺序从旧到新返回，oldestId 可直接用于向上翻页。 */
 export function threadView(ctx: HubContext, threadId: string, page?: PageInput): ThreadView {
   threadId = input(nonempty, threadId, 'threadId');
-  const title = threadId === 'team' ? '团队' : requireBot(ctx, threadId).name;
+  // P48：队友被删除后线程标题不再抛错，改用「已删除的队友」，历史仍可翻看。
+  const title = threadId === 'team' ? '团队'
+    : ctx.store.table('bots').get(threadId)?.name ?? '已删除的队友';
   const all = threadMessages(ctx, threadId).reverse();
   const result = paginate(all, page, row => row.createdAt);
   const rows = result.rows.reverse();
@@ -53,6 +63,7 @@ export function inboxView(ctx: HubContext): InboxView {
       const bot = row.botId ? ctx.store.table('bots').get(row.botId) : null;
       return { id: row.id, botId: row.botId, botName: bot?.name ?? null, botColor: bot?.color ?? null,
         approvalId: row.type === 'approval' ? row.refId : null,
+        goalId: goalCheckId(ctx, row),
         type: row.type, typeLabel: INBOX_TYPE_LABELS[row.type], priority: row.priority, title: row.title, body: row.body,
         options: inboxOptions(row), defaultOption: inboxDefaultOption(row), createdAt: row.createdAt, createdText: shortTime(ctx, row.createdAt)!,
         expiresAt: row.expiresAt, expiresText: shortTime(ctx, row.expiresAt) };
@@ -85,11 +96,13 @@ export function activityView(ctx: HubContext, page?: PageInput): ActivityView {
 export async function settingsView(ctx: HubContext): Promise<SettingsView> {
   const catalog = await readModelCatalog(ctx);
   if (catalog !== null) return { settings: structuredClone(ctx.settings), pushChannelOptions: [...PUSH_CHANNELS],
-    modelOptions: [{ value: null, label: '跟随宿主默认模型' }, ...catalog.map(({ provider, model, label }) => ({ value: { provider, model }, label }))] };
+    modelOptions: [{ value: null, label: '跟随宿主默认模型' }, ...catalog.map(({ provider, model, label }) => ({ value: { provider, model }, label }))],
+    presetSkillOptions: presetSkillOptions() };
   const choices: ModelChoice[] = [null, ctx.settings.defaultModel, ...ctx.store.table('bots').list().map(row => row.model)];
   const unique = [...new Map(choices.map(value => [JSON.stringify(value), value])).values()];
   return { settings: structuredClone(ctx.settings), pushChannelOptions: [...PUSH_CHANNELS],
-    modelOptions: unique.map(value => ({ value, label: value ? `${value.provider} / ${value.model}` : '跟随宿主默认模型' })) };
+    modelOptions: unique.map(value => ({ value, label: value ? `${value.provider} / ${value.model}` : '跟随宿主默认模型' })),
+    presetSkillOptions: presetSkillOptions() };
 }
 /** 教学会话由宿主提供，校验返回值后只展示最小信息，不自行读取会话正文。 */
 export async function recentSessions(ctx: HubContext): Promise<RecentSessionView[]> {

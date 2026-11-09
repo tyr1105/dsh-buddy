@@ -17,6 +17,7 @@ import { postThread } from '../outreach/thread.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { createDeliveryWaits } from './delivery-wait.js';
 import { consumeRelatedPercepts } from '../scheduler/percept-consumption.js';
+import { openLedgerForWake, sealLedgerForWake } from '../ledger/service.js';
 
 /** pump 由 Hub 串行入口调用；探针身份仅绑定实际投递的唤醒单。 */
 export function createDispatcher(ctx: HubContext) {
@@ -135,6 +136,9 @@ export function createDispatcher(ctx: HubContext) {
       const now = ctx.clock.now();
       beginQuotaWindow(ctx, now);
       ctx.store.table('wakes').patch(wake.id, { sessionId, status: 'running', dispatchedAt: now, lastEventAt: now });
+      // 投递成功才开账：并发占用等早退路径不建账本行，避免把临时占位记成真实唤醒。
+      try { openLedgerForWake(ctx, wake.id, Math.max(0, now - entry.enqueuedAt)); }
+      catch (error) { try { ctx.logger.error('唤醒账本开账失败', error); } catch { /* 开账失败不能阻断投递。 */ } }
       ctx.store.table('bots').patch(bot.id, { activity: 'thinking', activityText: `正在处理：${ownerReasonSummary(entry.reason, ctx)}`,
         retryAt: null, updatedAt: now });
       ctx.runtime.lastDispatchAt = now;
@@ -154,6 +158,9 @@ export function createDispatcher(ctx: HubContext) {
       const text = error instanceof Error ? error.message : String(error);
       ctx.logger.error(`机器人 ${bot.id} 投递失败`, error);
       ctx.store.table('wakes').patch(wake.id, { status: 'error', error: text, endedAt: now, lastEventAt: now, dispatchedAt: null });
+      // 投递失败也要留一条账本：主人需要区分「没有理由」和「有理由但没送出去」。
+      try { sealLedgerForWake(ctx, wake.id, { createIfMissing: true }); }
+      catch (sealError) { try { ctx.logger.error('投递失败后封存唤醒账本失败', sealError); } catch { /* 账本故障不阻断故障收尾。 */ } }
       if (delivery.expired() && bot.sessionId) {
         // 旧会话的迟到事件不能冒充重试回合；取消不再阻塞中心，重试会创建新会话。
         if (ctx.store.table('bots').get(bot.id)?.sessionId === bot.sessionId) {

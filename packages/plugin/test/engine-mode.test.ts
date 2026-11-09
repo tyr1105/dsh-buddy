@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync } from 'node:fs'
 import { apply, resolveRootDir, disabledMarkerPath } from '../src/host/index.js'
-import { createFakeCtx } from './helpers/fake-ctx.js'
+import { createFakeCtx, engineHarnessServices } from './helpers/fake-ctx.js'
 import { REAL_DEFAULT_ROOT, safeTempRoot, assertNotRealRoot } from './helpers/safe-root.js'
 
 const ENV_KEYS = ['AGENT_HUB_ROOT', 'AGENT_HUB_FIXTURE'] as const
@@ -38,7 +38,7 @@ describe('resolveRootDir（D05 第 1/2 条 + D07 第 22 条测试守护）', () 
   })
   it('测试环境下 apply(ctx, {})（不带 rootDir）必须失败（D07 第 22 条）', async () => {
     delete process.env.AGENT_HUB_ROOT
-    const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+    const made = createFakeCtx(engineHarnessServices())
     expect(() => apply(made.ctx, {})).toThrow('测试守护')
     await made.ctx.dispose()
   })
@@ -50,7 +50,7 @@ describe('apply 三模式', () => {
     try {
       mkdirSync(join(root, '.hub'), { recursive: true })
       writeFileSync(disabledMarkerPath(root), '')
-      const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const made = createFakeCtx(engineHarnessServices())
       apply(made.ctx, { rootDir: root })
       const service = made.provided.get('agentHub') as any
       expect(service.status()).toEqual({ ok: false, mode: 'disabled' })
@@ -63,7 +63,7 @@ describe('apply 三模式', () => {
     process.env.AGENT_HUB_FIXTURE = '1'
     const root = safeTempRoot('agent-hub-fixture-')
     try {
-      const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const made = createFakeCtx(engineHarnessServices())
       apply(made.ctx, { rootDir: root })
       const service = made.provided.get('agentHub') as any
       expect(service.status()).toEqual({ ok: true, mode: 'engine' })  // fixture 门面视为可用
@@ -76,7 +76,7 @@ describe('apply 三模式', () => {
   it('真引擎模式：启动后挂事件翻译与钩子，卸载时清理', { timeout: 30_000 }, async () => {
     const root = safeTempRoot('agent-hub-e2e-')
     try {
-      const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const made = createFakeCtx(engineHarnessServices())
       apply(made.ctx, { rootDir: root })
       const service = made.provided.get('agentHub') as any
       await vi.waitFor(() => expect(service.status()).toEqual({ ok: true, mode: 'engine' }), { timeout: 15_000 })
@@ -110,7 +110,7 @@ describe('D05 第 4 条：卸载/重载的引擎生命周期', () => {
   it('清理函数返回 Promise（cordis 会等 hub.stop() 完成后再挂新实例）', { timeout: 30_000 }, async () => {
     const root = safeTempRoot('agent-hub-stop-promise-')
     try {
-      const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const made = createFakeCtx(engineHarnessServices())
       apply(made.ctx, { rootDir: root })
       const service = made.provided.get('agentHub') as any
       await vi.waitFor(() => expect(service.status()).toEqual({ ok: true, mode: 'engine' }), { timeout: 15_000 })
@@ -127,7 +127,7 @@ describe('D05 第 4 条：卸载/重载的引擎生命周期', () => {
   it('启动期间被卸载：start 完成后立即 stop（不留永不停止的孤儿引擎）', { timeout: 30_000 }, async () => {
     const root = safeTempRoot('agent-hub-dispose-during-start-')
     try {
-      const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const made = createFakeCtx(engineHarnessServices())
       apply(made.ctx, { rootDir: root })
       // 不等就绪，立刻卸载：旧实现里 engine 句柄还是 null，Hub 永远不会 stop。
       await made.ctx.dispose()
@@ -142,12 +142,12 @@ describe('D05 第 4 条：卸载/重载的引擎生命周期', () => {
   it('快速重载：旧实例停稳后新实例能在同一 rootDir 上正常就绪（任何时刻只有一个引擎）', { timeout: 60_000 }, async () => {
     const root = safeTempRoot('agent-hub-reload-')
     try {
-      const a = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const a = createFakeCtx(engineHarnessServices())
       apply(a.ctx, { rootDir: root })
       const serviceA = a.provided.get('agentHub') as any
       await vi.waitFor(() => expect(serviceA.status()).toEqual({ ok: true, mode: 'engine' }), { timeout: 15_000 })
       await a.ctx.dispose() // 卸载（等 stop 完成）后再立刻挂新实例
-      const b = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const b = createFakeCtx(engineHarnessServices())
       apply(b.ctx, { rootDir: root })
       const serviceB = b.provided.get('agentHub') as any
       await vi.waitFor(() => expect(serviceB.status()).toEqual({ ok: true, mode: 'engine' }), { timeout: 15_000 })
@@ -164,7 +164,7 @@ describe('D05 第 4 条：卸载/重载的引擎生命周期', () => {
     rmSync(root, { recursive: true, force: true })
     writeFileSync(root, '不是目录')
     try {
-      const made = createFakeCtx({ sessionController: {}, workspaceRegistry: {}, agents: { list: () => [] } })
+      const made = createFakeCtx(engineHarnessServices())
       apply(made.ctx, { rootDir: root })
       const service = made.provided.get('agentHub') as any
       await vi.waitFor(() => expect(service.status().mode).toBe('failed'), { timeout: 15_000 })

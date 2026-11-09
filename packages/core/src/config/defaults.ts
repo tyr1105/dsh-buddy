@@ -2,7 +2,7 @@
 import { validationMessage } from '../engine/validation.js';
 import { SettingsSchema } from '../model/settings.js';
 import type { Settings } from '../model/settings.js';
-import type { Autonomy, Lifecycle, PaceProfile, Role, Variant } from '../model/enums.js';
+import type { Autonomy, Lifecycle, MbtiType, PaceProfile, Role, Variant } from '../model/enums.js';
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
@@ -22,6 +22,85 @@ export const SIM_DEFAULTS = {
 } as const;
 /** M01：超过软输出预算仍继续读取，累计达到此倍率才终止异常进程。 */
 export const EXEC_OUTPUT_HARD_LIMIT_MULTIPLIER = 32;
+/** F06：一次交账最多实查这些文件位置，避免执行者塞入无界列表拖住中心。 */
+export const F06_DEFAULTS = { ARTIFACT_MAX: 20 } as const;
+/** F10 观察历史的硬边界，主人设置可向下收窄，断点不占房间帧额度。 */
+export const F10_DEFAULTS = { retentionMs: 7 * DAY, maxFramesPerDay: 2000, maxFrameBytes: 128 * KIB } as const;
+/** F09 文本协议有硬边界；实际资源额度可由 Settings 向下收窄。 */
+export const F09_DEFAULTS = {
+  maxBytes: 64 * KIB, maxLocations: 20, maxVersionsPerBot: 1000, maxHandoffVersions: 5,
+  retentionMs: 90 * DAY,
+} as const;
+/**
+ * P38 公共知识库默认配置：纯可选、默认关闭，不预置任何地址或凭据。
+ * maxBytes 是单条目实时读取上限（256 KiB），可在设置里于模型上下限内调整。
+ */
+export const P38_KNOWLEDGE_DEFAULTS = {
+  enabled: false, endpoint: '', authRef: '', protocol: '', scope: '', readOnly: true as const,
+  maxBytes: 256 * KIB,
+};
+
+/**
+ * v2 第一期常量（与 docs/plan/v2-transformation.md 3.7 默认值表逐项一致）。
+ * 为什么不放进 Settings：SettingsSchema 是 strictObject，加字段会让 v1 解析 v2 设置失败；
+ * 这里都是代码常量，不做 UI 配置，等出现真实需要再提升并补测试。
+ * 后续期常量先一并列出，第一期只用到账本相关项。
+ */
+export const V2_DEFAULTS = {
+  LEDGER_RETENTION_MS: 90 * DAY, // 账本保留期
+  LEDGER_BACKFILL_DAYS: 30, // 旧档回填窗口（天）
+  LEDGER_EVIDENCE_MAX: 10, // 证据快照上限
+  LEDGER_ACTION_MAX: 30, // 动作流水上限
+  LEDGER_ROW_MAX_BYTES: 8 * KIB, // 单行硬上限
+  LEDGER_DETAIL_MAX_CHARS: 160, // 单条动作/证据摘要上限
+  LEDGER_LIST_DEFAULT_LIMIT: 20, // 列表默认条数
+  SANDBOX_REQUIRED: true, // 沙箱不可用则拒绝宿主命令
+  OFFICE_RECENT_LEDGER: 200, // 第三期办公室读取上限
+  TIMELINE_MAX_FRAMES: 500, // 第五期倒带帧上限
+  ORG_MAX_DEPARTMENTS: 8, // 第二期防误操作上限
+  ORG_MAX_POSITIONS: 24, // 第二期防误操作上限
+  RESOURCE_MAX_ACTIVE: 50, // F17：未归档资料防误操作上限（条）
+  RESOURCE_GRANT_MAX: 200, // F17：授权总条数防误操作上限（条）
+  RESOURCE_READ_MAX_BYTES: 64 * KIB, // F17：hub_resource_read 单次读取字节上限，超出截断并标明
+  RESOURCE_NET_TIMEOUT_MS: 10 * SECOND, // F17：链接类型资料的网络读取超时
+  // 第四期 F08 项目容器：均为防误操作上限，不做 UI 配置；取值依据见 docs/questions.md（V2-PH4-01）。
+  PROJECT_MAX_ACTIVE: 50, // 未归档项目（active/paused/done）数量上限
+  PROJECT_MEMBER_MAX: 20, // 单个项目成员席位上限
+  PROJECT_TASK_MAX: 200, // 单个项目任务总数上限（含已通过，任务不物理删除）
+  PROJECT_CRITERION_MAX: 20, // 单个项目验收项条数上限
+  PROJECT_TASK_ARTIFACT_MAX: 20, // 单个任务关联产物条数上限（防误操作；见 docs/questions.md F08）
+  // 第四期 F12 派活：唤醒包「项目任务」段的形状与大小，防止一次唤醒被任务清单撑爆。
+  PROJECT_TASKS_PER_PACKET: 5, // 唤醒包最多携带的进行中/受阻任务条数
+  PROJECT_TASKS_CRITERIA_MAX: 4, // 每条任务最多展示的项目验收项条数
+  PROJECT_TASKS_DETAIL_MAX: 200, // 任务说明进入唤醒包的字数上限
+  PROJECT_TASKS_ARTIFACTS_MAX: 3, // 每条任务最多展示的最近产物版本条数
+  TASK_WAKE_IDS_MAX: 20, // 单个任务保留的唤醒关联 id 上限（超出丢最早的）
+  // P39 项目共享上下文：正文、留痕与唤醒包摘要的边界；都是防撑爆常量，不做 UI 配置。
+  PROJECT_CONTEXT_DECISION_MAX: 50, // 单个项目最多保存的已定决策条数
+  PROJECT_CONTEXT_GLOSSARY_MAX: 50, // 单个项目术语表条数上限
+  PROJECT_CONTEXT_REVISION_MAX: 50, // 留痕最多保留条数（超出丢最早的）
+  PROJECT_CONTEXT_EXCERPT_MAX_BYTES: 1536, // 唤醒包摘要硬上限（卡片要求 ≤1.5KB）
+  PROJECT_CONTEXT_EXCERPT_PROJECTS_MAX: 2, // 一次唤醒最多带两个项目的上下文
+  PROJECT_CONTEXT_BACKGROUND_CHARS: 220, // 摘要里的背景只取一句
+  PROJECT_CONTEXT_CONVENTIONS_MAX: 4, // 摘要最多取 4 条约定要点
+  PROJECT_CONTEXT_CONVENTIONS_CHARS: 100, // 摘要单条约定字数上限
+  PROJECT_CONTEXT_DECISIONS: 3, // 摘要取最近 3 条决策
+  PROJECT_CONTEXT_DECISION_CHARS: 100, // 摘要单条决策字数上限
+  PROJECT_CONTEXT_GLOSSARY_MAX_HITS: 6, // 摘要最多列 6 条命中的术语
+  PROJECT_CONTEXT_GLOSSARY_CHARS: 120, // 摘要单条术语释义字数上限
+} as const;
+
+// C02-MBTI：默认不替旧机器人猜性格；提示段落的字节上限保证唤醒包不被撑大。
+export const MBTI_DEFAULTS = {
+  DEFAULT_TYPE: null as MbtiType | null,
+  PROMPT_MAX_BYTES: 480,
+} as const;
+
+/** F14：只增加普通自主行为的保守程度，不降低原门槛；未设置 MBTI 不应用。 */
+export const F14_DEFAULTS = {
+  introvertWakeOffset: 0.05, introvertProposalOffset: 0.10,
+  introvertReportMaxChars: 160, extrovertReportMaxChars: 300,
+} as const;
 
 // C03：回合、工具和给主人看的内容边界；单位为毫秒、字节或条数。
 export const C03_DEFAULTS = {
@@ -281,7 +360,13 @@ export const DEFAULTS = {
   // 第 3 节关注项：各创建者相关度，单位：比例。
   WATCH_RELEVANCE_BY_CREATOR: { owner: 0.8, bot: 0.6, hub: 0.5 },
   // 第 4 节保留期：按表与日志，单位：毫秒。
-  RETENTION_MS_BY_COLLECTION: { percepts: 14 * DAY, wakes: 30 * DAY, commits: 30 * DAY, inbox: 30 * DAY, approvals: 30 * DAY, outbox: 30 * DAY, appraisals: 14 * DAY, ledger: 30 * DAY, thread: 180 * DAY, audit: 90 * DAY },
+  RETENTION_MS_BY_COLLECTION: {
+    artifactVersions: F09_DEFAULTS.retentionMs, artifactReviews: F09_DEFAULTS.retentionMs,
+    artifactBatches: F09_DEFAULTS.retentionMs,
+    officeFrames: F10_DEFAULTS.retentionMs,
+    percepts: 14 * DAY, wakes: 30 * DAY, commits: 30 * DAY, inbox: 30 * DAY, approvals: 30 * DAY,
+    outbox: 30 * DAY, appraisals: 14 * DAY, ledger: 30 * DAY, thread: 180 * DAY, audit: 90 * DAY,
+  },
   // 第 4 节日志：内存及启动加载窗口，单位：毫秒。
   LOG_MEMORY_RETENTION_MS: 14 * DAY,
   // M01：损坏原件备份保留 30 天，既保留排查证据也避免无限占盘。
@@ -295,6 +380,11 @@ const defaultSettings = {
   quietHours: DEFAULTS.QUIET_HOURS, digestAt: DEFAULTS.DIGEST_AT,
   pushChannel: DEFAULTS.PUSH_CHANNEL, defaultModel: null, workDataPaths: [], l3Grants: [],
   c02: C02_DEFAULTS, c03: C03_DEFAULTS, heartbeatPid: DEFAULTS.HEARTBEAT_PID,
+  artifacts: { maxBytes: F09_DEFAULTS.maxBytes, maxLocations: F09_DEFAULTS.maxLocations,
+    maxVersionsPerBot: F09_DEFAULTS.maxVersionsPerBot, maxHandoffVersions: F09_DEFAULTS.maxHandoffVersions },
+  officeReplay: { maxFramesPerDay: F10_DEFAULTS.maxFramesPerDay, maxFrameBytes: F10_DEFAULTS.maxFrameBytes },
+  knowledgeBase: { ...P38_KNOWLEDGE_DEFAULTS },
+  personality: F14_DEFAULTS,
   hostDownAfterMs: DEFAULTS.HOST_DOWN_AFTER_MS, deadmanAlertCooldownMs: DEFAULTS.DEADMAN_ALERT_COOLDOWN_MS,
   maxBots: DEFAULTS.MAX_BOTS,   maxChiefs: DEFAULTS.MAX_CHIEFS,   tickMs: DEFAULTS.TICK_MS,
   sleepGapMs: DEFAULTS.SLEEP_GAP_MS,   maxConcurrentThinks: DEFAULTS.MAX_CONCURRENT_THINKS,   ownerActiveConcurrentThinks: DEFAULTS.OWNER_ACTIVE_CONCURRENT_THINKS,

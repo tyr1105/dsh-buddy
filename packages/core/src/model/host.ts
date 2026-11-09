@@ -35,6 +35,15 @@ export const TurnEventSchema = z.discriminatedUnion('type', [
     tokens: count.nullable(), // 当前实际 token 用量；宿主未知时为 null
   }),
   z.strictObject({
+    type: z.literal('tool_call'), // 一次 DSH 工具调用有了结果，用于账本过程下钻
+    ...eventBase,
+    name: nonempty, // 工具名，例如 read_file / write_file
+    callId: text, // 宿主调用 id，用于和 tool/result 配对；拿不到时为空
+    args: z.unknown().optional(), // 宿主提供的参数；只用于生成摘要，不原样落盘
+    isError: z.boolean(), // 宿主标记的工具结果是否失败
+    resultText: text, // 工具结果摘要；宿主未提供结果时为空
+  }),
+  z.strictObject({
     type: z.literal('ended'), // 宿主回合已实际结束
     ...eventBase,
     finalText: text, // 宿主最后一段回复正文

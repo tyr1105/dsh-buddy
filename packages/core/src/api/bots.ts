@@ -16,6 +16,9 @@ import { postThread } from '../outreach/thread.js';
 import { closeAlert } from '../health/alerts.js';
 import { syncAlertItems } from '../outreach/alerts.js';
 import { CreateBotSchema, ProfilePatchSchema } from './schemas.js';
+import { normalizePresetSkillIds, unknownPresetSkillIds } from '../config/preset-skills.js';
+import { syncPresetSkills } from '../memory/preset-skills.js';
+import { saveBotMbti } from '../personality/profile.js';
 import { input, requireBot } from './common.js';
 import { makeGoal, makeWatch } from './entities.js';
 import { validateModelChoice } from './models.js';
@@ -32,13 +35,17 @@ export async function createBot(ctx: HubContext, raw: unknown): Promise<Bot> {
   await validateModelChoice(ctx, model);
   const now = ctx.clock.now();
   const id = newId('b', ctx.rng);
-  const bot = input(BotSchema, { id, name: args.name, role: args.role, persona: args.persona, color: ROLE_COLORS[args.role],
+  // P40：预置 skill 只能从内置清单里选；重复 id 去重，未知 id 直接拒绝。
+  const presetSkillIds = checkPresetSkillIds(args.presetSkillIds ?? []);
+  // MBTI 不写进 Bot 本体：旧版本用 strictObject 解析 bots.json，额外字段会让它整体读不出队友。
+  const bot = input(BotSchema, { id, name: args.name, role: args.role, persona: args.persona,
+    color: ROLE_COLORS[args.role],
     lifecycle: 'probation', activity: 'watching', activityText: '试岗开始，准备试跑', autonomy: args.autonomy ?? 'L1', pace: args.pace ?? 'normal',
     model, homeDir: posix.join(ctx.settings.rootDir, 'bots', id),
     sessionId: null, sessionStartedAt: null, createdAt: now, probationStartedAt: now, probationEndsAt: now + ctx.settings.probationMs,
     noChangeStreak: 0, lastThinkAt: null, nextThinkAt: null, nextThinkReason: null, nextThinkBy: null, nextThinkMode: null,
     lightCheckAt: now + ctx.settings.paceMaxIdleMs, expectedBy: null, consecutiveErrors: 0, consecutiveNoCommit: 0, violations: 0,
-    retryAt: null, quarantineReason: null, workDataAllowed: false, updatedAt: now }, '机器人');
+    retryAt: null, quarantineReason: null, workDataAllowed: false, presetSkillIds, updatedAt: now }, '机器人');
   const aspirations = args.aspirations.map(text => input(AspirationSchema, { id: newId('asp', ctx.rng), botId: id, text,
     status: 'active', createdBy: 'owner', approved: true, createdAt: now }, '志向'));
   if ((args.watches?.length ?? 0) > ctx.settings.maxWatchesPerBot) throw new Error('关注项数量已达上限');
@@ -66,6 +73,8 @@ export async function createBot(ctx: HubContext, raw: unknown): Promise<Bot> {
     try { await ctx.fs.remove(bot.homeDir); } catch { ctx.logger.warn('创建失败后的家目录清理未完成', { botId: id }); }
     throw error;
   }
+  // 家目录创建成功后再落性格档案，避免试岗启动失败时留下没有机器人的孤儿档案。
+  if (args.mbti != null) saveBotMbti(ctx, id, args.mbti);
   enqueue(ctx, buildCandidate(ctx, { botId: id, kind: 'trial', variant: 'trial', score: ctx.settings.c02.ownerSalience,
     summary: '主人创建了你，请试跑并交账', ownerSummary: '新队友开始试跑',
     evidence: aspirations.map(row => row.id), ownerInitiated: true, subjectKey: `trial:${id}` }));
@@ -73,6 +82,13 @@ export async function createBot(ctx: HubContext, raw: unknown): Promise<Bot> {
   ctx.emit(HUB_EVENT_SCOPES.bot, id);
   ctx.emit(HUB_EVENT_SCOPES.activity, id);
   return ctx.store.table('bots').get(id)!;
+}
+/** 预置 skill 只认内置清单：未知 id 拒绝，重复勾选按一次处理，顺序保留主人勾选次序。 */
+function checkPresetSkillIds(ids: readonly string[]): string[] {
+  const normalized = normalizePresetSkillIds(ids);
+  const unknown = unknownPresetSkillIds(normalized);
+  if (unknown.length) throw new Error(`预置 skill：没有「${unknown[0]}」这一项，请从清单里重新选择`);
+  return normalized;
 }
 /** 名字跨全部名册唯一；退役档案只保留历史，不占当前队伍和总管名额。 */
 function checkNameAndRole(ctx: HubContext, name: string, role: Bot['role'], id?: string): void {
@@ -83,7 +99,10 @@ function checkNameAndRole(ctx: HubContext, name: string, role: Bot['role'], id?:
 /** 主人可以调整档案与授权，但无法通过档案修改运行计数、生命周期或会话绑定。 */
 export async function updateBot(ctx: HubContext, botId: string, raw: unknown): Promise<Bot> {
   const old = requireBot(ctx, botId);
-  const patch = input(ProfilePatchSchema, raw, '档案修改');
+  // MBTI 不属于 Bot 本体：先拆出来，其余字段仍走原来的整档案校验与保存路径。
+  const { mbti, ...patch } = input(ProfilePatchSchema, raw, '档案修改');
+  // P40：勾选列表同样只认内置清单，未知 id 在落表前就拒绝。
+  if (patch.presetSkillIds !== undefined) patch.presetSkillIds = checkPresetSkillIds(patch.presetSkillIds);
   if (old.lifecycle === 'retired') throw new Error('退役机器人不能再修改档案');
   const preview = input(BotSchema, { ...old, ...patch, updatedAt: ctx.clock.now() }, '机器人');
   checkNameAndRole(ctx, preview.name, preview.role, preview.id);
@@ -95,8 +114,12 @@ export async function updateBot(ctx: HubContext, botId: string, raw: unknown): P
   const next = input(BotSchema, { ...current, ...patch, updatedAt: ctx.clock.now() }, '机器人');
   checkNameAndRole(ctx, next.name, next.role, next.id);
   ctx.store.table('bots').put(next);
+  // 只有明确传了 mbti 才写档案；null 表示清空，未传表示保持原样。
+  if (mbti !== undefined) saveBotMbti(ctx, botId, mbti);
   await syncFileWatches(ctx);
   await refreshBotFiles(ctx, botId);
+  // P40：档案保存后同步预置 skill 文件：新勾选的写入，取消勾选的只清理中心写过的文件。
+  await syncPresetSkills(ctx, next);
   ctx.emit(HUB_EVENT_SCOPES.bot, botId);
   return next;
 }
@@ -158,6 +181,7 @@ export async function setLifecycle(ctx: HubContext, botId: string, lifecycle: Li
     patch.activityText = resume ? old.activityText : '状态已更新，当前回合等待结束';
   }
   const row = ctx.store.table('bots').patch(botId, patch);
+  // 主人已取消编制：退役不再需要腾空席位，任务记录保留队友 id，界面按「队友已退役」提示。
   if (old.lifecycle === 'quarantined' && resume) {
     closeAlert(ctx, 'quarantine', botId);
     await syncAlertItems(ctx);
@@ -212,4 +236,108 @@ export async function lifecycleAction(ctx: HubContext, raw: unknown): Promise<Bo
       if (bot.lifecycle === 'retired') throw new Error('退役：它已经退役，不能重复退役');
       return setLifecycle(ctx, bot.id, 'retired');
   }
+}
+
+// ---------- P48：归档 / 恢复 / 删除 ----------
+
+/** 阻止归档的单个项目：项目名 + 它在这个项目里的未结任务数。 */
+export interface ArchiveBotBlockerProject {
+  projectId: string;
+  projectName: string;
+  /** 它是否仍是这个项目的成员。 */
+  member: boolean;
+  /** 这个项目里指派给它、仍在进行中或待验收的任务数。 */
+  openTaskCount: number;
+}
+/** 归档前置校验结果：界面据此显示受影响项目与任务数，服务端用同一份结果拒绝。 */
+export interface ArchiveBotCheck {
+  botId: string;
+  botName: string;
+  canArchive: boolean;
+  /** 阻止原因（中文，说清缺哪一项）；可以归档时为 null。 */
+  reason: string | null;
+  projectCount: number;
+  openTaskCount: number;
+  projects: ArchiveBotBlockerProject[];
+}
+
+/** 未结任务口径：进行中与待验收；待办和受阻不算在身上。 */
+const OPEN_TASK_STATUSES: readonly string[] = ['doing', 'done_pending_check'];
+
+/**
+ * 归档前置校验（纯读取）：只有已退役、且没有项目成员身份、没有未结任务的队友可以归档。
+ * 未归档项目才算约束；项目已归档时它已经是历史，不应再拦住归档。
+ */
+export function archiveBotCheck(ctx: HubContext, botId: string): ArchiveBotCheck {
+  const bot = requireBot(ctx, botId);
+  const projects = ctx.store.table('projects').list();
+  const tasks = ctx.store.table('projectTasks').list();
+  const blockers: ArchiveBotBlockerProject[] = [];
+  for (const project of projects) {
+    if (project.archivedAt !== null) continue;
+    const member = project.memberBotIds.includes(bot.id);
+    const openTaskCount = tasks.filter(task => task.projectId === project.id && task.assigneeBotId === bot.id
+      && OPEN_TASK_STATUSES.includes(task.status)).length;
+    if (member || openTaskCount > 0) blockers.push({ projectId: project.id, projectName: project.name, member, openTaskCount });
+  }
+  blockers.sort((a, b) => a.projectName.localeCompare(b.projectName, 'zh-Hans-CN'));
+  const projectCount = blockers.filter(row => row.member).length;
+  const openTaskCount = blockers.reduce((sum, row) => sum + row.openTaskCount, 0);
+  let reason: string | null = null;
+  if (bot.archivedAt != null) reason = '归档：它已经在已归档区里了';
+  else if (bot.lifecycle !== 'retired') reason = '归档：只有已退役的队友可以归档，请先退役';
+  else if (blockers.length > 0) {
+    const names = blockers.map(row => `${row.projectName}（${row.openTaskCount} 个未结任务${row.member ? '，仍是成员' : ''}）`).join('、');
+    const parts: string[] = [];
+    if (projectCount > 0) parts.push(`还是 ${projectCount} 个项目的成员`);
+    if (openTaskCount > 0) parts.push(`有 ${openTaskCount} 个未结任务（进行中或待验收）`);
+    reason = `归档：它${parts.join('，')}。先交接：${names}`;
+  }
+  return { botId: bot.id, botName: bot.name, canArchive: reason === null, reason,
+    projectCount, openTaskCount, projects: blockers };
+}
+
+/** 归档：只写可恢复的 archivedAt 标记，唤醒账本、工作会话、任务、产物一律不动。 */
+export function archiveBot(ctx: HubContext, botId: string): Bot {
+  const check = archiveBotCheck(ctx, botId);
+  if (!check.canArchive) throw new Error(check.reason ?? '归档：现在不能归档');
+  const now = ctx.clock.now();
+  const row = ctx.store.table('bots').patch(botId, { archivedAt: now, updatedAt: now });
+  // 退役时已经清过队列；这里再清一次，避免旧数据里残留候选在归档后仍被调度。
+  for (const entry of ctx.store.table('queue').list(entry => entry.botId === botId)) removeEntry(ctx, entry.id);
+  writeOutreachAudit(ctx, 'bot_archive', { botId, name: row.name, at: now }, 'owner');
+  ctx.emit(HUB_EVENT_SCOPES.bot, botId);
+  ctx.emit(HUB_EVENT_SCOPES.overview);
+  ctx.emit(HUB_EVENT_SCOPES.office);
+  return row;
+}
+
+/** 恢复：只清 archivedAt，回到「已退役、仍在名单里」的状态，历史原样保留。 */
+export function restoreArchivedBot(ctx: HubContext, botId: string): Bot {
+  const bot = requireBot(ctx, botId);
+  if (bot.archivedAt == null) throw new Error('恢复：它没有归档，不需要恢复');
+  const now = ctx.clock.now();
+  const row = ctx.store.table('bots').patch(botId, { archivedAt: null, updatedAt: now });
+  writeOutreachAudit(ctx, 'bot_restore', { botId, name: row.name, at: now }, 'owner');
+  ctx.emit(HUB_EVENT_SCOPES.bot, botId);
+  ctx.emit(HUB_EVENT_SCOPES.overview);
+  ctx.emit(HUB_EVENT_SCOPES.office);
+  return row;
+}
+
+/**
+ * 删除：只删队友的配置与档案（bots 与 botProfiles 两行）。
+ * 唤醒账本、线程、任务、产物与审计一律保留；界面查不到名字时显示「已删除的队友」。
+ * 只有已归档的队友可以删除，避免把还在名单里的队友误删。
+ */
+export function deleteArchivedBot(ctx: HubContext, botId: string): void {
+  const bot = requireBot(ctx, botId);
+  if (bot.archivedAt == null) throw new Error('删除：只有已归档的队友可以删除，请先归档');
+  ctx.store.table('bots').remove(botId);
+  ctx.store.table('botProfiles').remove(botId);
+  for (const entry of ctx.store.table('queue').list(entry => entry.botId === botId)) removeEntry(ctx, entry.id);
+  writeOutreachAudit(ctx, 'bot_delete', { botId, name: bot.name }, 'owner');
+  ctx.emit(HUB_EVENT_SCOPES.bot, botId);
+  ctx.emit(HUB_EVENT_SCOPES.overview);
+  ctx.emit(HUB_EVENT_SCOPES.office);
 }

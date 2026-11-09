@@ -19,6 +19,7 @@ import { postThread } from '../outreach/thread.js';
 import { syncAlertItems } from '../outreach/alerts.js';
 import { findOpenWake, createOwnerDirectWake } from './session.js';
 import { toolActionLabel } from '../util/action-text.js';
+import { recordDshToolAction, sealLedgerForWake } from '../ledger/service.js';
 /** 清理的只可能是本次放行前的旧候选，回合进行期间主人新发的消息必须保留。 */
 export async function finishTurn(ctx: HubContext, wakeId: string, at: number, status: WakeTicket['status'], errorText?: string): Promise<void> {
     const previous = ctx.store.table('wakes').get(wakeId);
@@ -63,6 +64,10 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
     const quota = ctx.store.table('quota').get('quota');
     if (quota?.light === 'red' && !quota.probeInFlight) restBotsForQuota(ctx, quota, at);
     refreshExpectedBy(ctx, wake.botId);
+    // 回合终态是唯一同时看到「最终状态 + 交账」的位置；只封存已存在的账本行，
+    // 不给主人直聊这种没有投递的回合凭空补账本。
+    try { sealLedgerForWake(ctx, wake.id); }
+    catch (error) { try { ctx.logger.error('封存唤醒账本失败', error); } catch { /* 账本故障不阻断回合收尾。 */ } }
     await syncAlertItems(ctx);
     ctx.emit(HUB_EVENT_SCOPES.activity, wake.botId);
     ctx.emit(HUB_EVENT_SCOPES.bot, wake.botId);
@@ -117,6 +122,18 @@ export async function onTurnEvent(ctx: HubContext, raw: TurnEvent): Promise<void
         else if (e.type === 'step') {
             ctx.store.table('wakes').patch(wake.id, { lastEventAt: e.at, steps: Math.max(wake.steps, e.steps),
                 ...(e.tokens === null ? {} : { tokens: Math.max(wake.tokens, e.tokens), tokensKnown: true }) });
+        }
+        else if (e.type === 'tool_call') {
+            // 过程下钻：把 DSH 工具调用写进本条唤醒的账本。记录失败不能影响回合推进。
+            ctx.store.table('wakes').patch(wake.id, { lastEventAt: Math.max(wake.lastEventAt, e.at) });
+            try {
+                recordDshToolAction(ctx, wake.id, {
+                    name: e.name, args: e.args, isError: e.isError, resultText: e.resultText, callId: e.callId,
+                });
+            }
+            catch (error) {
+                ctx.logger.error('记录 DSH 工具动作失败', error);
+            }
         }
         else if (e.type === 'awaiting_approval') {
             ctx.store.table('wakes').patch(wake.id, { lastEventAt: e.at, awaitingApprovalAt: wake.awaitingApprovalAt ?? e.at });

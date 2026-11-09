@@ -26,9 +26,12 @@ export type AgendaSource = 'owner' | 'bot' | 'peer' | 'hub'
 export type AgendaStatus = 'open' | 'done' | 'dropped'
 export type GoalStatus = 'active' | 'done_pending_check' | 'done' | 'abandoned' | 'blocked' | 'proposed'
 export type AppraisalDecision = 'woke' | 'queued' | 'pile' | 'record_only' | 'suppressed'
-export type SuppressionReason = 'paused' | 'waiting_owner_same_subject' | 'cooldown' | 'pace_min' | 'daily_cap' | 'bot_budget' | 'quota' | 'concurrency' | 'dispatch_gap' | 'startup_quiet' | 'dedup' | 'retry_backoff'
+export type SuppressionReason = 'paused' | 'waiting_owner_same_subject' | 'waiting_owner' | 'cooldown' | 'pace_min' | 'daily_cap' | 'bot_budget' | 'quota' | 'concurrency' | 'dispatch_gap' | 'startup_quiet' | 'dedup' | 'retry_backoff'
 export type Autonomy = 'L0' | 'L1' | 'L2' | 'L3'
 export type PaceProfile = 'active' | 'normal' | 'quiet'
+/** MBTI 16 型取值，与 core 的 MbtiType 一致；null 表示未设置。 */
+export type MbtiType = 'INTJ' | 'INTP' | 'ENTJ' | 'ENTP' | 'INFJ' | 'INFP' | 'ENFJ' | 'ENFP'
+  | 'ISTJ' | 'ISFJ' | 'ESTJ' | 'ESFJ' | 'ISTP' | 'ISFP' | 'ESTP' | 'ESFP'
 /** 宿主模型选择；null 表示跟随宿主默认模型（与 core ModelChoice 一致）。 */
 export type ModelChoice = { provider: string; model: string } | null
 
@@ -37,8 +40,61 @@ export type ModelChoice = { provider: string; model: string } | null
  * 编译期擦除，不会进客户端 bundle），界面与路由的形状不变。
  */
 // eslint-disable-next-line import/no-duplicates -- 类型集中再导出
-import type { Settings } from '@agent-hub/core'
+import type { Settings, WakeLedgerActionView, WakeLedgerEntry, WakeLedgerEvidenceView, WakeLedgerRow, WakeLedgerView } from '@agent-hub/core'
 export type { Settings }
+export type { CostView, CostTotals, CostBotRow, DailyCostView } from '@agent-hub/core'
+/** 倒带的索引、断点与房间均以 core 为准，客户端只选择时刻。 */
+export type { OfficeReplayView } from '@agent-hub/core'
+/** 账本视图类型直接复用 core 的命名，界面不自己再抄一份字段（第一期只读）。 */
+export type { WakeLedgerActionView, WakeLedgerEntry, WakeLedgerEvidenceView, WakeLedgerRow, WakeLedgerView }
+
+/**
+ * 办公室（F03）：形状、灯词表与座位结构全部以 core 的投影为准，界面不自己再抄一份。
+ * 这样 core 改灯或加字段时，插件的类型检查会立刻报出来，而不是静默显示旧口径。
+ */
+// eslint-disable-next-line import/no-duplicates -- 类型集中再导出
+import type {
+  DoorwayView, OfficeDeskView, OfficeDoorView, OfficeHealthView,
+  OfficeLight, OfficeOccupantView, OfficeView, SeatView,
+} from '@agent-hub/core'
+export type {
+  DoorwayView, OfficeDeskView, OfficeDoorView, OfficeHealthView,
+  OfficeLight, OfficeOccupantView, OfficeView, SeatView,
+}
+
+/**
+ * 资料授权矩阵（V2-PH2-04）：视图形状以 core 的 api/resource-views.ts 组装结果为准，
+ * 插件不自己抄字段，core 改口径时类型检查会立刻报出来。type-only import 在编译期擦除，
+ * 不进客户端 bundle。授权判定（canRead/effectiveGrants）仍只在 core，前端只渲染。
+ */
+// eslint-disable-next-line import/no-duplicates -- 类型集中再导出
+import type { Grant, Resource, ResourceGrantViewRow, ResourceView, ResourceViewRow } from '@agent-hub/core'
+export type { Grant, Resource, ResourceGrantViewRow, ResourceView, ResourceViewRow }
+
+/**
+ * 项目容器（V2-PH4-02）：视图形状以 core 的 api/project-views.ts 组装结果为准
+ * （Project/ProjectTask 模型与 ProjectView 行类型），插件不自己抄字段，core 改口径时
+ * 类型检查会立刻报出来。type-only import 在编译期擦除，不进客户端 bundle。
+ * 任务能不能流转、驳回理由合不合法只在 core 的状态机里判定，前端只渲染与前置校验。
+ */
+// eslint-disable-next-line import/no-duplicates -- 类型集中再导出
+import type {
+  CriterionStatus, Project, ProjectContext, ProjectContextProposal, ProjectContextProposalView,
+  ProjectContextRevision, ProjectContextRevisionView, ProjectCriterionView, ProjectIssueView,
+  ProjectLayersView, ProjectMemberView, ProjectOriginalLayerView, ProjectStatus, ProjectTask,
+  ProjectTaskAcceptanceView, ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView,
+  ProjectTeamLayerView, ProjectView, ProjectViewRow, TaskStatus,
+} from '@agent-hub/core'
+export type {
+  CriterionStatus, Project, ProjectContext, ProjectContextProposal, ProjectContextProposalView,
+  ProjectContextRevision, ProjectContextRevisionView, ProjectCriterionView, ProjectIssueView,
+  ProjectLayersView, ProjectMemberView, ProjectOriginalLayerView, ProjectStatus, ProjectTask,
+  ProjectTaskAcceptanceView, ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView,
+  ProjectTeamLayerView, ProjectView, ProjectViewRow, TaskStatus,
+}
+/** P40：预置 skill 的只读候选（名称、用途、加载条件），正文不下发到界面。 */
+import type { PresetSkillOption } from '@agent-hub/core'
+export type { PresetSkillOption }
 
 // ---------- 第 15.1 节视图结构（字段名逐字照抄） ----------
 
@@ -48,18 +104,21 @@ export interface BotCard {
   id: string; name: string; role: Role; roleLabel: string; color: string; initials: string   // initials：名字前 1–2 个字
   lifecycle: Lifecycle; lifecycleLabel: string; activity: Activity; activityLabel: string; activityText: string
   nextThinkText: string            // 例「有变化时，最晚周四 09:00」「明天 09:00（它自己定的：等日报出来）」
-  lastOutcome: Outcome | null; lastOutcomeLabel: string | null; lastActiveText: string | null
+  lastOutcome: Outcome | null; lastOutcomeLabel: string | null; lastActiveAt?: number | null; lastActiveText: string | null
   unread: number                   // 线程未读
   todayThinks: number; todayBudget: number; todayTokens: number
   waitingOwner: boolean            // 有在等主人的提问或审批
+  /** P48：已归档的队友只在「已归档」折叠区显示；旧夹具缺省视为未归档。 */
+  archived?: boolean
 }
 
 export interface OverviewView {
   bots: BotCard[]
+  costs?: import('@agent-hub/core').CostView
   inbox: { total: number; approvals: number; questions: number; proposals: number; alerts: number }
   team: { unread: number; lastMessageText: string | null }
   quota: { light: Light; lightLabel: string; usedText: string; resetText: string | null }
-  health: { ok: boolean; heartbeatText: string; downtimeText: string | null; openAlerts: number }
+  health: { ok: boolean; heartbeatText: string; downtimeText: string | null; openAlerts: number; sandboxWarning: string | null }
   nowText: string; quietNow: boolean; pushesLeftToday: number
 }
 
@@ -68,6 +127,7 @@ export interface ThreadMessageView {
   kind: ThreadKind; text: string; createdAt: number; timeText: string
   card: null | {                   // 内嵌在线程里的可操作卡片（提问 / 审批 / 提议）
     inboxId: string; approvalId: string | null   // approvalId 仅审批卡有；decideApproval 用它，不能误传 inboxId
+    goalId?: string | null
     type: 'question' | 'approval' | 'proposal' | 'alert'; status: InboxStatus
     title: string; body: string; options: string[]; defaultOption: string | null; answer: string | null; expiresText: string | null
   }
@@ -79,6 +139,8 @@ export interface WakeRow {
   id: string; variant: Variant; variantLabel: string; reasonKind: WakeKind; reasonText: string
   score: number; threshold: number; status: WakeStatus; outcome: Outcome | null; outcomeLabel: string | null
   summary: string | null; steps: number; tokens: number; durationText: string | null; startedAt: number; timeText: string
+  /** 账本行 id；没有账本（主人直聊、旧唤醒单等）时为空。 */
+  ledgerId: string | null; hasLedger: boolean
 }
 
 export interface AppraisalRow {
@@ -88,15 +150,20 @@ export interface AppraisalRow {
 }
 
 export interface BotView {
+  artifacts?: import('@agent-hub/core').ArtifactListView
   card: BotCard
   profile: {
-    persona: string; autonomy: Autonomy; autonomyLabel: string
+    persona: string; mbti: MbtiType | null; mbtiLabel: string
+    behavior?: import('@agent-hub/core').PersonalityBehavior | null
+    autonomy: Autonomy; autonomyLabel: string
     pace: PaceProfile; paceLabel: string
     model: ModelChoice; modelText: string
     homeDir: string; sessionId: string | null; createdAt: number; createdText: string; probationText: string | null; workDataAllowed: boolean
+    /** P40：主人勾选的预置 skill id；空数组即未启用。 */
+    presetSkillIds: string[]
   }
   aspirations: Array<{ id: string; text: string; status: string }>
-  goals: Array<{ id: string; title: string; doneWhen: string; period: string; periodText: string; status: GoalStatus; statusLabel: string; lastProgressText: string; createdBy: 'owner' | 'bot' }>
+  goals: Array<{ id: string; title: string; doneWhen: string; period: string; periodText: string; status: GoalStatus; statusLabel: string; lastProgressText: string; createdBy: 'owner' | 'bot'; checkText?: string }>
   agenda: Array<{ id: string; kind: AgendaKind; kindLabel: string; title: string; dueText: string | null; priority: number; toOwner: boolean; source: AgendaSource; status: AgendaStatus }>
   watches: Array<{ id: string; kind: WatchKind; kindLabel: string; target: string; filter: string | null; intervalText: string | null; expectationText: string | null; status: WatchStatus; createdBy: WatchCreatedBy; why: string; lastCheckedText: string | null }>
   routines: Array<{ id: string; name: string; whenToUse: string; steps: string[]; runs: number; updatedText: string }>
@@ -111,6 +178,7 @@ export interface InboxItemView {
   id: string; botId: string | null; botName: string | null; botColor: string | null
   type: InboxType; typeLabel: string; priority: InboxPriority
   approvalId: string | null        // 仅审批卡有；decideApproval 用它，不能误传收件箱 id
+  goalId?: string | null
   title: string; body: string; options: string[]; defaultOption: string | null
   createdAt: number; createdText: string; expiresText: string | null
 }
@@ -130,11 +198,15 @@ export interface SettingsView {
   settings: Settings
   pushChannelOptions: string[]
   modelOptions: Array<{ value: ModelChoice; label: string }>
+  /** P40：预置 skill 候选清单；只读，随插件版本走。 */
+  presetSkillOptions: PresetSkillOption[]
 }
 
 export interface RecentSessionView { sessionId: string; title: string; updatedText: string }
 
 export type CommandResult<T = unknown> = { ok: true; data?: T } | { ok: false; error: string }
+/** 产物类型由 core 统一定义；只追加可选字段兼容旧界面夹具。 */
+export type { ArtifactListView, ArtifactVersionRow, ArtifactVersion, ArtifactReview } from '@agent-hub/core'
 
 // ---------- 15.1 里被引用的 core 领域类型的局部声明（D02 改为从 core 导入） ----------
 

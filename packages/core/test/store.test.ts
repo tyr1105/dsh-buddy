@@ -60,6 +60,26 @@ describe.each(['memory', 'file'] as const)('%s 共同行为', (kind) => {
     expect(store.table('rules').get(input.id)?.text).toBe('先核验证据');
     expect(store.isDirty()).toBe(false);
   });
+  it('字段投影只含选定键，内容仍是副本且读取不写盘；序号在写入删除后更新', async () => {
+    const { store } = setup(kind);
+    store.table('rules').put(rule());
+    await store.flush();
+    const revision = store.table('rules').revision();
+    expect(store.table('rules').listFields(['id', 'text'])).toEqual([{ id: 'ru_test', text: '先核验证据' }]);
+    const row = { id: 'frame', at: NOW, sequence: 0, dateKey: '2026-11-05', kind: 'gap' as const, reason: '停止', room: null };
+    store.table('officeFrames').put(row);
+    await store.flush();
+    const projection = store.table('officeFrames').listFields(['id', 'reason']);
+    projection[0]!.reason = '改副本';
+    expect(store.table('officeFrames').get('frame')?.reason).toBe('停止');
+    expect(store.isDirty()).toBe(false);
+    expect(store.table('rules').revision()).toBe(revision);
+    store.table('rules').patch('ru_test', { text: '改正文' });
+    expect(store.table('rules').revision()).toBeGreaterThan(revision);
+    const next = store.table('rules').revision();
+    store.table('rules').remove('ru_test');
+    expect(store.table('rules').revision()).toBeGreaterThan(next);
+  });
   it('remove 删除记录，不存在时保持干净', async () => {
     const { store } = setup(kind);
     store.table('rules').put(rule()); await store.flush();
@@ -167,12 +187,73 @@ describe('FileStore 持久化与恢复', () => {
   it('跳过无 id 与非对象，保留具有 id 的旧版本记录', async () => {
     const { store, fs } = setup('file');
     await fs.writeTextAtomic(`${ROOT}/.hub/state/bots.json`, JSON.stringify([null, 1, [], {}, { id: '' }, { id: 'legacy' }]));
-    await store.load(); expect(store.table('bots').list()).toEqual([{ id: 'legacy' }]);
+    await store.load(); expect(store.table('bots').list()).toEqual([{ id: 'legacy', presetSkillIds: [] }]);
   });
   it('不能 load 覆盖未落盘更改', async () => {
     const { store } = setup('file'); store.table('rules').put(rule());
     await expect(store.load()).rejects.toThrow('未落盘');
     expect(store.table('rules').count()).toBe(1);
+  });
+  it('旧的部门与席位文件被忽略，不阻塞启动也不改写', async () => {
+    const { store, fs } = setup('file');
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/departments.json`, JSON.stringify([{ id: 'dept_a', name: '调研部' }]));
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/positions.json`, JSON.stringify([{ id: 'pos_a', title: '竞品调研', occupantBotId: 'b_a' }]));
+    await store.load();
+    // 两张表已从 TABLE_NAMES 移除：读不到、也不报错；文件保持原样，留给主人自行清理。
+    expect(store.table('bots').count()).toBe(0);
+    expect(await fs.readText(`${ROOT}/.hub/state/positions.json`)).toContain('pos_a');
+    expect(store.isDirty()).toBe(false);
+  });
+  it('项目与任务里的旧席位字段被换成队友字段，刷盘后旧字段消失', async () => {
+    const { store, fs } = setup('file');
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/projects.json`, JSON.stringify([{
+      id: 'prj_old', name: '旧项目', charter: '', status: 'active',
+      ownerPositionId: 'pos_a', memberPositionIds: ['pos_a', 'pos_b'],
+      sharedDir: '/hub-fixture/projects/prj_old/', acceptanceCriteria: [], createdAt: NOW, updatedAt: NOW, archivedAt: null,
+    }]));
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/projectTasks.json`, JSON.stringify([{
+      id: 'pt_old', projectId: 'prj_old', title: '旧任务', detail: '', status: 'todo',
+      assigneePositionId: 'pos_a', wakeIds: [], artifactIds: [], createdAt: NOW, updatedAt: NOW, dueAt: null,
+    }]));
+    await store.load();
+    const project = store.table('projects').get('prj_old')!;
+    expect(project).toMatchObject({ ownerBotId: null, memberBotIds: [], vision: '', conventions: '' });
+    expect(project).not.toHaveProperty('ownerPositionId');
+    expect(project).not.toHaveProperty('memberPositionIds');
+    const task = store.table('projectTasks').get('pt_old')!;
+    expect(task).toMatchObject({ assigneeBotId: null });
+    expect(task).not.toHaveProperty('assigneePositionId');
+    await store.flush();
+    const rewritten = await fs.readText(`${ROOT}/.hub/state/projects.json`);
+    expect(rewritten).not.toContain('Position');
+    expect(rewritten).toContain('ownerBotId');
+  });
+  it('资料去掉归属部门；按席位/部门授予的旧授权整条忽略', async () => {
+    const { store, fs } = setup('file');
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/resources.json`, JSON.stringify([{
+      id: 'res_a', name: '目录', kind: 'dir', locator: '/hub-fixture/shared/a', ownerDepartmentId: 'dept_a',
+      sensitivity: 'normal', createdAt: NOW, updatedAt: NOW, archivedAt: null,
+    }]));
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/grants.json`, JSON.stringify([
+      { id: 'gr_pos', resourceId: 'res_a', subjectKind: 'position', subjectId: 'pos_a', level: 'read', createdAt: NOW, createdBy: 'owner' },
+      { id: 'gr_dept', resourceId: 'res_a', subjectKind: 'department', subjectId: 'dept_a', level: 'read', createdAt: NOW, createdBy: 'owner' },
+      { id: 'gr_bot', resourceId: 'res_a', subjectKind: 'bot', subjectId: 'b_a', level: 'read', createdAt: NOW, createdBy: 'owner' },
+    ]));
+    await store.load();
+    expect(store.table('resources').get('res_a')).not.toHaveProperty('ownerDepartmentId');
+    expect(store.table('grants').list().map(row => row.id)).toEqual(['gr_bot']);
+  });
+  it('已是新形状的记录不会被标记重写', async () => {
+    const { store, fs } = setup('file');
+    await fs.writeTextAtomic(`${ROOT}/.hub/state/projects.json`, JSON.stringify([{
+      id: 'prj_new', name: '新项目', charter: '', vision: '', conventions: '', status: 'active',
+      ownerBotId: 'b_a', memberBotIds: ['b_a'],
+      sharedDir: '/hub-fixture/projects/prj_new/', acceptanceCriteria: [],
+      context: { background: '', conventions: '', decisions: [], glossary: [] }, contextRevisions: [],
+      createdAt: NOW, updatedAt: NOW, archivedAt: null,
+    }]));
+    await store.load();
+    expect(store.isDirty()).toBe(false);
   });
   it('UTC 16:00 前后按上海日期分日志且重刷不重复', async () => {
     const { store, fs } = setup('file');

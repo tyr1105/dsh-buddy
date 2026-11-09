@@ -20,6 +20,9 @@ import { createCandidateCollector } from './candidates.js';
 import { createDispatcher } from './dispatch.js';
 import { runTick } from './tick.js';
 import { createEntryWaits } from './entry-waits.js';
+import { migrateBotMbti } from '../personality/profile.js';
+import { recordToolAction, runLedgerBackfill } from '../ledger/service.js';
+import { markOfficeRecordFailure, recordOfficeFrame } from '../office/replay.js';
 
 export type HubDeps = Omit<HubContext, 'settings' | 'runtime' | 'emit'> & { settings?: Partial<Settings> };
 export type HubChange = { type: 'changed'; scope: HubEventScope; botId: string | null };
@@ -96,7 +99,7 @@ export function createHub(deps: HubDeps): Hub {
     effects.add(tracked);
   }
   /** 落盘失败保留脏状态；观察者即使抛错也不会中断后续观察者。 */
-  async function flush(live: () => boolean = () => true): Promise<boolean> {
+  async function flush(live: () => boolean = () => true, frameMode?: 'start'): Promise<boolean> {
     if (!live()) return false;
     const lease = waits.open('落盘');
     let saved = true;
@@ -109,6 +112,12 @@ export function createHub(deps: HubDeps): Hub {
       // 恢复标记和业务一起落盘，失败则还原，既不假报恢复也不在成功后遗留新的脏表。
       closeAlert(ctx, 'hub:存储落盘', null);
       for (const card of cards) ctx.store.table('inbox').patch(card.id, { status: 'closed', answer: '已恢复', answeredAt: ctx.clock.now() });
+      // 观察失败只影响倒带；当前业务仍然保存，故障时段不能继续沿用旧房间。
+      try { recordOfficeFrame(ctx, frameMode ?? (started ? 'observe' : 'stop')); }
+      catch (error) {
+        markOfficeRecordFailure(ctx);
+        try { ctx.logger.error('房间历史记录失败', error); } catch { /* 日志异常不影响业务落盘。 */ }
+      }
       await lease.wait(ctx.store.flush());
       if (!live() || !lease.live()) return false;
     } catch (error) {
@@ -146,7 +155,8 @@ export function createHub(deps: HubDeps): Hub {
       .catch(error => { report(label, error); });
   }
   const rawApi = createUiApi(ctx, afterEntry);
-  const viewNames = new Set(['overview', 'bot', 'thread', 'inbox', 'activity', 'settings', 'recentSessions']);
+  const viewNames = new Set(['overview', 'bot', 'thread', 'inbox', 'activity', 'settings', 'recentSessions',
+    'wakeLedgerList', 'wakeLedgerDetail', 'resourceView', 'projectView', 'officeView', 'officeReplay']);
   // 界面命令的参数校验由 API 承担，串行边界包住整条命令而非仅最后一次 pump。
   const api = Object.fromEntries(Object.entries(rawApi).map(([name, method]) => [name,
     viewNames.has(name) ? method : name === 'interruptBot'
@@ -164,11 +174,19 @@ export function createHub(deps: HubDeps): Hub {
     /** 每次调用现场解析 sessionId；过期旧会话不能冒用已轮换的机器人身份。 */
     handler: (sessionId, args) => serial<ToolResult>(async live => {
       let result: ToolResult;
+      let wakeId: string | null = null;
+      const startedAt = ctx.clock.now();
       try {
         const botId = hub.botIdForSession(sessionId);
         if (!botId) result = { ok: false, error: '只有 Agent 中心的机器人能用这个工具' };
-        else result = await tool.handler(ctx, { botId, sessionId, wakeId: findOpenWake(ctx, sessionId)?.id ?? null }, args);
+        else {
+          wakeId = findOpenWake(ctx, sessionId)?.id ?? null;
+          result = await tool.handler(ctx, { botId, sessionId, wakeId }, args);
+        }
       } catch (error) { result = { ok: false, error: error instanceof Error ? error.message : '机器人工具执行失败' }; }
+      // 工具动作是中心实际观察到的事实；记录失败不能阻断工具结果返回。
+      try { recordToolAction(ctx, wakeId, tool.name, result, ctx.clock.now() - startedAt); }
+      catch (error) { try { ctx.logger.error('记录唤醒账本动作失败', error); } catch { /* 账本故障不影响工具调用。 */ } }
       try { await afterEntry(live); } catch (error) { return { ok: false, error: `工具已处理，但保存失败：${String(error)}` }; }
       return result;
     }).catch(error => ({ ok: false as const, error: error instanceof Error ? error.message : '机器人工具入口失败' })),
@@ -180,6 +198,8 @@ export function createHub(deps: HubDeps): Hub {
       if (started) return;
       try {
         await ctx.store.load();
+        // 早期版本把 MBTI 写进过 Bot 本体；启动时迁到独立档案表并剥掉，保证 bots.json 旧版本可读。
+        migrateBotMbti(ctx);
         if (!live()) return;
         const persisted = ctx.store.table('settings').get('settings') ?? ctx.store.table('settings').list()[0];
         ctx.settings = resolveStartupSettings(persisted, deps.settings);
@@ -189,6 +209,10 @@ export function createHub(deps: HubDeps): Hub {
           writeOutreachAudit(ctx, 'settings_root_override', { storedRootDir: persisted.rootDir, hostRootDir: ctx.settings.rootDir });
         }
         await initRoot(ctx);
+        if (!live()) return;
+        // v2 首次启动：备份旧表并回填账本，再调和上次进程留下的未封存行。
+        // 失败只告警，不阻止中心启动；下次启动按 wakeId 幂等重试。
+        await safe('账本回填与调和', () => runLedgerBackfill(ctx));
         if (!live()) return;
         const downtime = await detectDowntimeOnStart(ctx, ctx.clock.now());
         if (!live()) return;
@@ -214,7 +238,7 @@ export function createHub(deps: HubDeps): Hub {
         ctx.emit(HUB_EVENT_SCOPES.overview);
         ctx.emit(HUB_EVENT_SCOPES.activity);
       } catch (error) { report('中心启动', error); throw error; }
-      finally { await flush(live); }
+      finally { await flush(live, 'start'); }
     }),
     /** 停止不会取消正在运行的回合；后续 ended 仍可交账和落盘。 */
     stop: () => serial(async live => {

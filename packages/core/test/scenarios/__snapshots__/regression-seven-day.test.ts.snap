@@ -1,0 +1,100 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`E05 回归与七天仿真 > 七天行为指纹稳定，账本、办公室与收件箱始终对得上 1`] = `
+{
+  "alerts": {},
+  "days": 7,
+  "digests": 8,
+  "inbox": {
+    "proposal/open": 1,
+  },
+  "intervalCv": 0.4796,
+  "ledger": {
+    "actions": {
+      "hub_tool": 26,
+    },
+    "complete": 14,
+    "partial": 12,
+    "total": 26,
+  },
+  "maxRunning": 1,
+  "notifications": {
+    "byDay": {
+      "2026-11-05": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-06": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-07": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-08": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-09": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-10": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-11": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+      "2026-11-12": {
+        "daytime": 1,
+        "quiet": 0,
+        "quietP0": 0,
+      },
+    },
+    "daytime": 8,
+    "quiet": 0,
+    "quietP0": 0,
+  },
+  "pushes": {
+    "byDay": {},
+    "daytime": 0,
+    "quiet": 0,
+    "quietP0": 0,
+  },
+  "reasons": {
+    "next_think": 11,
+    "owner_message": 1,
+    "percept": 13,
+    "reflection": 1,
+  },
+  "selfInitiated": 1,
+  "selfPacedRatio": 0.7308,
+  "turns": 26,
+  "turnsByDay": {
+    "2026-11-05": 1,
+    "2026-11-06": 3,
+    "2026-11-07": 4,
+    "2026-11-08": 5,
+    "2026-11-09": 3,
+    "2026-11-10": 4,
+    "2026-11-11": 4,
+    "2026-11-12": 1,
+  },
+  "wakes": {
+    "error": 0,
+    "ownerInitiated": 1,
+    "retry": 0,
+    "total": 26,
+  },
+}
+`;

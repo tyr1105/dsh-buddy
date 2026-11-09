@@ -15,10 +15,10 @@ function call(pathWithQuery: string, init?: RequestInit): Promise<Response> {
 }
 
 describe('路由注册（假 ctx 记录 fetch.register 调用）', () => {
-  it('注册了 8 条路由', () => {
+  it('注册了 13 条路由', () => {
     const { ctx, fetchRoutes } = createFakeCtx()
     registerRoutes(ctx as never, hub)
-    expect(fetchRoutes).toHaveLength(8)
+    expect(fetchRoutes).toHaveLength(13)
   })
   it('读路由全部是 GET + requestBody buffered；写路由是 POST', () => {
     for (const route of buildRoutes(hub)) {
@@ -149,6 +149,92 @@ describe('其余 GET 路由', () => {
     expect(settings.settings.rootDir).toBeTypeOf('string')
     const sessions = await (await call('/api/agent-hub/recent-sessions')).json() as unknown[]
     expect(sessions.length).toBeGreaterThan(0)
+  })
+  it('office 返回办公室投影（F03）：座位就是一位在岗队友，带灯与房间健康', async () => {
+    const data = await (await call('/api/agent-hub/office')).json() as {
+      asOf: number; seats: Array<{ botId: string; title: string; occupant: { name: string }; light: string; lightLabel: string }>
+      doorway: { count: number }; health: { ok: boolean }; truncated: boolean
+    }
+    expect(typeof data.asOf).toBe('number')
+    expect(data.seats.length).toBeGreaterThan(0)
+    expect(data.seats[0]!.botId).toBeTypeOf('string')
+    expect(data.seats[0]!.occupant.name).toBeTypeOf('string')
+    expect(data.seats[0]!.light).toBeTypeOf('string')
+    expect(data.seats[0]!.lightLabel).toBeTypeOf('string')
+    expect(typeof data.doorway.count).toBe('number')
+    expect(typeof data.health.ok).toBe('boolean')
+    expect(data.truncated).toBe(false)
+    // 编制取消：办公室不再有部门分组、来源与板凳字段。
+    expect(data).not.toHaveProperty('departments')
+    expect(data).not.toHaveProperty('source')
+    expect(data).not.toHaveProperty('bench')
+  })
+  it('org 路由已随编制移除：路由表里没有 /api/agent-hub/org', () => {
+    expect(buildRoutes(hub).some(r => r.path === '/api/agent-hub/org')).toBe(false)
+  })
+  it('resource 返回资料授权矩阵（V2-PH2-04）：有资料行、授权行与计数', async () => {
+    const data = await (await call('/api/agent-hub/resource')).json() as {
+      asOf: number
+      resources: Array<{ resource: { id: string; name: string; kind: string }; kindLabel: string; sensitivityLabel: string; archived: boolean; grants: unknown[] }>
+      grants: unknown[]
+      counts: { total: number; active: number; archived: number; grants: number }
+    }
+    expect(typeof data.asOf).toBe('number')
+    expect(data.resources.length).toBeGreaterThan(0)
+    // 未归档在前、已归档在后（core resourceView 的排序契约）。
+    const archivedAt = data.resources.findIndex(r => r.archived)
+    if (archivedAt >= 0) expect(data.resources.slice(archivedAt).every(r => r.archived)).toBe(true)
+    for (const key of ['kindLabel', 'sensitivityLabel', 'grants']) expect(data.resources[0]!).toHaveProperty(key)
+    expect(data.grants.length).toBeGreaterThan(0)
+    expect(data.counts).toEqual({
+      total: data.resources.length,
+      active: data.resources.filter(r => !r.archived).length,
+      archived: data.resources.filter(r => r.archived).length,
+      grants: data.grants.length,
+    })
+  })
+  it('project 返回项目容器（V2-PH4-02）：有项目行、任务展开与计数', async () => {
+    const data = await (await call('/api/agent-hub/project')).json() as {
+      asOf: number
+      projects: Array<{ project: { id: string; status: string }; tasks: unknown[]; issues: unknown[] }>
+      counts: { active: number; paused: number; done: number; archived: number; total: number; tasksTotal: number; tasksPendingCheck: number }
+    }
+    expect(typeof data.asOf).toBe('number')
+    expect(data.projects).toHaveLength(5)
+    // 归档项目沉底（core projectView 的排序契约）。
+    expect(data.projects.at(-1)!.project.status).toBe('archived')
+    // 计数与行内容一致：总数、任务合计、待验收一条（pt_weekly_5）。
+    expect(data.counts.total).toBe(5)
+    expect(data.counts.tasksTotal).toBe(10)
+    expect(data.counts.tasksPendingCheck).toBe(1)
+    expect(data.counts.tasksTotal).toBe(data.projects.reduce((n, row) => n + row.tasks.length, 0))
+  })
+})
+
+describe('GET wake-ledger / wake-ledger-detail（F02 最小读法）', () => {
+  it('按机器人返回账本摘要列表（含回填 / 完整度标签）', async () => {
+    const res = await call('/api/agent-hub/wake-ledger?botId=bot-tanlu')
+    expect(res.status).toBe(200)
+    const rows = await res.json() as Array<{ wakeId: string; sourceLabel: string; completenessLabel: string; openedText: string }>
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.some(row => row.sourceLabel === '回填')).toBe(true)
+    expect(rows.every(row => typeof row.openedText === 'string')).toBe(true)
+  })
+  it('limit 生效；缺 botId 报 500 且 ok:false', async () => {
+    const limited = await (await call('/api/agent-hub/wake-ledger?botId=bot-tanlu&limit=1')).json() as unknown[]
+    expect(limited).toHaveLength(1)
+    const res = await call('/api/agent-hub/wake-ledger')
+    expect(res.status).toBe(500)
+    expect((await res.json()).ok).toBe(false)
+  })
+  it('详情返回完整账本；未知唤醒单返回 null；缺 wakeId 报 500', async () => {
+    const data = await (await call('/api/agent-hub/wake-ledger-detail?wakeId=wk2')).json() as { entry?: { source: string }; row?: { wakeId: string } }
+    expect(data.entry?.source).toBe('live')
+    expect(data.row?.wakeId).toBe('wk2')
+    expect(await (await call('/api/agent-hub/wake-ledger-detail?wakeId=no-such')).json()).toBeNull()
+    const res = await call('/api/agent-hub/wake-ledger-detail')
+    expect(res.status).toBe(500)
+    expect((await res.json()).ok).toBe(false)
   })
 })
 

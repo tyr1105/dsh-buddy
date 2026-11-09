@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SystemExec } from '../src/io/system-exec.js';
@@ -135,11 +135,13 @@ describe('M12 SystemExec 沙箱失败关闭', () => {
   it('规则使用真实目录与临时目录，转义空格、引号及反斜杠且不插入额外权限', async () => {
     const parent = await directory();
     const root = join(parent, '目录 space "quote" \\backslash');
+    // 规则变更：可写根目录本身是链接时不再跟随（机器人能把家目录换成链接），只有上级目录的别名才解析。
     const alias = join(parent, 'alias');
-    await mkdir(root); await symlink(root, alias);
+    await mkdir(root); await symlink(parent, alias);
+    const viaAlias = join(alias, basename(root));
     const actual = await realpath(root);
     const temp = await realpath(tmpdir());
-    expect(await sandboxProfile({ writableRoots: [alias, root] }, 'darwin')).toBe(
+    expect(await sandboxProfile({ writableRoots: [viaAlias, root] }, 'darwin')).toBe(
       '(version 1)(allow default)(deny file-write*)(allow file-write* (literal "/dev/null"))'
       + `(allow file-write* (subpath ${sbplString(actual)}) (subpath ${sbplString(temp)}))`);
     expect(sbplString('/a" ) (allow file-write*) \\')).toBe('"/a\\" ) (allow file-write*) \\\\"');

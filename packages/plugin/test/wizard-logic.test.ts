@@ -3,9 +3,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  ASPIRATION_EXAMPLES, PERSONA_EXAMPLES, PRESET_COLORS, ROLE_CARDS,
+  ASPIRATION_EXAMPLES, MBTI_OPTIONS, PERSONA_EXAMPLES, PRESET_COLORS, ROLE_CARDS,
   buildCreateBotInput, emptyDraft, loadDraft, parseAspirations, saveDraft, clearDraft,
-  stepError, validateAspirations, validateName, validatePersona, validateWatchTarget, wizardSummary,
+  stepError, validateAspirations, validateFirstTask, validateMbti, validateName, validatePersona, validateWatchTarget, wizardSummary,
 } from '../src/client/logic/wizard.js'
 
 const base = { ...emptyDraft(), name: '巡检员', role: 'sentinel' as const }
@@ -17,6 +17,11 @@ describe('向导：名字与重名（第 1 步）', () => {
   it('重名实时提示', () => expect(validateName('探路', ['巡检员', '探路'])).toContain('已经有叫「探路」'))
   it('不重名通过', () => expect(validateName('观澜', ['探路'])).toBeNull())
   it('没选角色时第 1 步不能下一步', () => expect(stepError({ ...base, role: '' }, [])).toContain('角色'))
+  it('空表单先指名字再指角色（先亮输入框，不先亮卡片）', () => {
+    const empty = emptyDraft()
+    expect(stepError(empty, [])).toContain('名字')
+    expect(stepError({ ...empty, name: '探路' }, [])).toContain('角色')
+  })
 })
 
 describe('向导：性格与志向（第 2、3 步）', () => {
@@ -72,7 +77,7 @@ describe('向导：复述与 createBot 入参（第 6 步）', () => {
       watch: { kind: 'log' as const, target: '/var/log/line.log', note: '' },
     }
     const text = wizardSummary(draft, '盯守')
-    expect(text).toContain('我是巡检员，盯守。我的志向是自动线按时跑完；异常第一时间知道。我会先盯着/var/log/line.log，有事会在这里找你。')
+    expect(text).toContain('我是巡检员，盯守。我的志向是自动线按时跑完；异常第一时间知道。我会先盯着/var/log/line.log，有事项将在此通知。')
   })
   it('没填起步关注时复述写「先熟悉家目录」', () => {
     expect(wizardSummary({ ...base, aspirations: ['一件事'] }, '盯守')).toContain('我会先熟悉自己的家目录')
@@ -92,6 +97,11 @@ describe('向导：复述与 createBot 入参（第 6 步）', () => {
   it('选了模型时入参带解析后的模型对象', () => {
     const input = buildCreateBotInput({ ...base, aspirations: ['a'], model: '{"provider":"deepseek-official","model":"deepseek-flash"}' })
     expect(input.model).toEqual({ provider: 'deepseek-official', model: 'deepseek-flash' })
+  })
+  it('P40：不勾预置 skill 时入参没有这个字段；勾了才提交 id 列表', () => {
+    expect('presetSkillIds' in buildCreateBotInput({ ...base, aspirations: ['a'] })).toBe(false)
+    expect(buildCreateBotInput({ ...base, aspirations: ['a'], presetSkillIds: ['owner-brief', 'data-check'] }).presetSkillIds)
+      .toEqual(['owner-brief', 'data-check'])
   })
 })
 
@@ -126,6 +136,15 @@ describe('向导：草稿持久化（读写 try/catch，测试注入内存版 st
     expect(loadDraft(null)).toBeNull()
     expect(() => clearDraft(null)).not.toThrow()
   })
+  it('P40：旧草稿没有预置 skill 字段时读回空数组，脏数据被过滤', () => {
+    const store = memoryStorage()
+    const legacy = { ...base, step: 2 } as Record<string, unknown>
+    delete legacy.presetSkillIds
+    store.setItem('dsh-buddy:wizard-draft:v1', JSON.stringify(legacy))
+    expect(loadDraft(store)?.presetSkillIds).toEqual([])
+    store.setItem('dsh-buddy:wizard-draft:v1', JSON.stringify({ ...base, presetSkillIds: ['owner-brief', 1, null, 'data-check'] }))
+    expect(loadDraft(store)?.presetSkillIds).toEqual(['owner-brief', 'data-check'])
+  })
 })
 
 describe('D07 第 8 条：「跟随 DSH 默认」提交 model:null（不是省略）', () => {
@@ -144,5 +163,92 @@ describe('D04 3c-1：色板中文名（无障碍标签）', () => {
   it('每个预设颜色都有中文名', async () => {
     const { PRESET_COLORS, COLOR_NAMES } = await import('../src/client/logic/wizard.js')
     for (const color of PRESET_COLORS) expect(typeof COLOR_NAMES[color]).toBe('string')
+  })
+})
+
+describe('C02-MBTI：向导第 2 步的 16 型选择', () => {
+  /** 本地内存版 storage（与草稿持久化用例一致，避免跨 describe 共享状态）。 */
+  function memoryStorage(): Storage {
+    const map = new Map<string, string>()
+    return {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => { map.set(k, v) },
+      removeItem: (k: string) => { map.delete(k) },
+      clear: () => map.clear(),
+      key: (i: number) => [...map.keys()][i] ?? null,
+      get length() { return map.size },
+    } as Storage
+  }
+
+  it('正好 16 型、取值不重复、每型都有一句人话解释', () => {
+    expect(MBTI_OPTIONS).toHaveLength(16)
+    expect(new Set(MBTI_OPTIONS.map(o => o.value)).size).toBe(16)
+    for (const option of MBTI_OPTIONS) {
+      expect(option.label.startsWith(option.value)).toBe(true)
+      expect([...option.desc].length).toBeGreaterThan(6)
+    }
+  })
+
+  it('四个维度各自都有分布在选项里（E/I、S/N、T/F、J/P）', () => {
+    const firstLetters = new Set(MBTI_OPTIONS.map(o => o.value[0]))
+    const secondLetters = new Set(MBTI_OPTIONS.map(o => o.value[1]))
+    const thirdLetters = new Set(MBTI_OPTIONS.map(o => o.value[2]))
+    const fourthLetters = new Set(MBTI_OPTIONS.map(o => o.value[3]))
+    expect([...firstLetters].sort()).toEqual(['E', 'I'])
+    expect([...secondLetters].sort()).toEqual(['N', 'S'])
+    expect([...thirdLetters].sort()).toEqual(['F', 'T'])
+    expect([...fourthLetters].sort()).toEqual(['J', 'P'])
+  })
+
+  it('未设置（空字符串）通过；合法 16 型通过；非法值报错', () => {
+    expect(validateMbti('')).toBeNull()
+    expect(validateMbti('INTJ')).toBeNull()
+    expect(validateMbti('XXXX')).toContain('MBTI')
+  })
+
+  it('第 2 步：非法 MBTI 拦住下一步，合法与未设置放行', () => {
+    expect(stepError({ ...base, step: 1, mbti: 'ABCD' as unknown as '' }, [])).toContain('MBTI')
+    expect(stepError({ ...base, step: 1, mbti: 'ENFP' }, [])).toBeNull()
+    expect(stepError({ ...base, step: 1, mbti: '' }, [])).toBeNull()
+    // 旧草稿对象没有 mbti 字段时也不能抛错。
+    expect(stepError({ ...base, step: 1, mbti: undefined as unknown as '' }, [])).toBeNull()
+  })
+
+  it('createBot 入参：未设置提交 null，选了类型提交类型码', () => {
+    expect(buildCreateBotInput({ ...base, mbti: '' }).mbti).toBeNull()
+    expect(buildCreateBotInput({ ...base, mbti: 'ISTJ' }).mbti).toBe('ISTJ')
+  })
+
+  it('旧草稿缺 mbti 字段读回「未设置」，不补默认型', () => {
+    const store = memoryStorage()
+    const legacy = { ...base, step: 1 } as Record<string, unknown>
+    delete legacy.mbti
+    store.setItem('dsh-buddy:wizard-draft:v1', JSON.stringify(legacy))
+    expect(loadDraft(store)?.mbti).toBe('')
+  })
+
+  it('坏 MBTI 草稿值读回「未设置」', () => {
+    const store = memoryStorage()
+    saveDraft({ ...base, mbti: 'ZZZZ' as unknown as '' }, store)
+    expect(loadDraft(store)?.mbti).toBe('')
+  })
+})
+
+describe('P37：可选的第一件事放进项目待领', () => {
+  const projectIds = ['prj_weekly', 'prj_migrate']
+
+  it('正例：选了项目且标题合法时通过', () => {
+    expect(validateFirstTask({ projectId: 'prj_weekly', title: '把周报模板补上' }, projectIds)).toBeNull()
+    // 首尾空格不算内容，trim 后仍有字即可。
+    expect(validateFirstTask({ projectId: 'prj_weekly', title: '  补一条  ' }, projectIds)).toBeNull()
+  })
+
+  it('反例：没选项目 / 项目已不存在 / 标题为空 / 标题超 120 字都报中文原因', () => {
+    expect(validateFirstTask({ projectId: '', title: '补一条' }, projectIds)).toContain('先选一个项目')
+    expect(validateFirstTask({ projectId: 'prj_gone', title: '补一条' }, projectIds)).toContain('已经不在了')
+    expect(validateFirstTask({ projectId: 'prj_weekly', title: '   ' }, projectIds)).toContain('不能为空')
+    expect(validateFirstTask({ projectId: 'prj_weekly', title: '一'.repeat(121) }, projectIds)).toContain('120 字')
+    // 正好 120 字是允许的上限。
+    expect(validateFirstTask({ projectId: 'prj_weekly', title: '一'.repeat(120) }, projectIds)).toBeNull()
   })
 })

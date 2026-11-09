@@ -12,7 +12,13 @@ export const HUB_EVENT_SCOPES = {
   activity: 'activity',
   /** 全局设置或模型选项变化；botId 为 null。机器人自身模型变更使用 bot。 */
   settings: 'settings',
+  /** 唤醒账本新增、追加动作或封存；机器人项必带 botId，集中回填用 null。 */
+  ledger: 'ledger',
+  /** 项目容器变化：项目与任务、验收结论；全队结构，botId 固定 null。 */
+  project: 'project',
+  /** 办公室投影变化：队友状态、账本、收件箱或资料变动都可能改变房间；botId 按来源带。 */
+  office: 'office',
 } as const;
 
-/** 订阅者只需处理这六个公开范围，不应判断 queue、wakes、bots 等内部表名。 */
+/** 订阅者只需处理这些公开范围，不应判断 queue、wakes、bots 等内部表名。 */
 export type HubEventScope = typeof HUB_EVENT_SCOPES[keyof typeof HUB_EVENT_SCOPES];

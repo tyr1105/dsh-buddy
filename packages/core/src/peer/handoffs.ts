@@ -7,6 +7,7 @@ import { parseInput } from '../engine/validation.js';
 import { nonempty } from '../model/primitives.js';
 import { HandoffSchema, type Handoff } from '../model/team.js';
 import { AgendaItemSchema } from '../model/bot.js';
+import type { Bot } from '../model/bot.js';
 import { newId } from '../util/ids.js';
 import { recordHandoff, recordPeerMessage } from '../perception/sources.js';
 import { postThread } from '../outreach/thread.js';
@@ -14,17 +15,49 @@ import { refreshBotFiles } from '../memory/index.js';
 import { auditTool } from '../tools/common.js';
 import { classifyPath } from '../gate/paths.js';
 import { gateContextFor, recordViolation } from '../gate/guard.js';
-import { resolveRealTarget } from '../gate/real-path.js';
+import { resolveFixedRoot, resolveRealTarget } from '../gate/real-path.js';
 import { enqueuePeerPercept, peerRecipient, peerBot } from './common.js';
-export const HandoffInputSchema = z.strictObject({ to: nonempty, task: nonempty, files: z.array(nonempty).optional(), why: nonempty });
+import { artifactReference, readArtifactVersion } from '../artifacts/access.js';
+import type { ArtifactVersion } from '../model/artifact.js';
+/**
+ * to 可省略（v2 计划 3.2）：取消编制与汇报链后，省略时回退给在岗总管；
+ * 显式给 to 时沿用原规则（必须在岗、不能是自己）。
+ */
+export const HandoffInputSchema = z.strictObject({ to: nonempty.optional(), task: nonempty,
+    files: z.array(nonempty).optional(), artifacts: z.array(nonempty).optional(), why: nonempty });
 /** 按完整目录段检查文件归属，避免名称前缀相似的外部目录混入授权范围。 */
 const inside = (file: string, base: string) => file === base || file.startsWith(`${base}/`);
+
+/**
+ * 解析交接收件人。保守回退顺序：显式指定 > 在岗总管（创建最早的一个）> 报错。
+ * 汇报链已随编制一起取消，交接本身的其他校验与配额不变。
+ */
+function resolveRecipient(ctx: HubContext, from: string, explicitTo?: string): Bot {
+    if (explicitTo) return peerRecipient(ctx, from, explicitTo);
+    peerBot(ctx, from);
+    const chief = ctx.store.table('bots').list(b => b.id !== from && b.role === 'chief'
+        && ['active', 'probation'].includes(b.lifecycle))
+        .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))[0] ?? null;
+    if (chief) return chief;
+    throw new Error('to：未指定收件人，也没有在岗总管，请显式指定 to');
+}
 /** 检查交接文件边界并复制到共享目录，同时建立接收方议程和可追溯的交接感知。 */
 export async function createHandoff(ctx: HubContext, from: string, input: z.infer<typeof HandoffInputSchema>): Promise<Handoff> {
     const args = parseInput(HandoffInputSchema, input, '交接');
-    const recipient = peerRecipient(ctx, from, args.to);
+    const recipient = resolveRecipient(ctx, from, args.to);
     const sender = peerBot(ctx, from);
-    if (ctx.store.table('agenda').count(a => a.botId === args.to && a.status === 'open') >= ctx.settings.maxOpenAgendaPerBot)
+    const versionIds = [...new Set(args.artifacts ?? [])];
+    if (versionIds.length > ctx.settings.artifacts.maxHandoffVersions)
+        throw new Error('artifacts：本次交接的固定版本数量超出上限');
+    const versions: ArtifactVersion[] = [];
+    // 两端都须有权读；owner/only_me 的版本不能因交接被复制进共享区。
+    for (const versionId of versionIds) {
+        const version = await readArtifactVersion(ctx, versionId, { kind: 'bot', botId: from });
+        if (version.visibility !== 'others') throw new Error('artifacts：只能交接可给同伴看的版本');
+        await readArtifactVersion(ctx, versionId, { kind: 'bot', botId: recipient.id });
+        versions.push(version);
+    }
+    if (ctx.store.table('agenda').count(a => a.botId === recipient.id && a.status === 'open') >= ctx.settings.maxOpenAgendaPerBot)
         throw new Error('收件人未完成议程已达上限');
     const gate = gateContextFor(ctx, sender);
     const sources: string[] = [];
@@ -51,7 +84,7 @@ export async function createHandoff(ctx: HubContext, from: string, input: z.infe
             await recordViolation(ctx, sender.id, action.reason);
             throw new Error(`files：${action.reason}`);
         }
-        const home = await ctx.fs.realpath(sender.homeDir);
+        const home = await resolveFixedRoot(ctx.fs, sender.homeDir);
         const shared = await resolveRealTarget(ctx.fs, path.join(ctx.settings.rootDir, 'shared'));
         if (!inside(real.toLowerCase(), home.toLowerCase()) && !inside(real.toLowerCase(), shared.toLowerCase()))
             throw new Error('files：不能复制发起方家目录或 shared 之外的符号链接目标');
@@ -85,21 +118,32 @@ export async function createHandoff(ctx: HubContext, from: string, input: z.infe
         await ctx.fs.copy(source, realTarget);
         files.push(target);
     }
+    // 固定副本来自已归档正文；原文件后续修改不影响交接内容，纯文本扩展名防止执行。
+    for (const [index, version] of versions.entries()) {
+        await readArtifactVersion(ctx, version.id, { kind: 'bot', botId: recipient.id });
+        const target = path.join(folder, `artifact-${index + 1}-v${version.number}.txt`);
+        const realTarget = await resolveRealTarget(ctx.fs, target);
+        if (!inside(realTarget.toLowerCase(), realShared.toLowerCase()))
+            throw new Error('artifacts：交接副本目标超出 shared');
+        await ctx.fs.writeTextAtomic(realTarget, version.content);
+        files.push(target);
+    }
+    const references = versions.map(version => artifactReference(version.id)).join('、');
     // 复制时可能已有其他交接占满名额；落表前再核对，并清理本次尚未发布的副本。
-    if (ctx.store.table('agenda').count(a => a.botId === args.to && a.status === 'open') >= ctx.settings.maxOpenAgendaPerBot) {
+    if (ctx.store.table('agenda').count(a => a.botId === recipient.id && a.status === 'open') >= ctx.settings.maxOpenAgendaPerBot) {
         await ctx.fs.remove(folder);
         throw new Error('收件人未完成议程已达上限');
     }
-    const agenda = AgendaItemSchema.parse({ id: newId('a', ctx.rng), botId: args.to, kind: 'task', title: args.task,
+    const agenda = AgendaItemSchema.parse({ id: newId('a', ctx.rng), botId: recipient.id, kind: 'task', title: args.task,
         goalId: null, dueAt: null, onEvent: null, abandonWhen: '发起方撤回或 7 天未处理', priority: ctx.settings.c03.handoffAgendaPriority,
-        toOwner: false, source: 'peer', status: 'open', note: args.why, createdAt: now, updatedAt: now });
-    const handoff = HandoffSchema.parse({ id, from, to: args.to, task: args.task, files, status: 'offered', agendaId: agenda.id, createdAt: now, updatedAt: now });
+        toOwner: false, source: 'peer', status: 'open', note: `${args.why}${references ? `；固定产物：${references}` : ''}`, createdAt: now, updatedAt: now });
+    const handoff = HandoffSchema.parse({ id, from, to: recipient.id, task: args.task, files, status: 'offered', agendaId: agenda.id, createdAt: now, updatedAt: now });
     ctx.store.table('handoffs').put(handoff);
     ctx.store.table('agenda').put(agenda);
-    postThread(ctx, { thread: 'team', from, kind: 'handoff', text: `交给 ${recipient.name}：${args.task}\n原因：${args.why}\n文件：${files.join('、') || '无'}`, refId: id });
-    enqueuePeerPercept(ctx, recordHandoff(ctx, { botId: args.to, id, summary: `${sender.name} 交接：${args.task}；议程 ${agenda.id}；文件 ${files.join('、') || '无'}`, at: now }));
-    await refreshBotFiles(ctx, args.to);
-    ctx.emit(HUB_EVENT_SCOPES.bot, args.to);
+    postThread(ctx, { thread: 'team', from, kind: 'handoff', text: `交给 ${recipient.name}：${args.task}\n原因：${args.why}\n文件：${files.join('、') || '无'}${references ? `\n固定产物：${references}` : ''}`, refId: id });
+    enqueuePeerPercept(ctx, recordHandoff(ctx, { botId: recipient.id, id, summary: `${sender.name} 交接：${args.task}；议程 ${agenda.id}；文件 ${files.join('、') || '无'}${references ? `；固定产物：${references}` : ''}`, at: now }));
+    await refreshBotFiles(ctx, recipient.id);
+    ctx.emit(HUB_EVENT_SCOPES.bot, recipient.id);
     ctx.emit(HUB_EVENT_SCOPES.activity, from);
     return handoff;
 }

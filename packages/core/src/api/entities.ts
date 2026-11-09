@@ -18,6 +18,7 @@ import { refreshLightCheck } from '../agenda/next-think.js';
 import { AspirationInputSchema, GoalInputSchema, WatchInputSchema } from './schemas.js';
 import { input, requireBot } from './common.js';
 import { HUB_EVENT_SCOPES } from './event-scopes.js';
+import { checkGoalAnswer } from '../commit/result-check.js';
 
 /** 周期按本地日历结束，避免把一个月固定当作三十天。 */
 export function goalPeriodEnd(ctx: HubContext, period: Goal['period']): number | null {
@@ -123,15 +124,20 @@ export async function upsertGoal(ctx: HubContext, raw: unknown) {
   return row;
 }
 /** 验收必须有待验收目标；放弃可显式关闭其他未结束目标。 */
-export async function closeGoal(ctx: HubContext, id: string, outcome: 'done' | 'active' | 'abandoned') {
+export async function closeGoal(ctx: HubContext, id: string, outcome: 'done' | 'active' | 'abandoned' | 'not_done' | 'incorrect' | 'mismatch') {
   const old = ctx.store.table('goals').get(id);
   if (!old) throw new Error('id：目标不存在');
   if (outcome !== 'abandoned' && old.status !== 'done_pending_check') throw new Error('目标尚未提交验收，不能决定验收结果');
   if (['done', 'abandoned'].includes(old.status)) throw new Error('目标已经关闭');
   const questions = ctx.store.table('inbox').list(row => row.refId === id && row.type === 'question' && row.status === 'open');
+  const answer = outcome === 'done' ? '验收通过' : outcome === 'not_done' ? '没做'
+    : outcome === 'incorrect' ? '做错' : outcome === 'mismatch' ? '不是你要的' : '验收不通过';
   if (outcome !== 'abandoned' && questions.length) {
-    await answerInbox(ctx, questions[0]!.id, outcome === 'done' ? '验收通过' : '验收不通过');
-  } else ctx.store.table('goals').patch(id, { status: outcome, updatedAt: ctx.clock.now() });
+    await answerInbox(ctx, questions[0]!.id, answer);
+  } else {
+    if (outcome !== 'abandoned') await checkGoalAnswer(ctx, old, answer, false, ctx.clock.now());
+    ctx.store.table('goals').patch(id, { status: outcome === 'done' || outcome === 'abandoned' ? outcome : 'active', updatedAt: ctx.clock.now() });
+  }
   if (outcome === 'abandoned') for (const item of questions)
     ctx.store.table('inbox').patch(item.id, { status: 'closed', answer: '目标已放弃', answeredAt: ctx.clock.now() });
   refreshGoalClock(ctx, old.botId);

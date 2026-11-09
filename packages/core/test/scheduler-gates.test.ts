@@ -34,14 +34,23 @@ describe('九道闸逐条正反边界', () => {
     expect(evaluateGates(entry, { ...snapshot, running: true }, now, ctx.settings)).toMatchObject({ by: 'concurrency', drop: false });
     expect(evaluateGates(entry, snapshot, now, ctx.settings)).toEqual({ pass: true });
   });
-  it('3 等待同事项丢弃，其他事项不受影响', () => {
-    const { ctx, now, entry, snapshot } = setup(); const s = { ...snapshot, openQuestionSubjects: new Set([entry.subjectKey]) };
-    expect(evaluateGates(entry, s, now, ctx.settings)).toMatchObject({ by: 'waiting_owner_same_subject', drop: true });
-    expect(evaluateGates({ ...entry, subjectKey: 'other' }, s, now, ctx.settings)).toEqual({ pass: true });
-  });
-  it.each(['owner_message', 'inbox_reply'] as const)('3 %s 可回应原事项', kind => {
+  it('3 等待同事项丢弃；别的事项被全局等待拦住但不丢弃', () => {
     const { ctx, now, entry, snapshot } = setup();
-    expect(evaluateGates({ ...entry, reason: { ...entry.reason, kind } }, { ...snapshot, openQuestionSubjects: new Set([entry.subjectKey]) }, now, ctx.settings)).toEqual({ pass: true });
+    const s = { ...snapshot, openQuestionSubjects: new Set([entry.subjectKey]), openOwnerAskCount: 1 };
+    expect(evaluateGates(entry, s, now, ctx.settings)).toMatchObject({ by: 'waiting_owner_same_subject', drop: true });
+    expect(evaluateGates({ ...entry, subjectKey: 'other' }, s, now, ctx.settings)).toMatchObject({ by: 'waiting_owner', drop: false, until: null });
+  });
+  it('3 等待主人时报告最早到期时间，候选保留，紧急与只读复盘放行', () => {
+    const { ctx, now, entry, snapshot } = setup();
+    const s = { ...snapshot, openOwnerAskCount: 1, openOwnerAskUntil: now + 2 * minute };
+    // 恢复由「答复后重建快照」决定，快照里的 until 只用于告诉主人何时会再判断。
+    expect(evaluateGates(entry, s, now, ctx.settings)).toMatchObject({ by: 'waiting_owner', until: now + 2 * minute, drop: false });
+    expect(evaluateGates({ ...entry, urgent: true }, s, now, ctx.settings)).toEqual({ pass: true });
+    expect(evaluateGates({ ...entry, variant: 'reflection' }, s, now, ctx.settings)).toEqual({ pass: true });
+  });
+  it.each(['owner_message', 'inbox_reply', 'approval_decided'] as const)('3 等待主人时 %s 仍可进入', kind => {
+    const { ctx, now, entry, snapshot } = setup();
+    expect(evaluateGates({ ...entry, reason: { ...entry.reason, kind } }, { ...snapshot, openOwnerAskCount: 1 }, now, ctx.settings)).toEqual({ pass: true });
   });
   it('4 冷却结束的精确边界', () => {
     const { ctx, now, entry, snapshot } = setup(); const s = { ...snapshot, subjectWakeAt: new Map([[entry.subjectKey, now - ctx.settings.subjectCooldownMs + 1]]) };
@@ -78,6 +87,23 @@ describe('九道闸逐条正反边界', () => {
   it('6 urgent 不豁免预算，试岗预算减半', () => {
     const { ctx, now, entry, snapshot } = setup();
     expect(evaluateGates({ ...entry, urgent: true }, { ...bot(snapshot, { lifecycle: 'probation' }), todayTurns: 3 }, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
+  });
+  it('C05 行为探针：同一快照下改每日回合预算，拦截改放行；token 预算同口径（配置改了行为必须变）', () => {
+    const { ctx, now, entry, snapshot } = setup();
+    // 默认每队友每日 6 回合：正好到边界被 bot_budget 拦。
+    const atCap = { ...bot(snapshot, { autonomy: 'L3' }), todayTurns: 6, todayTokens: 0, windowTurns: 0 };
+    expect(evaluateGates(entry, atCap, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
+    // 主人在设置里把每日回合预算调到 8：同一场景立即放行（闸门每次读当前 Settings，无需重启）。
+    const looserTurns = { ...ctx.settings, botDailyTurnBudget: 8 };
+    expect(evaluateGates(entry, atCap, now, looserTurns)).toEqual({ pass: true });
+    // 反过来收紧到 5：原本放得过的用量也被拦，证明不是改了个没人读的数字。
+    const tighterTurns = { ...ctx.settings, botDailyTurnBudget: 5 };
+    expect(evaluateGates(entry, { ...atCap, todayTurns: 5 }, now, tighterTurns)).toMatchObject({ by: 'bot_budget' });
+    // 每日 token 预算：到 25 万默认边界被拦，调到 40 万放行，且回合余量不变（证明是 token 单独生效）。
+    const tokenCap = { ...bot(snapshot, { autonomy: 'L3' }), todayTurns: 0, todayTokens: ctx.settings.botDailyTokenBudget, windowTurns: 0 };
+    expect(evaluateGates(entry, tokenCap, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
+    const looserTokens = { ...ctx.settings, botDailyTokenBudget: 400_000 };
+    expect(evaluateGates(entry, tokenCap, now, looserTokens)).toEqual({ pass: true });
   });
   it('7 yellow 非紧急节奏加倍，到点恢复；urgent 越过', () => {
     const { ctx, now, entry, snapshot } = setup(); const s = quota(bot(snapshot, { lastThinkAt: now - 60 * minute }), 'yellow');
@@ -146,11 +172,31 @@ describe('快照与实际选择', () => {
     ctx.store.table('wakes').patch(wake.id, { status: 'delivering' });
     expect(buildSnapshot(ctx, botFixture.id, now)).toMatchObject({ running: true, runningCount: 1 });
   });
-  it('只收集 open question 的主体', () => {
+  it('只收集 open question 的主体，并把提问与审批算作等待主人', () => {
     const { ctx, now } = setup(); const inbox = InboxItemSchema.parse(modelFixtures.InboxItem.valid);
-    ctx.store.table('inbox').put({ ...inbox, type: 'question', status: 'open', subjectKey: 'one' });
-    ctx.store.table('inbox').put({ ...inbox, id: 'i_two', type: 'approval', status: 'open', subjectKey: 'two' });
-    expect([...buildSnapshot(ctx, botFixture.id, now).openQuestionSubjects]).toEqual(['one']);
+    ctx.store.table('inbox').put({ ...inbox, type: 'question', status: 'open', subjectKey: 'one', expiresAt: now + 2 * minute });
+    ctx.store.table('inbox').put({ ...inbox, id: 'i_two', type: 'approval', status: 'open', subjectKey: 'two', expiresAt: now + minute });
+    ctx.store.table('inbox').put({ ...inbox, id: 'i_three', type: 'proposal', status: 'open', subjectKey: 'three', expiresAt: now + 30_000 });
+    ctx.store.table('inbox').put({ ...inbox, id: 'i_four', type: 'alert', status: 'open', subjectKey: 'four', expiresAt: null });
+    const s = buildSnapshot(ctx, botFixture.id, now);
+    expect([...s.openQuestionSubjects]).toEqual(['one']);
+    expect(s).toMatchObject({ openOwnerAskCount: 2, openOwnerAskUntil: now + minute });
+  });
+  it('等待主人只统计未过期事项，任一无期限时恢复时刻为空', () => {
+    const { ctx, now } = setup(); const inbox = InboxItemSchema.parse(modelFixtures.InboxItem.valid);
+    ctx.store.table('inbox').put({ ...inbox, type: 'question', status: 'open', subjectKey: 'old', expiresAt: now - 1 });
+    ctx.store.table('inbox').put({ ...inbox, id: 'i_open', type: 'approval', status: 'open', subjectKey: 'open', expiresAt: null });
+    expect(buildSnapshot(ctx, botFixture.id, now)).toMatchObject({ openOwnerAskCount: 1, openOwnerAskUntil: null });
+    ctx.store.table('inbox').patch('i_open', { expiresAt: now + 5 * minute });
+    expect(buildSnapshot(ctx, botFixture.id, now)).toMatchObject({ openOwnerAskCount: 1, openOwnerAskUntil: now + 5 * minute });
+  });
+  it('提问或审批未答复时别的候选不被选中，答复后恢复且候选未丢', () => {
+    const { ctx, now, entry } = setup(); const inbox = InboxItemSchema.parse(modelFixtures.InboxItem.valid);
+    ctx.store.table('inbox').put({ ...inbox, id: 'i_wait', botId: botFixture.id, type: 'question', status: 'open', subjectKey: 'ask', expiresAt: now + minute });
+    expect(selectNext(ctx, now)).toBeNull();
+    expect(ctx.store.table('queue').get(entry.id)).not.toBeNull();
+    ctx.store.table('inbox').patch('i_wait', { status: 'answered', answer: '好' });
+    expect(selectNext(ctx, now)?.id).toBe(entry.id);
   });
   it('被拦者不堵住后续机器人，选择通过者不删除队列', () => {
     const { ctx, now, entry } = setup();

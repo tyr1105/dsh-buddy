@@ -115,6 +115,29 @@ describe('机器人会话的回合翻译', () => {
     expect(hub.turns[0]).toMatchObject({ type: 'started', sessionId: 'bot-s', at: 5_000 })
   })
 
+  it('tool/result → tool_call：工具名、参数、失败标记与结果摘要都带上（F02）', async () => {
+    const { hub, translator } = makeTranslator()
+    translator.handle(botSession, ev('turn/start', { turn: 1 }))
+    translator.handle(botSession, ev('tool/call', { turn: 1, step: 1, name: 'read_file', callId: 'c1', arguments: { path: '/hub/notes.txt' } }))
+    translator.handle(botSession, ev('tool/result', {
+      turn: 1, step: 1, message: { toolCallId: 'c1', content: [{ type: 'text', text: '文件内容' }], isError: false },
+    }))
+    await Promise.resolve()
+    expect(hub.turns.find(e => e.type === 'tool_call')).toMatchObject({
+      type: 'tool_call', name: 'read_file', callId: 'c1', args: { path: '/hub/notes.txt' }, isError: false, resultText: '文件内容',
+    })
+  })
+
+  it('tool/result 失败且没有文本时用错误消息；找不到配对的 call 仍报「未知工具」（F02 反例）', async () => {
+    const { hub, translator } = makeTranslator()
+    translator.handle(botSession, ev('turn/start', { turn: 1 }))
+    translator.handle(botSession, ev('tool/result', { turn: 1, step: 1, message: { toolCallId: 'ghost', isError: true }, error: { message: '权限不足' } }))
+    await Promise.resolve()
+    expect(hub.turns.find(e => e.type === 'tool_call')).toMatchObject({
+      name: '未知工具', callId: 'ghost', isError: true, resultText: '权限不足',
+    })
+  })
+
   it('多步回合的 token 按 step 累计（D05 第 11 条）：三步 8000/9000/10000 → ended 27000', async () => {
     const { hub, translator } = makeTranslator()
     translator.handle(botSession, ev('turn/start', { turn: 1 }))

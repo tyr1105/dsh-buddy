@@ -55,7 +55,12 @@ export function describeAction(tool: string, input: unknown, commandMaxChars: nu
     const edit = tool.startsWith('edit') || tool === 'apply_patch';
     return `${edit ? '修改' : '写入'}文件 ${paths(args, edit)}`;
   }
+  // 读取类工具也带出目标路径：账本过程下钻只显示人话摘要，不能只留工具名。
+  if (['read', 'read_file', 'read_image', 'list_directory', 'list_files', 'search_files', 'glob', 'grep', 'present'].includes(tool)) {
+    return `读取 ${paths(args)}`;
+  }
   if (tool === 'web_fetch') return `访问 ${domain(stringField(args, 'url'))}`;
+  if (tool === 'web_search') return `搜索 ${stringField(args, 'query') || '网页'}`;
   return `执行 ${oneLine(tool)}`;
 }
 /** 新记录有版本证明按全部目标生成；旧摘要可能遗漏危险目标，必须重算，截断旧参数只显示通用动作。 */
@@ -76,7 +81,7 @@ export function approvalDisplayText(row: Approval, commandMaxChars: number = C03
   // 该帮助函数同时服务审批落表和只读投影，确保重新打开旧卡片也不丢失宿主权限提醒。
   let hostCommand = row.tool === 'hub_outbox_execute' && action.startsWith('运行命令');
   try { hostCommand ||= row.tool === 'hub_outbox_execute' && fields(JSON.parse(parameters)).kind === 'run_command'; } catch { /* 截断旧参数时按可信动作摘要判断。 */ }
-  const sandboxNotice = hostCommand ? '\n这条命令在 DSH 沙箱之外运行，能改动这台电脑上的其他文件。看不懂就拒绝。' : '';
+  const sandboxNotice = hostCommand ? '\n这条命令在受限沙箱内运行，只能写家目录、共享目录和系统临时目录。看不懂就拒绝。' : '';
   return { title: `批准：${action}`,
     body: `${action}\n${row.actionClass} 类：${row.why}${sandboxNotice}\n原始参数（供核对）：${ownerParameterPreview(parameters, parameterMaxChars)}` };
 }

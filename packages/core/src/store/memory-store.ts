@@ -1,5 +1,5 @@
 /** 内存存储：同步读写、隔离引用并追踪脏数据，文件存储复用同一套行为。 */
-import { DEFAULTS } from '../config/defaults.js';
+import { DEFAULTS, V2_DEFAULTS } from '../config/defaults.js';
 import type { Settings } from '../model/index.js';
 import { clone, recordTime, requireRecord, serializableRecord, type StoredRecord } from './records.js';
 import { LOG_NAMES, TABLE_NAMES, type Log, type LogName, type LogTypes,
@@ -23,7 +23,14 @@ export class MemoryStore implements Store {
 
   /** 合并保留期并初始化固定集合，避免业务拼写错误时偷偷生成另一张表。 */
   constructor(options: RetentionOptions = {}) {
-    this.retention = { ...DEFAULTS.RETENTION_MS_BY_COLLECTION, ...options.retentionMsByCollection };
+    // 账本保留期不属于 Settings（见 v2 设计 3.7）：在这里合并 V2_DEFAULTS，
+    // 现有调用方继续传 settings.retentionMsByCollection，行为不受影响。
+    this.retention = {
+      ...DEFAULTS.RETENTION_MS_BY_COLLECTION,
+      wakeLedger: V2_DEFAULTS.LEDGER_RETENTION_MS,
+      resultChecks: V2_DEFAULTS.LEDGER_RETENTION_MS,
+      ...options.retentionMsByCollection,
+    };
     this.logMemoryRetentionMs = options.logMemoryRetentionMs ?? DEFAULTS.LOG_MEMORY_RETENTION_MS;
     this.badBackupRetentionMs = options.badBackupRetentionMs ?? DEFAULTS.BAD_BACKUP_RETENTION_MS;
     for (const name of TABLE_NAMES) this.tables.set(name, new Map());
@@ -45,6 +52,11 @@ export class MemoryStore implements Store {
       // 只返回副本，后续修改必须重新经过存储入口。
       get: (id) => records.has(id) ? clone(records.get(id)) as unknown as TableTypes[K] : null,
       list,
+      revision: () => this.revisions.get(name) ?? 0,
+      // 字段投影只复制选定键；键值仍深复制，不能借嵌套引用绕过脏表追踪。
+      listFields: keys => [...records.values()].map(record => Object.fromEntries(
+        keys.filter(key => Object.hasOwn(record, key)).map(key => [key, clone(record[String(key)])]),
+      ) as Pick<TableTypes[K], typeof keys[number]>),
       // 写入前完成序列化检查，坏记录不会污染整个脏表。
       put: (record) => {
         this.assertWritable();
@@ -180,7 +192,8 @@ export class MemoryStore implements Store {
       approvals: ['rejected', 'expired', 'used'],
       outbox: ['done', 'failed', 'rejected'],
     };
-    const retainedTables = ['percepts', 'wakes', 'commits', 'inbox', 'approvals', 'outbox'] as const;
+    const retainedTables = ['officeFrames', 'artifactVersions', 'artifactReviews', 'artifactBatches',
+      'percepts', 'wakes', 'wakeLedger', 'resultChecks', 'commits', 'inbox', 'approvals', 'outbox'] as const;
     for (const name of retainedTables) {
       for (const record of this.tables.get(name)!.values()) {
         if (closed[name] && !closed[name]!.includes(String(record.status))) continue;
@@ -201,7 +214,10 @@ export class MemoryStore implements Store {
 
   /** 优先从完成时间起保留；规格没有关闭时间的记录才退回创建时间。 */
   private retentionTime(name: TableName, record: StoredRecord): number | null {
-    const keys = name === 'wakes' ? ['endedAt', 'startedAt']
+    // 账本只按封存时间清理；未封存（sealedAt 为空）的行 retentionTime 返回 null，永不清理。
+    const keys = name === 'officeFrames' ? ['at']
+      : name === 'wakeLedger' ? ['sealedAt']
+      : name === 'wakes' ? ['endedAt', 'startedAt']
       : name === 'inbox' ? ['answeredAt', 'createdAt']
       : name === 'approvals' ? ['usedAt', 'decidedAt', 'createdAt']
       : name === 'outbox' ? ['doneAt', 'createdAt'] : ['createdAt'];

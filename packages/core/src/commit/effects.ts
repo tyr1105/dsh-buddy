@@ -7,6 +7,10 @@ import { requestPush, type PushInput } from '../outreach/push.js';
 import { submitProposal } from '../outreach/proposals.js';
 import { fingerprint } from '../util/hash.js';
 import { optionalMessageText } from '../util/text.js';
+import { resultCheckBody } from './result-check.js';
+import { botMbti } from '../personality/profile.js';
+import { personalityBehavior, personalityReport } from '../personality/behavior.js';
+import { writeOutreachAudit } from '../outreach/audit.js';
 /** 不把一个完成声明误套给所有目标；证据可引用目标或带 goalId 的议程。 */
 export function relatedGoals(ctx: HubContext, commit: Commit, wake: WakeTicket): Goal[] {
     const evidence = new Set([...commit.evidence, ...wake.reason.evidence]);
@@ -37,7 +41,15 @@ export async function routeCommit(ctx: HubContext, commit: Commit, wake: WakeTic
     else if (wake.reason.kind === 'owner_message' && !wake.ownerDirect)
         postThread(ctx, { thread: botId, from: 'hub', kind: 'system', text: '机器人没有回复', refId: commit.id });
     if (report !== null) {
-        postThread(ctx, { thread: botId, from: botId, kind: 'report', text: report, refId: commit.id });
+        // 只节略普通自主汇报的展示；主人要求与重要汇报全文保留，原交账不改。
+        const behavior = personalityBehavior(botMbti(ctx, botId), ctx.settings);
+        const displayed = personalityReport(report, behavior, wake.ownerInitiated || wake.ownerDirect === true
+          || wake.reason.kind === 'owner_message' || commit.importance >= ctx.settings.c03.reportPushImportance);
+        postThread(ctx, { thread: botId, from: botId, kind: 'report', text: displayed, refId: commit.id });
+        if (displayed !== report) writeOutreachAudit(ctx, 'personality_report_shortened', {
+            botId, commitId: commit.id, wakeId: wake.id, maxChars: behavior!.reportMaxChars,
+            originalChars: [...report].length, displayedChars: [...displayed].length,
+        }, botId);
     }
     if (commit.ownerQuestion) {
         const q = commit.ownerQuestion;
@@ -81,7 +93,7 @@ export function updateCommitGoals(ctx: HubContext, commit: Commit, wake: WakeTic
             ...(commit.outcome === 'done' ? { status: 'done_pending_check' as const } : {}) });
         if (commit.outcome === 'done') {
             const item = createInboxItem(ctx, { botId: commit.botId, type: 'question', title: `${goal.title} 做完了，请验收`,
-                body: `完成标准：${goal.doneWhen}\n交账：${commit.summary}`, options: ['通过', '未通过'], defaultOption: '未通过',
+                body: resultCheckBody(goal, commit, ctx.store.table('resultChecks').get(commit.id)), options: ['通过', '未通过'], defaultOption: '未通过',
                 priority: 'P1', refId: goal.id, subjectKey: `goal_check:${goal.id}` });
             postThread(ctx, { thread: commit.botId, from: commit.botId, kind: 'question', text: item.title, refId: item.id });
             questions.push(item);

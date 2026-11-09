@@ -59,7 +59,24 @@ export function buildRoutes(hub: HubFacade): FetchRoute[] {
     get('/api/agent-hub/inbox', () => hub.inbox()),
     get('/api/agent-hub/activity', async (request) => hub.activity({ before: query(request, 'before'), limit: queryInt(request, 'limit') })),
     get('/api/agent-hub/settings', () => hub.settings()),
+    // 办公室（F03）：一次读一屏纯投影，不接受任何写参数。
+    get('/api/agent-hub/office', () => hub.office()),
+    // 资料授权矩阵（V2-PH2-04）：资料、授权展开行与计数的只读组装。
+    get('/api/agent-hub/resource', () => hub.resource()),
+    // 项目容器（V2-PH4-02）：项目分区、成员/验收项/任务展开、问题与计数的只读组装。
+    get('/api/agent-hub/project', () => hub.project()),
     get('/api/agent-hub/recent-sessions', () => hub.recentSessions()),
+    // 账本只读视图：按机器人取摘要、按唤醒单取一次完整记录。
+    get('/api/agent-hub/wake-ledger', async (request) => {
+      const botId = query(request, 'botId')
+      if (!botId) throw new Error('缺少参数 botId（要哪个机器人的账本）')
+      return hub.wakeLedger(botId, { limit: queryInt(request, 'limit'), before: queryInt(request, 'before') })
+    }),
+    get('/api/agent-hub/wake-ledger-detail', async (request) => {
+      const wakeId = query(request, 'wakeId')
+      if (!wakeId) throw new Error('缺少参数 wakeId（要哪次唤醒的账本）')
+      return hub.wakeLedgerDetail(wakeId)
+    }),
     {
       path: '/api/agent-hub/command', methods: ['POST'], requestBody: 'buffered',
       fetch: async (request) => {

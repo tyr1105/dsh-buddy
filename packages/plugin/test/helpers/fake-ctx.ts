@@ -10,6 +10,24 @@ export interface RecordedFetchRoute {
   fetch: (request: Request) => Promise<Response>
 }
 
+/** 测试用的「真引擎」宿主服务最小桩（E04：满足 apply 的引擎能力探测）。 */
+export function engineHarnessServices(): Record<string, unknown> {
+  return {
+    sessionController: {
+      create: async () => ({ sessionId: 'session-stub' }),
+      rename: async () => ({ title: '测试' }),
+      resolveAgent: async () => ({ error: new Error('测试桩没有真实会话') }),
+      selectModel: async () => undefined,
+      modelCatalog: async () => ({ routableProviders: [], groups: [] }),
+      projections: async () => null,
+      list: async () => ({ items: [] }),
+      inspect: async () => ({ events: [] }),
+    },
+    workspaceRegistry: { create: async () => ({ id: 'ws-stub' }) },
+    agents: { list: () => [] },
+  }
+}
+
 export function createFakeCtx(services: Record<string, unknown> = {}) {
   const disposers: Array<() => unknown> = []
   const listeners = new Map<string, Array<(...args: unknown[]) => unknown>>()

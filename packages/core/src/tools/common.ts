@@ -60,11 +60,15 @@ export function defineTool<T>(name: string, description: string, schema: z.ZodTy
                         .sort((a, b) => b.startedAt - a.startedAt)[0];
                 const closing = ['paused', 'retired'].includes(bot.lifecycle) && wake?.endedAt === null
                     && ['running', 'delivering', 'committed'].includes(wake.status) && ['hub_commit', 'hub_reflect_commit'].includes(name);
-                if (!['active', 'probation'].includes(bot.lifecycle) && name !== 'hub_state_get' && !closing)
+                // P38 两个知识库工具只做只读实时检索/读取（仅追加审计，不改业务记录），
+                // 与产物读取同口径：停岗/交账后仍可调，反思回合也不受写工具限制。
+                const readOnly = ['hub_state_get', 'hub_artifact_read', 'hub_task_list',
+                    'hub_knowledge_search', 'hub_knowledge_read'].includes(name);
+                if (!['active', 'probation'].includes(bot.lifecycle) && !readOnly && !closing)
                     throw new Error('机器人当前不在岗，不能修改事项');
-                if (wake && name !== 'hub_state_get' && !['hub_commit', 'hub_reflect_commit'].includes(name) && (wake.commitId || !['running', 'delivering'].includes(wake.status)))
+                if (wake && !readOnly && !['hub_commit', 'hub_reflect_commit'].includes(name) && (wake.commitId || !['running', 'delivering'].includes(wake.status)))
                     throw new Error('本轮已结束，不能在交账后继续修改事项');
-                const reflectionWrites = ['hub_agenda_upsert', 'hub_agenda_close', 'hub_watch_update', 'hub_watch_propose', 'hub_goal_upsert', 'hub_send', 'hub_handoff', 'hub_claim', 'hub_release'];
+                const reflectionWrites = ['hub_agenda_upsert', 'hub_agenda_close', 'hub_watch_update', 'hub_watch_propose', 'hub_goal_upsert', 'hub_send', 'hub_handoff', 'hub_claim', 'hub_release', 'hub_task_update', 'hub_project_context_propose'];
                 if (wake?.variant === 'reflection' && reflectionWrites.includes(name))
                     throw new Error('反思回合只读；关注调整请写进 hub_reflect_commit，其他事项留到下一回合');
                 return await run(ctx, toolCtx, args);

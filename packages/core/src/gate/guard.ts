@@ -52,6 +52,14 @@ export function guardToolCallSync(ctx: HubContext, sessionId: string, tool: stri
                 && findOpenWake(ctx, sessionId)) return { allow: true };
             return { allow: false, message: '机器人当前未在岗，不能执行工具' };
         }
+        // DSH 每执行一条命令都会重新解析工作目录的真实位置。家目录一旦被换成指向别处的符号链接，
+        // 下一条命令的沙箱可写范围就跟着变成别处，所以必须在工具真正执行前拦下。
+        // hub_ 工具不经过 DSH 沙箱，放行让回合能交账收尾；它们的写入有文件层边界兜底。
+        if (!tool.startsWith('hub_') && ctx.fs.isSymlinkSync(bot.homeDir)) {
+            const message = '家目录被替换成了符号链接，已拒绝本次工具调用';
+            defer(recordViolation(ctx, bot.id, message));
+            return { allow: false, message };
+        }
         const gctx = gateContextFor(ctx, bot);
         const parsedAction = verifiedAction ?? classifyToolCall(tool, args, gctx);
         // 同步宿主钩子不能读磁盘；未做异步核验的仓库写入保守要求审批。

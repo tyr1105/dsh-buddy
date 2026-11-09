@@ -16,6 +16,7 @@ import { readAuditDetail, writeOutreachAudit } from './audit.js';
 import { postThread } from './thread.js';
 import { inboxDefaultOption, inboxOptions, proposalAnswer } from './inbox-options.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
+import { checkGoalAnswer } from '../commit/result-check.js';
 const InboxInputSchema = InboxItemSchema.pick({ botId: true, type: true, title: true, body: true, subjectKey: true }).extend({
     options: z.array(nonempty).optional(), defaultOption: nonempty.nullable().optional(), priority: InboxItemSchema.shape.priority.optional(),
     refId: nonempty.nullable().optional(), expiresAt: timestamp.nullable().optional(), status: InboxItemSchema.shape.status.optional(), answer: InboxItemSchema.shape.answer.optional(),
@@ -183,6 +184,7 @@ async function applyAnswer(ctx: HubContext, item: InboxItem, answer: string, exp
         if (item.type === 'question' && item.refId) {
             const goal = ctx.store.table('goals').get(item.refId);
             if (goal?.status === 'done_pending_check' && goal.botId === item.botId) {
+                await checkGoalAnswer(ctx, goal, answer, expired, at);
                 ctx.store.table('goals').patch(goal.id, { status: ['通过', '验收通过', '接受'].includes(answer) ? 'done' : 'active', updatedAt: ctx.clock.now() });
                 await refreshBotFiles(ctx, goal.botId);
             }

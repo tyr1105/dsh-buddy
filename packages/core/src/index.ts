@@ -1,5 +1,6 @@
 /** core 的公开入口：领域、配置、注入接口和纯工具集中导出，测试替身另放命名空间。 */
 export * from './model/index.js';
+export * from './personality/behavior.js';
 export * from './config/defaults.js';
 export * from './io/index.js';
 export * as testing from './io/testing/index.js';
@@ -16,6 +17,11 @@ export * from './health/index.js';
 export * from './wake/index.js';
 export * from './turn/index.js';
 export * from './commit/index.js';
+export * from './ledger/index.js';
+export * from './org/index.js';
+export * from './project/index.js';
+export * from './knowledge/index.js';
+export * from './office/index.js';
 export * from './gate/index.js';
 export * from './outreach/index.js';
 export * from './memory/index.js';

@@ -14,7 +14,7 @@ import { botFixture } from './model-fixtures.js';
 import { toolFixture } from './c03-tool-fixtures.js';
 
 const response = { code: 0, stdout: '已完成', stderr: '', timedOut: false };
-const warning = '这条命令在 DSH 沙箱之外运行，能改动这台电脑上的其他文件。看不懂就拒绝。';
+const warning = '这条命令在受限沙箱内运行，只能写家目录、共享目录和系统临时目录。看不懂就拒绝。';
 const reason = '脚本在批准后被改动';
 const commands = [
   { cmd: 'python3', args: ['work/x.py'] },
@@ -59,7 +59,7 @@ describe('M12 中心命令一律需要主人批准', () => {
       const row = await submitOutbox(ctx, bot.id, input(bot.homeDir, cmd, args));
       expect(row).toMatchObject({ status: 'pending_approval', actionClass: 'C', approvalId: expect.any(String) });
       expect(ctx.store.table('approvals').get(row.approvalId!)).toMatchObject({
-        status: 'pending', why: expect.stringContaining('这条命令由中心在 DSH 沙箱外运行，要主人批准'),
+        status: 'pending', why: expect.stringContaining('这条命令由中心在受限沙箱内运行，要主人批准'),
       });
       expect(ctx.store.table('approvals').count()).toBe(1);
       await executeReadyOutbox(ctx);
@@ -68,7 +68,8 @@ describe('M12 中心命令一律需要主人批准', () => {
       await Promise.all([executeReadyOutbox(ctx), executeReadyOutbox(ctx)]);
       await executeReadyOutbox(ctx);
       expect(ctx.exec.calls).toEqual([expect.objectContaining({ cmd, args, opts: expect.objectContaining({ cwd: bot.homeDir }) })]);
-      expect(ctx.exec.calls[0]!.opts).not.toHaveProperty('sandbox');
+      // 本卡反转 M12 的旧断言：宿主命令必须携带沙箱，可写目录只有家目录、共享目录（临时目录由沙箱实现加入）。
+      expect(ctx.exec.calls[0]!.opts.sandbox).toEqual({ writableRoots: [bot.homeDir, '/hub/shared'], denyWriteRoots: [] });
       expect(ctx.store.table('outbox').get(row.id)?.status).toBe('done');
       expect(ctx.store.table('approvals').get(row.approvalId!)?.status).toBe('used');
       expect(resultMessages(ctx, row)).toHaveLength(1);
@@ -345,7 +346,7 @@ describe('M12 主人和机器人都能看清命令权限', () => {
     const tools = buildTools(ctx);
     const tool = tools.find(item => item.name === 'hub_outbox_submit')!;
     expect(tool.description).toContain('一律要主人批准');
-    expect(tool.description).toContain('沙箱外');
+    expect(tool.description).toContain('受限沙箱');
     expect(tool.description).toContain('bash');
     for (const item of tools) {
       expect(item.jsonSchema).toMatchObject({ type: 'object', properties: expect.any(Object) });

@@ -1,19 +1,59 @@
 /**
- * dsh-buddy 界面半边入口：注册左栏「队友」入口与中栏三栏页面，建立唯一的
- * 数据仓库与一条 SSE 连接。样式在 apply 的 ctx.effect 里插入并返回移除函数
- * （官方作者规范：factory 无副作用，verified-T5 Q1-4）。
- * D03 新增：shell.overlay 上的 4 秒应用内提示（新 P0/P1 收件箱项，照 verified-T5
- * Q4-2 的官方样式，只用主题变量，可点击跳回收件箱）；左栏入口 label 用 thunk，
- * 有待处理收件箱时显示「队友 · N」。
+ * dsh-buddy 界面半边入口：注册中栏工作区、左栏入口、应用内提示与宿主空间挂载。
+ *
+ * P41 起，左栏不再只是「队友」功能行：
+ * - 宿主侧栏结构可用时，在侧栏最顶部挂「对话 / 队友」双 Tab，队友模式整根侧栏换成
+ *   队友导航（host-mount 统一负责 DOM），原生会话与工作区列表完全隐藏；
+ * - 结构不可用时（P42），保留一行「团队空间」入口，进入后由页面内切换条切换。
+ * 入口行在两种情况下都保留在 DOM 里当锚点，有双 Tab 时只做隐藏。
+ *
+ * 模式只有一份：mode 仓库；持久化与中栏页面选择都在 switchSpace 里完成。
  */
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import css from './styles.css'
+import workspaceCss from './workspace.css'
+import settingsCss from './settings.css'
 import { createHubStore, connectEvents, type HubStore } from './hub-state.js'
-import { useStore } from './store.js'
+import { createStore, useStore, type Store } from './store.js'
 import { HubPage } from './pages/HubPage.js'
-import { entryLabel } from './logic/feeds.js'
+import { TeamSpacePage } from './pages/TeamSpacePage.js'
+import { HostModeSwitch } from './components/mode-switch.js'
+import { TeamSidebar } from './components/team-sidebar.js'
+import { HubToastOverlay } from './components/HubToastOverlay.js'
+import { applySpaceMode, fallbackSpace, watchHostSpace, type HostSpaceState } from './logic/host-mount.js'
+import { readSpaceMode, readSurface, saveSpaceMode, saveSurface, targetPanel, type StorageAccess } from './logic/mode-nav.js'
+import { focusAfterSwitch } from './logic/space-focus.js'
+import type { SpaceMode } from './logic/space-capability.js'
+import type { SpaceSwitchSource } from './components/space-switch.js'
 
 export const inject = ['slots', 'locale']
+
+/**
+ * 中栏内容：有空间位时就是现有三栏工作区；没有空间位时包一层团队空间页面，
+ * 页面内提供切换条，队友侧仍复用同一份工作区，不复制原生列表。
+ */
+function HubSurface(props: {
+  hub: HubStore
+  clientCtx: unknown
+  placement: Store<boolean>
+  mode: Store<SpaceMode>
+  space: Store<HostSpaceState>
+  /** 从提示点进来的收件箱目标；HubPage 消费后清空（P43）。 */
+  inboxFocus: Store<string | null>
+  onModeChange: (mode: SpaceMode, source: SpaceSwitchSource) => void
+  onBackToChat: () => void
+}): ReactNode {
+  const sidebarInHost = useStore(props.placement)
+  const mode = useStore(props.mode)
+  const space = useStore(props.space)
+  const page = <HubPage hub={props.hub} clientCtx={props.clientCtx} sidebarInHost={sidebarInHost} inboxFocus={props.inboxFocus} />
+  if (space.kind === 'slot') return page
+  return (
+    <TeamSpacePage mode={mode} onModeChange={props.onModeChange} onBackToChat={props.onBackToChat}>
+      {page}
+    </TeamSpacePage>
+  )
+}
 
 /** 入口图标：两三个人头的剪影（内联 SVG，currentColor 跟随主题）。 */
 export function HubEntryIcon(props: { size?: number; active?: boolean }): ReactNode {
@@ -29,45 +69,95 @@ export function HubEntryIcon(props: { size?: number; active?: boolean }): ReactN
 }
 
 /**
- * 应用内提示条（官方 toast 样式，verified-T5 Q4-2）：位置、圆角、底色、阴影全部
- * 主题变量；整层点击穿透，提示自己加 pointer-events:auto 才能点击跳转。
+ * 入口行（P42）：宿主没有一级空间位时，点开这一行就是进入团队空间。
+ *
+ * 只认 active 从假变真的那一下：降级形态且当前还在对话侧时切到队友，
+ * 让主人看到的是团队空间而不是「对话界面保持原生」的空态；
+ * 有顶部双 Tab 时不碰模式，避免和顶部切换器抢同一个状态。
+ * 从假变真而不是每次 active 变化都判断，是为了避开「点对话回原生」的瞬间。
  */
-function HubToastOverlay(props: { hub: HubStore; clientCtx: unknown }): ReactNode {
-  const state = useStore(props.hub)
-  if (state.toasts.length === 0) return null
-  return (
-    <div className="ah-toast-layer" role="status">
-      {state.toasts.map(toast => (
-        <div key={toast.id} className="ah-toast">
-          <button type="button" className="ah-toast-btn"
-            onClick={() => {
-              props.hub.dismissToast(toast.id)
-              props.hub.setView('inbox')
-              void props.hub.refreshInbox()
-              // 主人可能停在别的中栏页：先切回「队友」面板再看得到收件箱。
-              try {
-                const layout = (props.clientCtx as { get?: (name: string) => any } | null)?.get?.('layout')
-                layout?.selectPanel?.('agent-hub')
-              } catch { /* 打不开面板就算了，提示本身也已消失 */ }
-            }}>
-            {toast.text}
-          </button>
-        </div>
-      ))}
-    </div>
-  )
+function HubEntryRow(props: {
+  size?: number
+  active?: boolean
+  space: Store<HostSpaceState>
+  mode: Store<SpaceMode>
+  onEnterTeam: () => void
+}): ReactNode {
+  const wasActive = useRef(false)
+  const active = props.active === true
+  useEffect(() => {
+    const justActivated = active && !wasActive.current
+    wasActive.current = active
+    if (!justActivated) return
+    try {
+      if (props.space.getSnapshot().kind === 'fallback' && props.mode.getSnapshot() === 'chat') props.onEnterTeam()
+    } catch (error) {
+      console.error('[agent-hub] 进入团队空间失败:', error)
+    }
+  }, [active])
+  return HubEntryIcon({ size: props.size, active })
 }
 
 export function apply(ctx: any): void {
-  // 1) 唯一的数据仓库：页面所有数据都从它拿。
+  // 1) 唯一的数据仓库 + 空间模式 + 挂载状态 + 提示要定位的收件箱项。
   const hub = createHubStore()
+  const placement = createStore(false)
+  const storage: StorageAccess = () => {
+    try { return typeof localStorage === 'undefined' ? null : localStorage }
+    catch { return null }
+  }
+  const mode = createStore<SpaceMode>(readSpaceMode(storage))
+  const space = createStore<HostSpaceState>(fallbackSpace('no-anchor'))
+  const inboxFocus = createStore<string | null>(null)
+  // 刷新恢复上次表面（P43）：只回填内存状态，不发已读命令、不主动拉线程；
+  // 线程数据仍由页面自己的刷新计划拉取。
+  try {
+    const saved = readSurface(storage)
+    if (saved) hub.update(prev => ({ ...prev, view: saved.view, selectedThread: saved.threadId }))
+  } catch (error) {
+    console.error('[agent-hub] 恢复上次表面失败:', error)
+  }
+
+  /**
+   * 键盘切换后的焦点归位（P43）：具体规则与重试放在 logic/space-focus，
+   * 生产入口与隔离预览共用同一份实现；这里只负责在真实文档上调用并兜底。
+   */
+  const focusOnSwitch = (next: SpaceMode): void => {
+    try {
+      if (typeof document !== 'undefined') focusAfterSwitch(next, document)
+    } catch (error) {
+      console.error('[agent-hub] 焦点归位失败:', error)
+    }
+  }
+
+  // 切换空间：写模式、持久化、切中栏页面、键盘来源再归位焦点。任何一步失败都不影响其余步骤。
+  const switchSpace = (next: SpaceMode, source: SpaceSwitchSource): void => {
+    try {
+      if (mode.getSnapshot() !== next) {
+        mode.set(next)
+        saveSpaceMode(storage, next)
+      }
+      const layout = (ctx as { get?: (name: string) => { selectPanel?: (key: string | null) => void } } | null)?.get?.('layout')
+      if (typeof layout?.selectPanel === 'function') layout.selectPanel(targetPanel(next))
+    } catch (error) {
+      console.error('[agent-hub] 切换空间失败:', error)
+    }
+    if (source === 'keyboard') focusOnSwitch(next)
+  }
+  const backToChat = (): void => switchSpace('chat', 'pointer')
+
+  /** 提示点进来：先记下要聚焦的收件箱项，再切到队友侧并打开中心页（P43）。 */
+  const openInboxFromToast = (inboxItemId: string): void => {
+    try { inboxFocus.set(inboxItemId) } catch (error) { console.error('[agent-hub] 记录收件箱目标失败:', error) }
+    switchSpace('team', 'pointer')
+  }
 
   // 2) 样式：apply 里插入 <style data-plugin>，effect 返回移除函数。
   try {
     ctx.effect(() => {
       const tag = document.createElement('style')
       tag.dataset.plugin = 'dsh-buddy'
-      tag.textContent = css
+      tag.textContent = `${css}\n${workspaceCss}\n${settingsCss}`
       document.head.appendChild(tag)
       return () => tag.remove()
     }, 'dsh-buddy: styles')
@@ -87,29 +177,113 @@ export function apply(ctx: any): void {
     console.error('[agent-hub] 建立推送连接失败:', error)
   }
 
-  // 4) 插槽注册：中栏页面（main，key agent-hub）+ 左栏入口（sidebar.panellist，label thunk 带计数）。
+  // 4) 宿主空间挂载：侧栏顶部切换器与队友导航的 DOM 全部由 host-mount 维护。
   try {
-    ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'agent-hub' }, () => HubPage({ hub, clientCtx: ctx })))
+    ctx.effect(() => {
+      if (typeof document === 'undefined') return () => {}
+      return watchHostSpace(document, {
+        getMode: () => mode.getSnapshot(),
+        onChange: state => space.set(state),
+      })
+    }, 'dsh-buddy: host-space')
+  } catch (error) {
+    console.error('[agent-hub] 启动一级空间挂载失败:', error)
+  }
+
+  // 5) 模式变化时把属性写到侧栏根；模式仓库的其它写入方（P43 恢复）也走这里。
+  try {
+    ctx.effect(() => mode.subscribe(() => {
+      try { if (typeof document !== 'undefined') applySpaceMode(document, mode.getSnapshot()) }
+      catch (error) { console.error('[agent-hub] 应用空间模式失败:', error) }
+    }), 'dsh-buddy: space-mode')
+  } catch (error) {
+    console.error('[agent-hub] 监听空间模式失败:', error)
+  }
+
+  // 5b) 记住中栏表面（P43）：最近停在哪个视图、哪个线程，刷新后回到原处。
+  // 只在值真的变化时写一次，避免每次推送都落盘；写入失败不影响本次使用。
+  try {
+    ctx.effect(() => {
+      let last = ''
+      const write = (): void => {
+        try {
+          const current = hub.getSnapshot()
+          const key = `${current.view}\u0000${current.selectedThread}`
+          if (key === last) return
+          last = key
+          saveSurface(storage, { view: current.view, threadId: current.selectedThread })
+        } catch (error) {
+          console.error('[agent-hub] 保存中栏表面失败:', error)
+        }
+      }
+      write()
+      return hub.subscribe(write)
+    }, 'dsh-buddy: surface')
+  } catch (error) {
+    console.error('[agent-hub] 监听中栏表面失败:', error)
+  }
+
+  // 6) 中栏页面：有空间位直接渲染工作区，无空间位包一层团队空间页面。
+  try {
+    ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'agent-hub' }, () => (
+      <HubSurface
+        hub={hub}
+        clientCtx={ctx}
+        placement={placement}
+        mode={mode}
+        space={space}
+        inboxFocus={inboxFocus}
+        onModeChange={switchSpace}
+        onBackToChat={backToChat}
+      />
+    )))
   } catch (error) {
     console.error('[agent-hub] 注册 main 插槽失败:', error)
   }
+
+  // 7) 左栏入口行：无空间位时是「团队空间」；有空间位时被隐藏但仍作为锚点保留。
   try {
     ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
-      // label 是 thunk：每次取值时从仓库读待处理收件箱数（入口行由宿主渲染）。
-      { name: 'sidebar.panellist', id: 'agent-hub', order: 15, label: () => entryLabel(hub.getSnapshot().overview?.inbox.total ?? 0) },
-      (props: { size?: number; active?: boolean }) => HubEntryIcon(props ?? {}),
+      { name: 'sidebar.panellist', id: 'agent-hub', order: 15, label: '团队空间' },
+      (props: { size?: number; active?: boolean }) => (
+        <HubEntryRow
+          {...(props ?? {})}
+          space={space}
+          mode={mode}
+          onEnterTeam={() => switchSpace('team', 'pointer')}
+        />
+      ),
     ))
   } catch (error) {
     console.error('[agent-hub] 注册侧栏入口失败:', error)
   }
 
-  // 5) 应用内提示（shell.overlay，list 插槽；照官方 toast 做法，verified-T5 Q4-2）。
+  // 8) 应用内提示（shell.overlay，list 插槽；照官方 toast 做法，verified-T5 Q4-2）。
+  // 点击行为交给 openInboxFromToast：先记收件箱目标，再切队友侧打开中心页（P43）。
   try {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
       { name: 'shell.overlay', id: 'dsh-buddy-toast', order: 100 },
-      () => HubToastOverlay({ hub, clientCtx: ctx }),
+      () => HubToastOverlay({ hub, onOpen: openInboxFromToast }),
     ))
   } catch (error) {
     console.error('[agent-hub] 注册应用内提示插槽失败:', error)
+  }
+
+  // 9) 宿主顶部双 Tab 与队友导航：只在有空间位时渲染，没有空间位时不出现。
+  try {
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+      { name: 'shell.overlay', id: 'dsh-buddy-mode-switch', order: 88 },
+      () => <HostModeSwitch hub={hub} mode={mode} space={space} onChange={switchSpace} />,
+    ))
+  } catch (error) {
+    console.error('[agent-hub] 注册空间切换器失败:', error)
+  }
+  try {
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+      { name: 'shell.overlay', id: 'dsh-buddy-sidebar', order: 90 },
+      () => <TeamSidebar hub={hub} clientCtx={ctx} placement={placement} mode={mode} space={space} />,
+    ))
+  } catch (error) {
+    console.error('[agent-hub] 注册一级队友列表失败:', error)
   }
 }

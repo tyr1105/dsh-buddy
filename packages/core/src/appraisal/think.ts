@@ -11,6 +11,8 @@ import { priorityFor } from '../scheduler/priority.js';
 import { startOfLocalDay } from '../util/time.js';
 import { roundScore } from './salience.js';
 import { ownerPerceptSummary } from '../util/owner-text.js';
+import { botMbti } from '../personality/profile.js';
+import { personalityBehavior, personalityThreshold } from '../personality/behavior.js';
 export { thresholdFor } from '../config/defaults.js';
 
 export const CandidateSchema = QueueEntrySchema.omit({ id: true, enqueuedAt: true });
@@ -46,6 +48,19 @@ export function fatigueFor(ctx: HubContext, botId: string, now: number): number 
   return budget === 0 ? 1 : Math.min(1, turns / budget);
 }
 
+/** 感知日志与候选共用门槛；只影响普通自主理由，不推迟主人、异常或承诺。 */
+export function thresholdForCandidate(ctx: HubContext, input: Pick<CandidateInput,
+  'botId' | 'kind' | 'score' | 'ownerInitiated' | 'urgent' | 'anomaly' | 'toOwner' | 'driveName' | 'variant'>, now: number): number {
+  const bot = ctx.store.table('bots').get(input.botId);
+  if (!bot) throw new Error(`机器人不存在：${input.botId}`);
+  const base = thresholdFor(fatigueFor(ctx, bot.id, now), bot.pace, ctx.settings);
+  const ordinary = ['percept', 'pile', 'peer_message', 'agenda_due', 'next_think', 'drive'].includes(input.kind);
+  const exempt = !ordinary || (input.variant ?? 'regular') !== 'regular' || input.ownerInitiated === true
+    || input.urgent === true || input.score >= ctx.settings.salienceUrgent || input.anomaly === true
+    || input.toOwner === true || input.driveName === 'obligation';
+  return personalityThreshold(base, personalityBehavior(botMbti(ctx, bot.id), ctx.settings), exempt);
+}
+
 /** 统一补齐门槛、证据、优先级与事项键，供后续调度去重和解释。 */
 export function buildCandidate(ctx: HubContext, input: CandidateInput): Candidate {
   const value = parseInput(InputSchema, input, '候选');
@@ -60,6 +75,11 @@ export function buildCandidate(ctx: HubContext, input: CandidateInput): Candidat
     : evidence.map(id => ctx.store.table('inbox').get(id)).find(item => item !== null)
       ?? (inferredPercept?.source === 'inbox' && inferredPercept.location ? ctx.store.table('inbox').get(inferredPercept.location) : null);
   const watchId = value.watchId ?? inferredPercept?.watchId;
+  // 真实证据的异常和议程承诺优先，不能靠省略输入字段套上普通性格门槛。
+  const anomaly = value.anomaly === true || percepts.some(p => p.anomaly);
+  const toOwner = value.toOwner === true || (value.agendaId ? ctx.store.table('agenda').get(value.agendaId)?.toOwner === true : false)
+    || (value.kind === 'agenda_due' && evidence.some(id => ctx.store.table('agenda').get(id)?.toOwner === true));
+  const threshold = thresholdForCandidate(ctx, { ...value, ownerInitiated, anomaly, toOwner }, now);
   let subjectKey = value.subjectKey ?? inbox?.subjectKey;
   if (!subjectKey) {
     if (value.kind === 'owner_message') subjectKey = `owner:${value.messageId ?? inferredPercept?.location ?? evidence[0] ?? bot.id}`;
@@ -69,11 +89,11 @@ export function buildCandidate(ctx: HubContext, input: CandidateInput): Candidat
     else subjectKey = `src:${value.source ?? inferredPercept?.source ?? 'system'}:${value.perceptKind ?? inferredPercept?.kind ?? value.kind}`;
   }
   return { botId: bot.id, variant: value.variant ?? 'regular',
-    reason: { kind: value.kind, score: roundScore(value.score), threshold: thresholdFor(fatigueFor(ctx, bot.id, now), bot.pace, ctx.settings), summary: value.summary, evidence,
+    reason: { kind: value.kind, score: roundScore(value.score), threshold, summary: value.summary, evidence,
       ...(value.ownerSummary ? { ownerSummary: value.ownerSummary } : inferredPercept && ['approval_decided', 'inbox_reply', 'outbox_done'].includes(inferredPercept.kind)
         ? { ownerSummary: ownerPerceptSummary(ctx, inferredPercept) } : {}) },
     // urgent 只表示感知显著性；到期承诺和内驱的高分不能冒充紧急感知。
     subjectKey, urgent: ['percept', 'pile', 'peer_message', 'owner_message', 'inbox_reply', 'approval_decided'].includes(value.kind)
       && roundScore(value.score) >= ctx.settings.salienceUrgent && value.urgent !== false, ownerInitiated,
-    priority: priorityFor({ ...value, anomaly: value.anomaly ?? percepts.some(p => p.anomaly), ownerInitiated }, ctx.settings), notBefore: value.notBefore ?? now };
+    priority: priorityFor({ ...value, anomaly, ownerInitiated }, ctx.settings), notBefore: value.notBefore ?? now };
 }

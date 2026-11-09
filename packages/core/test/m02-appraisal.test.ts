@@ -56,7 +56,7 @@ describe('M02 [4][24][28] 显著性和主链', () => {
 
 describe('M02 [32] 每种拦截与决策都有可读解释', () => {
   const keywords: Record<SuppressedBy, string> = {
-    paused: '尚未在岗', waiting_owner_same_subject: '在等你回复同一件事', cooldown: '冷却期', pace_min: '距上次思考太近',
+    paused: '尚未在岗', waiting_owner_same_subject: '在等你回复同一件事', waiting_owner: '有提问或审批在等你回复', cooldown: '冷却期', pace_min: '距上次思考太近',
     daily_cap: '今天已想了 6 次', bot_budget: '回合或 token 预算', quota: '额度或鉴权保护', concurrency: '等待空位',
     dispatch_gap: '距上次放行太近', startup_quiet: '启动对账', dedup: '同一指纹已经记录', retry_backoff: '等待重排时间',
   };

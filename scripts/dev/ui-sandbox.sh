@@ -29,6 +29,8 @@ export DSH_AGENTS_HOME="$SANDBOX/agents"
 export DSH_TELEMETRY_DISABLED=1
 # 中心数据放系统临时目录（不放项目里，免得项目的 AGENTS.md 被注入到队友会话里）
 export AGENT_HUB_ROOT="${TMPDIR:-/tmp}/agent-hub-sandbox/AgentHub"
+# 走查绝不能花真实额度：把真实密钥从这个进程的环境里去掉，沙箱配置万一指向付费模型也调不通。
+unset ZAI_CODING_CN_API_KEY
 
 # 端口被占就直接退出，并说清楚是谁占的
 for p in "$PORT" 18080; do
@@ -44,6 +46,17 @@ echo "[ui-sandbox] 构建插件……"
 echo "[ui-sandbox] 确保插件已装进沙箱（重复执行无害）……"
 bash "$ROOT/scripts/sandbox.sh" install >/dev/null 2>&1 || { echo "[ui-sandbox] 沙箱安装失败，先跑 bash scripts/sandbox.sh install 看错误"; exit 1; }
 
+# 每次都重写沙箱补丁：默认模型指向本机假模型，并关掉会调模型的标题生成。
+# sandbox.sh real 会往同一个文件写真实模型和冒烟跑者；不重写的话，走查会花真实额度，
+# 冒烟跑者还会自动建一位「冒烟员」，90 秒后把整个沙箱带退出。
+cat > "$DSH_HOME/profiles/web/cordis.patch.yml" <<'PATCH'
+# agent-hub 界面走查：沙箱专用补丁（默认模型走假服务、关标题生成）
+- id: agent-default-model
+  config: { provider: deepseek-official, model: deepseek-flash }
+- id: session-title-llm
+  disabled: true
+PATCH
+
 rm -rf "$AGENT_HUB_ROOT"   # 每次走查从干净的中心数据开始（这里只有沙箱测试数据）
 mkdir -p "$SANDBOX/work"
 
@@ -57,5 +70,5 @@ export DEEPSEEK_BASE_URL="http://127.0.0.1:18080/anthropic"
 export DEEPSEEK_API_KEY="fake-local-test-key"
 
 cd "$SANDBOX/work"   # 启动目录 = 新会话默认工作区
-echo "[ui-sandbox] 启动沙箱 DSH（端口 $PORT）；下面出现带 token 的网址后，用浏览器打开，点左侧栏「队友」。"
+echo "[ui-sandbox] 启动沙箱 DSH（端口 ${PORT}）；下面出现带 token 的网址后，用浏览器打开，点左侧栏「队友」。"
 "$DSH_CLI" --profile web --no-open --host 127.0.0.1 --port "$PORT" 2>&1 | tee "$SANDBOX/ui-sandbox.log"

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { PushChannelSchema } from './enums.js';
 import { EngineSettingsSchema } from './engine-settings.js';
 import { InteractionSettingsSchema } from './interaction-settings.js';
+import { KnowledgeBaseConfigSchema } from './knowledge-base.js';
 import { clockTime, count, finite, nonempty, nonnegative, positive, ratio, ModelChoiceSchema } from './primitives.js';
 
 const integer = positive.int('必须是正整数');
@@ -53,6 +54,23 @@ export const SettingsSchema = z.strictObject({
   l3Grants: z.array(nonempty).default([]), // 主人明确授予 L3 的动作子类
   c02: EngineSettingsSchema, // 感知、内驱和调度的细分参数
   c03: InteractionSettingsSchema, // 交账、出站和主人交互细分设置
+  personality: z.strictObject({
+    introvertWakeOffset: ratio.max(0.10, '性格唤醒偏移最多为 0.10'), // 只追加，不降低原候选门槛
+    introvertProposalOffset: ratio.max(0.20, '性格提议偏移最多为 0.20'), // 价值与置信度共同追加
+    introvertReportMaxChars: integer.min(40, '普通汇报至少允许 40 字').max(500, '普通汇报最多允许 500 字'),
+    extrovertReportMaxChars: integer.min(40, '普通汇报至少允许 40 字').max(500, '普通汇报最多允许 500 字'),
+  }), // F14 普通自主行为软倾向；原硬闸和重要消息不受影响。
+  artifacts: z.strictObject({
+    maxBytes: integer.max(65536, '文本完整版本最多 64 KiB'),
+    maxLocations: integer.max(20, '一次最多归档 20 个位置'),
+    maxVersionsPerBot: integer.max(1000, '每队友最多保留 1000 个版本'),
+    maxHandoffVersions: integer.max(5, '一次最多交接 5 个版本'),
+  }), // 完整文本版本的资源限制；入口拒绝超限，不保存截断版本。
+  officeReplay: z.strictObject({
+    maxFramesPerDay: integer.max(2000, '每天最多记录 2000 帧'),
+    maxFrameBytes: integer.max(131072, '每帧最多 128 KiB'),
+  }), // 历史房间超限时记断点，不保存截断房间。
+  knowledgeBase: KnowledgeBaseConfigSchema, // P38 公共知识库：默认关闭的可选远程只读层，空配置与今天行为一致。
   heartbeatPid: count.nullable(), // 由宿主提供的进程号，core 不读取宿主环境
   hostDownAfterMs: positive, // 距离最后心跳多长时间后判断宿主关闭
   deadmanAlertCooldownMs: positive, // 死人开关告警的冷却时长
@@ -189,6 +207,10 @@ export const SettingsSchema = z.strictObject({
     hub: ratio, // 中心默认关注项的相关度
   }), // 第 5 节第 3 节关注项：各创建者相关度，单位：比例。
   retentionMsByCollection: z.strictObject({
+    officeFrames: positive.max(604800000, '房间历史最多保留 7 天'),
+    artifactVersions: positive, // 完整产物版本保留时长
+    artifactReviews: positive, // 指定版本验收保留时长
+    artifactBatches: positive, // 未归档原因保留时长
     percepts: positive, // 感知保留时长
     wakes: positive, // 唤醒单保留时长
     commits: positive, // 交账保留时长

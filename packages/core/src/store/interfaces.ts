@@ -1,14 +1,22 @@
 /** 存储契约：业务只操作同步内存表，落盘由宿主显式调用，便于仿真和故障恢复。 */
 import type {
-  Bot, Aspiration, Goal, AgendaItem, Watch, Percept, DriveState, QueueEntry,
-  WakeTicket, Commit, InboxItem, Approval, OutboxAction, Routine, Mail, Handoff,
-  Claim, Rule, QuotaState, Alert, Downtime, Settings, ThreadMessage, AppraisalLog,
-  LedgerEntry, AuditEntry,
+  ArtifactHead, ArtifactVersion, ArtifactReview, ArtifactBatch, OfficeFrame,
+  Bot, BotProfile, Aspiration, Goal, AgendaItem, Watch, Percept, DriveState, QueueEntry,
+  WakeTicket, WakeLedgerEntry, ResultCheck, V2Config, Resource, Grant,
+  Project, ProjectTask, ProjectContextProposal, Commit, InboxItem,
+  Approval, OutboxAction, Routine, Mail, Handoff, Claim, Rule, QuotaState, Alert, Downtime,
+  Settings, ThreadMessage, AppraisalLog, LedgerEntry, AuditEntry,
 } from '../model/index.js';
 
 /** 固定表名映射使调用者获得准确记录类型，避免混用各类 id 和字段。 */
 export interface TableTypes {
+  officeFrames: OfficeFrame;
+  artifactHeads: ArtifactHead;
+  artifactVersions: ArtifactVersion;
+  artifactReviews: ArtifactReview;
+  artifactBatches: ArtifactBatch;
   bots: Bot;
+  botProfiles: BotProfile;
   aspirations: Aspiration;
   goals: Goal;
   agenda: AgendaItem;
@@ -17,6 +25,18 @@ export interface TableTypes {
   drives: DriveState;
   queue: QueueEntry;
   wakes: WakeTicket;
+  wakeLedger: WakeLedgerEntry;
+  resultChecks: ResultCheck;
+  v2Config: V2Config;
+  // v2 第二期：中心资料层两表；资料只归档不删除，授权不做物理清理。
+  // 主人已取消编制（部门/席位两表不再加载，旧文件启动时被忽略，见 docs/questions.md）。
+  resources: Resource;
+  grants: Grant;
+  // v2 第四期：项目容器两表；项目软归档不删任务，不做自动清理（见 v2 计划 4.6）。
+  projects: Project;
+  projectTasks: ProjectTask;
+  // P39：队友提交的上下文修改建议；只增不删，采纳/驳回后保留决策记录。
+  projectContextProposals: ProjectContextProposal;
   commits: Commit;
   inbox: InboxItem;
   approvals: Approval;
@@ -41,8 +61,13 @@ export interface LogTypes {
 }
 
 export const TABLE_NAMES = [
-  'bots', 'aspirations', 'goals', 'agenda', 'watches', 'percepts', 'drives',
-  'queue', 'wakes', 'commits', 'inbox', 'approvals', 'outbox', 'routines',
+  'officeFrames',
+  'artifactHeads', 'artifactVersions', 'artifactReviews', 'artifactBatches',
+  'bots', 'botProfiles', 'aspirations', 'goals', 'agenda', 'watches', 'percepts', 'drives',
+  'queue', 'wakes', 'wakeLedger', 'resultChecks', 'v2Config', 'resources', 'grants',
+  'projects', 'projectTasks',
+  'projectContextProposals',
+  'commits', 'inbox', 'approvals', 'outbox', 'routines',
   'mail', 'handoffs', 'claims', 'rules', 'quota', 'alerts', 'downtime', 'settings',
 ] as const satisfies readonly (keyof TableTypes)[];
 export const LOG_NAMES = ['thread', 'appraisals', 'ledger', 'audit'] as const;
@@ -55,6 +80,10 @@ export interface Table<T extends { id: string }> {
   get(id: string): T | null;
   /** 返回全部或符合条件的记录副本，谓词也只能接触副本。 */
   list(pred?: (record: T) => boolean): T[];
+  /** 只复制索引需要的字段，不为排序时间轴复制每帧的整间房。 */
+  listFields<K extends keyof T>(keys: readonly K[]): Pick<T, K>[];
+  /** 不透明变更序号；只读索引可据此复用，新增、修改、删除都会失效。 */
+  revision(): number;
   /** 校验 JSON 可序列化后新增或覆盖整条记录，并标记待落盘。 */
   put(record: T): void;
   /** 合并并校验变更字段，保持 id 不变，返回更新后的副本。 */

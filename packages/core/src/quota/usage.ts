@@ -36,7 +36,10 @@ export function recordUsage(ctx: HubContext, input: UsageInput): LedgerEntry {
   const now = ctx.clock.now();
   const tokenBase = value.tokens ?? value.packetBytes / ctx.settings.estimatedBytesPerToken + value.steps * ctx.settings.estimatedTokensPerStep;
   const entry: LedgerEntry = { id: newId('le', ctx.rng), who: value.botId, wakeId: value.wakeId,
-    tokens: Math.ceil(tokenBase * ctx.settings.tokenAccountingMultiplier), kind: 'turn', at: now };
+    tokens: Math.ceil(tokenBase * ctx.settings.tokenAccountingMultiplier), kind: 'turn', at: now,
+    tokenSource: value.tokens === null ? 'estimate' : 'host', tokenBase,
+    accountingMultiplier: ctx.settings.tokenAccountingMultiplier,
+    ...(wake ? { ownerInitiated: wake.ownerInitiated } : {}) };
   const existed = ctx.store.table('quota').get('quota');
   const rolled = existed ? rollWindow(ctx, now) : null;
   const state = !rolled || rolled.windowPending ? beginQuotaWindow(ctx, firstWindowStart(ctx, now)) : rolled;

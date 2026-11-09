@@ -40,7 +40,7 @@ async function writeRoutine(ctx: HubContext, routine: Routine, verb: string): Pr
     const history = old?.split('\n## 修订记录\n').slice(1).join('\n## 修订记录\n').trim() ?? '';
     const when = `${localDateKey(routine.updatedAt, ctx.settings.timezone)} ${formatShort(routine.updatedAt, routine.updatedAt, ctx.settings.timezone).replace('今天 ', '')}`;
     const text = `# ${routine.name}\n\n## 什么时候用\n${routine.whenToUse}\n\n## 步骤\n${routine.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}\n\n## 学自哪里\n${routine.learnedFrom ?? '机器人实践整理'}\n\n## 修订记录\n${history ? `${history}\n` : ''}- ${when} ${verb}\n`;
-    await ctx.fs.writeTextAtomic(path, text);
+    await ctx.fs.writeTextAtomic(path, text, { within: bot.homeDir });
     ctx.store.table('routines').put(routine);
     writeOutreachAudit(ctx, 'routine_save', { id: routine.id, name: routine.name, verb }, routine.botId);
     ctx.emit(HUB_EVENT_SCOPES.bot, routine.botId);

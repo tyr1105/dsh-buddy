@@ -20,6 +20,7 @@ export function explainSuppression(entry: QueueEntry, by: SuppressedBy, until: n
   const resume = until === null ? '' : `，等到${formatShort(until, now, timezone)}`;
   const reasons: Record<SuppressedBy, string> = {
     paused: '机器人尚未在岗，移出队列', waiting_owner_same_subject: '在等你回复同一件事，不再叫醒',
+    waiting_owner: '有提问或审批在等你回复，先不自己找事做',
     cooldown: '同一件事仍在冷却期', pace_min: '距上次思考太近，按当前节奏稍后再想',
     daily_cap: `今天已想了 ${turns ?? 0} 次，到上限`, bot_budget: '已达到机器人回合或 token 预算',
     quota: '额度或鉴权保护，暂停放行', concurrency: '已有机器人正在思考，等待空位',

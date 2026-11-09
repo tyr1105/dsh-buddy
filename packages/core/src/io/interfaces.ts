@@ -1,4 +1,25 @@
 /** 外部能力的最小契约。引擎只依赖接口，真实环境和仿真环境才能使用同一套规则。 */
+/** 沙箱不可用的稳定前缀；上层据此识别并失败关闭，不解析具体系统错误。 */
+export const SANDBOX_UNAVAILABLE = '沙箱不可用';
+/** 宿主命令遇到沙箱不可用时给主人看的固定说明（计划场景 H 要求逐字一致）。 */
+export const HOST_SANDBOX_UNAVAILABLE = '沙箱不可用，宿主命令不运行';
+/** 写入越界错误的稳定前缀；上层据此识别，不解析具体系统错误。 */
+export const PATH_CONTAINMENT = '路径越界';
+/**
+ * 写入边界：中心在沙箱外运行，写进机器人能改动的目录时必须带上它。
+ * 机器人能在自己的目录里放符号链接（指向别处的快捷方式），不带边界的写入会顺着链接写到目录外。
+ */
+export interface WriteBoundary {
+  /** 写入不得离开的根目录；根目录本身和它下面的每一级都不能是符号链接。 */
+  within: string;
+}
+/** 写入被边界拦下。单独成类，让交账流程能把它记成一次越界，而不是普通的磁盘故障。 */
+export class PathContainmentError extends Error {
+  constructor(detail: string) {
+    super(`${PATH_CONTAINMENT}：${detail}`);
+    this.name = 'PathContainmentError';
+  }
+}
 /** 统一时间来源，规则与仿真不依赖机器墙钟。 */
 export interface Clock {
   /** 返回 Unix 毫秒，供所有时限和时间窗口比较。 */
@@ -43,12 +64,14 @@ export interface FsIO {
   readBytes(path: string): Promise<Uint8Array | null>;
   /** 解析实际文件位置，供宿主权限操作在执行前核验符号链接边界。 */
   realpath(path: string): Promise<string>;
+  /** 同步判断路径本身是否符号链接：工具守卫是同步钩子，要在每次工具调用前核对家目录。 */
+  isSymlinkSync(path: string): boolean;
   /** 先写临时文件再替换目标，避免中途失败留下半份内容。 */
-  writeTextAtomic(path: string, text: string): Promise<void>;
+  writeTextAtomic(path: string, text: string, boundary?: WriteBoundary): Promise<void>;
   /** 追加文本，供按日保留的日志使用。 */
-  appendText(path: string, text: string): Promise<void>;
+  appendText(path: string, text: string, boundary?: WriteBoundary): Promise<void>;
   /** 递归建目录，允许重复调用以简化初始化。 */
-  mkdirp(path: string): Promise<void>;
+  mkdirp(path: string, boundary?: WriteBoundary): Promise<void>;
   /** 只返回直接子项名称；不存在的目录返回空数组。 */
   list(dir: string): Promise<string[]>;
   /** 查询大小和修改时间；不存在返回 null。 */
@@ -56,7 +79,7 @@ export interface FsIO {
   /** 复制文件或目录，为恢复与交接保留原始内容。 */
   copy(src: string, dst: string): Promise<void>;
   /** 删除指定路径，供受控保留期清理使用。 */
-  remove(path: string): Promise<void>;
+  remove(path: string, boundary?: WriteBoundary): Promise<void>;
   /** 订阅变化并返回取消函数，使关注项停止时能释放监听。 */
   watch(path: string, opts: { recursive: boolean }, onChange: (event: FileChange) => void): () => void;
 }
@@ -86,8 +109,16 @@ export interface ExecOptions {
   /** stdout 与 stderr 各自最多保留的 UTF-8 字节数。 */
   maxOutputBytes: number;
   env?: Record<string, string>;
-  /** 脚本关注必须限制写入范围；无可用系统沙箱时拒绝运行，不能降级为普通进程。 */
-  sandbox?: { writableRoots: string[] };
+  /**
+   * 要求系统沙箱：脚本关注与宿主命令都必须限制写入范围；
+   * 无可用系统沙箱时拒绝运行，不能降级为普通进程。
+   */
+  sandbox?: {
+    /** 允许写入的目录；系统临时目录由沙箱实现自动加入。 */
+    writableRoots: string[];
+    /** 即使位于可写目录内也必须拒绝写入的目录（第一期工作数据故意收窄）。 */
+    denyWriteRoots?: string[];
+  };
 }
 /** 将退出、超时与输出资源限制分开，避免软截断被误报为命令失败。 */
 export interface ExecResult {

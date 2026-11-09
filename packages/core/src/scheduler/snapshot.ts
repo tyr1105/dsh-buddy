@@ -7,7 +7,8 @@ export interface GateSnapshot {
   bot: Bot | null; running: boolean; runningCount: number; ownerActiveAt: number | null;
   lastDispatchAt: number | null; startedAt: number; quota: QuotaState;
   todayTurns: number; todayTokens: number; windowTurns: number;
-  openQuestionSubjects: Set<string>; subjectWakeAt: Map<string, number>; retryAt: number | null; authBlocked: boolean;
+  openQuestionSubjects: Set<string>; openOwnerAskCount: number; openOwnerAskUntil: number | null;
+  subjectWakeAt: Map<string, number>; retryAt: number | null; authBlocked: boolean;
   ownerEvidenceIds?: Set<string>;
 }
 
@@ -39,10 +40,17 @@ export function buildSnapshot(ctx: HubContext, botId: string, now: number): Gate
   }
   const usage = botUsageToday(ctx, botId, now);
   const bot = ctx.store.table('bots').get(botId);
+  // F07：提问和审批是「有人在等你回复」；提议与告警只是告知，不冻结自唤醒。
+  // 已过期但还没来得及关掉的卡片不参与判断，避免把一分钟的时间缝算成还在等。
+  const ownerAsks = ctx.store.table('inbox').list(i => i.botId === botId && i.status === 'open'
+    && (i.type === 'question' || i.type === 'approval') && (i.expiresAt === null || i.expiresAt > now));
   return { bot, running: running.some(w => w.botId === botId), runningCount: running.length,
     ownerActiveAt: ctx.runtime.ownerActiveAt, lastDispatchAt: ctx.runtime.lastDispatchAt, startedAt: ctx.runtime.startedAt,
     quota: getQuotaState(ctx, now), todayTurns: usage.turns, todayTokens: usage.tokens, windowTurns: botTurnsInWindow(ctx, botId, now),
     openQuestionSubjects: new Set(ctx.store.table('inbox').list(i => i.botId === botId && i.type === 'question' && i.status === 'open').map(i => i.subjectKey)),
+    openOwnerAskCount: ownerAsks.length,
+    openOwnerAskUntil: ownerAsks.length === 0 ? null
+      : ownerAsks.some(i => i.expiresAt === null) ? null : Math.min(...ownerAsks.map(i => i.expiresAt!)),
     ownerEvidenceIds: new Set([
       ...ctx.store.table('percepts').list(p => p.botId === botId
         && ((p.source === 'owner' && p.kind === 'owner_message') || (p.source === 'inbox' && p.kind === 'inbox_reply'))).map(p => p.id),

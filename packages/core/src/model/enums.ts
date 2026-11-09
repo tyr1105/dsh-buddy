@@ -7,6 +7,15 @@ export const RoleSchema = z.enum(ROLES, { error: '请选择有效的Role值' });
 export type Role = z.infer<typeof RoleSchema>;
 export const ROLE_LABELS: Record<Role, string> = { 'chief': '总管', 'researcher': '调研', 'executor': '执行', 'sentinel': '盯守' };
 
+// 办公室座位灯：只表达「这个队友此刻在跑、在等、在休息或不知道」，不参与任何调度判断。
+export const OFFICE_LIGHTS = ['working', 'queued', 'waiting', 'blocked', 'resting', 'watching', 'offline', 'vacant', 'unknown'] as const;
+export const OfficeLightSchema = z.enum(OFFICE_LIGHTS, { error: '请选择有效的办公室灯值' });
+export type OfficeLight = z.infer<typeof OfficeLightSchema>;
+export const OFFICE_LIGHT_LABELS: Record<OfficeLight, string> = {
+  'working': '正在跑', 'queued': '排队等放行', 'waiting': '在等人', 'blocked': '受阻',
+  'resting': '休息或复盘', 'watching': '盯着', 'offline': '不在岗', 'vacant': '空位', 'unknown': '未知',
+};
+
 // 主人授予的自主等级，动作闸用它判断允许、提议或审批。
 export const AUTONOMIES = ['L0', 'L1', 'L2', 'L3'] as const;
 export const AutonomySchema = z.enum(AUTONOMIES, { error: '请选择有效的Autonomy值' });
@@ -19,6 +28,9 @@ export const LifecycleSchema = z.enum(LIFECYCLES, { error: '请选择有效的Li
 export type Lifecycle = z.infer<typeof LifecycleSchema>;
 export const LIFECYCLE_LABELS: Record<Lifecycle, string> = { 'draft': '草稿', 'probation': '试岗', 'active': '在岗', 'paused': '暂停', 'quarantined': '隔离', 'retired': '退役' };
 
+// 在岗口径：试岗与正式在岗都算在队里，能接活、能读普通资料。取消编制后仍是派活与资料判定的唯一口径。
+export const ON_TEAM_LIFECYCLES = ['probation', 'active'] as const;
+
 // 机器人当前在做什么，用于线程状态和总览的即时展示。
 export const ACTIVITIES = ['watching', 'queued', 'thinking', 'waiting_owner', 'waiting_peer', 'blocked', 'resting', 'reflecting', 'catching_up'] as const;
 export const ActivitySchema = z.enum(ACTIVITIES, { error: '请选择有效的Activity值' });
@@ -30,6 +42,18 @@ export const PACE_PROFILES = ['active', 'normal', 'quiet'] as const;
 export const PaceProfileSchema = z.enum(PACE_PROFILES, { error: '请选择有效的PaceProfile值' });
 export type PaceProfile = z.infer<typeof PaceProfileSchema>;
 export const PACE_PROFILE_LABELS: Record<PaceProfile, string> = { 'active': '积极', 'normal': '正常', 'quiet': '安静' };
+
+// 队友的 MBTI 性格类型：只影响表达与做事倾向，不参与权限、审批、额度或唤醒门槛。
+export const MBTI_TYPES = ['INTJ', 'INTP', 'ENTJ', 'ENTP', 'INFJ', 'INFP', 'ENFJ', 'ENFP',
+  'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ', 'ISTP', 'ISFP', 'ESTP', 'ESFP'] as const;
+export const MbtiTypeSchema = z.enum(MBTI_TYPES, { error: '请选择有效的 MBTI 类型' });
+export type MbtiType = z.infer<typeof MbtiTypeSchema>;
+export const MBTI_TYPE_LABELS: Record<MbtiType, string> = {
+  'INTJ': '建筑师', 'INTP': '逻辑学家', 'ENTJ': '指挥官', 'ENTP': '辩论家',
+  'INFJ': '提倡者', 'INFP': '调停者', 'ENFJ': '主人公', 'ENFP': '竞选者',
+  'ISTJ': '物流师', 'ISFJ': '守卫者', 'ESTJ': '总经理', 'ESFJ': '执政官',
+  'ISTP': '鉴赏家', 'ISFP': '探险家', 'ESTP': '企业家', 'ESFP': '表演者',
+};
 
 // 本次值得叫醒机器人的具体理由，供调度、日志和唤醒包追溯。
 export const WAKE_KINDS = ['percept', 'pile', 'agenda_due', 'drive', 'owner_message', 'peer_message', 'inbox_reply', 'approval_decided', 'next_think', 'light_check', 'reflection', 'catch_up', 'trial', 'teach', 'retry'] as const;
@@ -260,10 +284,11 @@ export type AppraisalDecision = z.infer<typeof AppraisalDecisionSchema>;
 export const APPRAISAL_DECISION_LABELS: Record<AppraisalDecision, string> = { 'woke': '已唤醒', 'queued': '已排队', 'pile': '入待处理堆', 'record_only': '仅记录', 'suppressed': '被拦截' };
 
 // 解释有候选却没有唤醒的具体限制，界面据此展示为什么没醒。
-export const SUPPRESSION_REASONS = ['paused', 'waiting_owner_same_subject', 'cooldown', 'pace_min', 'daily_cap', 'bot_budget', 'quota', 'concurrency', 'dispatch_gap', 'startup_quiet', 'dedup', 'retry_backoff'] as const;
+export const SUPPRESSION_REASONS = ['paused', 'waiting_owner_same_subject', 'waiting_owner', 'cooldown', 'pace_min', 'daily_cap', 'bot_budget', 'quota', 'concurrency', 'dispatch_gap', 'startup_quiet', 'dedup', 'retry_backoff'] as const;
 export const SuppressionReasonSchema = z.enum(SUPPRESSION_REASONS, { error: '请选择有效的SuppressionReason值' });
 export type SuppressionReason = z.infer<typeof SuppressionReasonSchema>;
-export const SUPPRESSION_REASON_LABELS: Record<SuppressionReason, string> = { 'paused': '已暂停', 'waiting_owner_same_subject': '同一事项等主人', 'cooldown': '冷却中', 'pace_min': '未到最短间隔', 'daily_cap': '每日上限', 'bot_budget': '机器人预算', 'quota': '额度保护', 'concurrency': '并发限制', 'dispatch_gap': '放行间隔', 'startup_quiet': '启动静默', 'dedup': '重复事件', 'retry_backoff': '错误退避' };
+// waiting_owner 与 waiting_owner_same_subject 的区别：前者是「还有别的事在等主人，先别自己找事做」，后者是同一事项已被明确丢弃。
+export const SUPPRESSION_REASON_LABELS: Record<SuppressionReason, string> = { 'paused': '已暂停', 'waiting_owner_same_subject': '同一事项等主人', 'waiting_owner': '等主人回复时暂停', 'cooldown': '冷却中', 'pace_min': '未到最短间隔', 'daily_cap': '每日上限', 'bot_budget': '机器人预算', 'quota': '额度保护', 'concurrency': '并发限制', 'dispatch_gap': '放行间隔', 'startup_quiet': '启动静默', 'dedup': '重复事件', 'retry_backoff': '错误退避' };
 
 // 给主人单独推送所用的通道；none 表示关闭单推。
 export const PUSH_CHANNELS = ['dsh', 'macos', 'none'] as const;
@@ -272,10 +297,13 @@ export type PushChannel = z.infer<typeof PushChannelSchema>;
 export const PUSH_CHANNEL_LABELS: Record<PushChannel, string> = { 'dsh': '桌面宿主', 'macos': '系统通知', 'none': '不推送' };
 
 // 宿主回合事件的类型，驱动资源计量、结束处理及审批超时守卫。
-export const TURN_EVENT_TYPES = ['started', 'step', 'ended', 'error', 'awaiting_approval', 'owner_direct'] as const;
+export const TURN_EVENT_TYPES = ['started', 'step', 'tool_call', 'ended', 'error', 'awaiting_approval', 'owner_direct'] as const;
 export const TurnEventTypeSchema = z.enum(TURN_EVENT_TYPES, { error: '请选择有效的TurnEventType值' });
 export type TurnEventType = z.infer<typeof TurnEventTypeSchema>;
-export const TURN_EVENT_TYPE_LABELS: Record<TurnEventType, string> = { 'started': '开始', 'step': '步骤', 'ended': '结束', 'error': '错误', 'awaiting_approval': '等待审批', 'owner_direct': '主人直接输入' };
+export const TURN_EVENT_TYPE_LABELS: Record<TurnEventType, string> = {
+  'started': '开始', 'step': '步骤', 'tool_call': '工具调用', 'ended': '结束', 'error': '错误',
+  'awaiting_approval': '等待审批', 'owner_direct': '主人直接输入',
+};
 
 // 其他宿主会话完成或出错的事件，是会话关注项的输入。
 export const EXTERNAL_SESSION_EVENT_TYPES = ['finished', 'error'] as const;

@@ -104,7 +104,7 @@ const outboxCases = [
   { kind: 'notify_owner', payload: { text: '检查已经完成', importance: 2 }, required: ['text'] },
   { kind: 'write_file', payload: { path: '/owner/report.txt', content: '' }, required: ['path', 'content'] },
   { kind: 'http_post', payload: { url: 'https://example.test/report', body: '', headers: { 'Content-Type': 'text/plain' } }, required: ['url', 'body'] },
-  { kind: 'run_command', payload: { cmd: 'external-cli', args: ['a b'], cwd: '/owner' }, required: ['cmd', 'args', 'cwd'] },
+  { kind: 'run_command', payload: { cmd: 'external-cli', args: ['a b'], cwd: '/hub/bots/b_0000000001' }, required: ['cmd', 'args', 'cwd'] },
 ] as const;
 
 describe('M06 出站扁平参数仍按 kind 校验与执行', () => {
@@ -131,7 +131,7 @@ describe('M06 出站扁平参数仍按 kind 校验与执行', () => {
       expect(ctx.store.table('outbox').get(row.id)?.status).toBe('done');
       if (kind === 'write_file') expect(await ctx.fs.readText(payload.path)).toBe('');
       if (kind === 'http_post') expect(ctx.net.calls).toEqual(expect.arrayContaining([expect.objectContaining({ url: payload.url, body: '' })]));
-      if (kind === 'run_command') expect(ctx.exec.calls[0]).toMatchObject({ cmd: payload.cmd, args: ['a b'], opts: { cwd: '/owner' } });
+      if (kind === 'run_command') expect(ctx.exec.calls[0]).toMatchObject({ cmd: payload.cmd, args: ['a b'], opts: { cwd: bot.homeDir } });
     }
   });
 

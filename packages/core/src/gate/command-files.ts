@@ -5,7 +5,7 @@ import { sha256Hex } from '../util/hash.js';
 import { classifyArgv } from './commands.js';
 import { gateContextFor } from './guard.js';
 import { classifyPath, resolveGatePath, within, type GateContext } from './paths.js';
-import { resolveRealTarget } from './real-path.js';
+import { resolveFixedRoot, resolveRealTarget } from './real-path.js';
 import { lexShell } from './shell-lexer.js';
 
 export interface CommandFile {
@@ -63,10 +63,10 @@ export async function captureCommandFiles(ctx: HubContext, botId: string,
   const bot = ctx.store.table('bots').get(botId);
   if (!bot) throw new Error('出站命令所属机器人不存在');
   const gate = { ...gateContextFor(ctx, bot), cwd: payload.cwd };
-  const realHome = await resolveRealTarget(ctx.fs, bot.homeDir);
+  const realHome = await resolveFixedRoot(ctx.fs, bot.homeDir);
   const realGate: GateContext = { ...gate, homeDir: realHome,
     rootDir: await resolveRealTarget(ctx.fs, gate.rootDir),
-    sharedDir: await resolveRealTarget(ctx.fs, gate.sharedDir),
+    sharedDir: await resolveFixedRoot(ctx.fs, gate.sharedDir),
     workDataPaths: await Promise.all((gate.workDataPaths ?? []).map(path => resolveRealTarget(ctx.fs, resolveGatePath(path, { ...gate, cwd: undefined })))) };
   const files: CommandFile[] = [];
   for (const path of candidatePaths(payload, gate)) {

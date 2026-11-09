@@ -7,6 +7,62 @@ import { LOG_NAMES, TABLE_NAMES, type LogName, type TableName } from './interfac
 import { MemoryStore, type RetentionOptions } from './memory-store.js';
 import { isRecord, recordTime, type StoredRecord } from './records.js';
 
+/**
+ * 旧存档兼容（主人已取消编制：部门/席位两层不再存在）。
+ *
+ * 为什么在恢复时改而不是在业务层兜底：磁盘上的旧记录仍带 ownerPositionId、
+ * memberPositionIds、assigneePositionId、ownerDepartmentId，以及按席位/部门授予的资料授权。
+ * 如果原样读进内存，界面会拿到不存在的字段，保存时也会把旧引用当成有效数据继续写。
+ * 这里按表把旧字段清掉、补上新的可空字段，并让下一次刷盘把文件重写成新形状。
+ *
+ * 返回值约定：null 表示这条记录已失去新语义，整条丢弃（只用于按席位/部门授予的旧授权）；
+ * changed 表示字段有增删，需要标记脏表重写。无法从旧席位可靠换算出队友 id，
+ * 所以项目负责人与成员统一置空，由主人在项目页重新指定（保守默认，见 docs/questions.md）。
+ */
+function migrateLegacyRow(name: TableName, record: StoredRecord): { row: StoredRecord; changed: boolean } | null {
+  const row: StoredRecord = { ...record };
+  let changed = false;
+  /** 删掉一个旧字段；只有确实存在时才算改动，避免无谓刷盘。 */
+  const drop = (key: string): void => {
+    if (Object.prototype.hasOwnProperty.call(row, key)) {
+      delete row[key];
+      changed = true;
+    }
+  };
+  /** 补齐新字段；缺省才补，已经存在的值一律保留。 */
+  const fill = (key: string, value: unknown): void => {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) {
+      row[key] = value;
+      changed = true;
+    }
+  };
+
+  if (name === 'projects') {
+    drop('ownerPositionId');
+    drop('memberPositionIds');
+    fill('ownerBotId', null);
+    fill('memberBotIds', []);
+    // P34 两层的愿景与约定：旧项目没有这两个字段，按空值兼容并标脏，下次落盘写成新形状。
+    fill('vision', '');
+    fill('conventions', '');
+    // P39 共享上下文：旧项目按空上下文与空留痕兼容（零迁移，界面不显示空卡片）。
+    fill('context', { background: '', conventions: '', decisions: [], glossary: [] });
+    fill('contextRevisions', []);
+  } else if (name === 'projectTasks') {
+    drop('assigneePositionId');
+    fill('assigneeBotId', null);
+  } else if (name === 'bots') {
+    // P40 预置 skill：旧档案没有这个字段，按空数组兼容并标脏，不替主人勾选任何一项。
+    fill('presetSkillIds', []);
+  } else if (name === 'resources') {
+    drop('ownerDepartmentId');
+  } else if (name === 'grants') {
+    // 授权对象只剩队友本人；旧席位/部门授权没有可映射的收件人，整条忽略。
+    if (row.subjectKind !== 'bot') return null;
+  }
+  return { row, changed };
+}
+
 /** 把内存状态安全同步到文件；坏数据留证据，单个集合失败不阻断其余集合落盘。 */
 export class FileStore extends MemoryStore {
   private ioTail: Promise<void> = Promise.resolve();
@@ -63,6 +119,8 @@ export class FileStore extends MemoryStore {
     const path = join(this.stateDir, `${name}.json`);
     const text = await this.fs.readText(path);
     const records = this.tables.get(name)!;
+    // 恢复也会替换内容；只读索引必须失效，但正常读取不应标记为待写。
+    this.revisions.set(name, (this.revisions.get(name) ?? 0) + 1);
     records.clear();
     if (text === null) return;
     let parsed: unknown;
@@ -77,6 +135,7 @@ export class FileStore extends MemoryStore {
       return;
     }
     const rows = parsed as unknown[];
+    let dropped = 0;
     const skippedIndexes = rows.flatMap((record, index) => isRecord(record) ? [] : [index]);
     if (skippedIndexes.length > 0) {
       // 先保留原始证据，再让下次刷盘将文件替换成干净的有效记录集合。
@@ -88,20 +147,32 @@ export class FileStore extends MemoryStore {
     }
     for (const record of rows) {
       if (!isRecord(record)) continue;
+      // 先做编制取消后的旧字段迁移：丢弃的旧授权不进入内存，字段改动让下次刷盘重写。
+      const migrated = migrateLegacyRow(name, record);
+      if (migrated === null) {
+        dropped += 1;
+        this.markDirty(name);
+        continue;
+      }
       // 只补缺失的兼容字段，保留旧关注项的其余原始数据，不因领域字段的历史差异丢记录。
-      const expectation = record.expectation;
+      const expectation = migrated.row.expectation;
       if (name === 'watches' && expectation !== null && typeof expectation === 'object' && !Array.isArray(expectation)) {
         const fields: Record<string, unknown> = {};
         if (!Object.prototype.hasOwnProperty.call(expectation, 'weekdays')) fields.weekdays = null;
         if (!Object.prototype.hasOwnProperty.call(expectation, 'effectiveAt') && typeof record.createdAt === 'number'
           && Number.isSafeInteger(record.createdAt)) fields.effectiveAt = record.createdAt;
         if (Object.keys(fields).length) {
-          records.set(record.id, { ...record, expectation: { ...expectation, ...fields } });
+          records.set(record.id, { ...migrated.row, expectation: { ...expectation, ...fields } });
           this.markDirty(name);
           continue;
         }
       }
-      records.set(record.id, record);
+      records.set(record.id, migrated.row);
+      if (migrated.changed) this.markDirty(name);
+    }
+    if (dropped > 0) {
+      // 只提示数量，不打印授权内容；旧文件本身不动，等下次刷盘自然替换成新形状。
+      this.logger.warn(`表 ${name} 忽略 ${dropped} 条已随编制取消的旧记录`);
     }
   }
 

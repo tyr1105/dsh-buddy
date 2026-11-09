@@ -148,7 +148,7 @@ describe('C03 出站四种执行', () => {
   });
   it('run_command 经 ExecIO 执行，argv 保持边界', async () => {
     const { ctx, bot } = setup(); ctx.exec.set('external-cli', ['a b'], { code: 0, stdout: '成功', stderr: '', timedOut: false });
-    const row = await submitOutbox(ctx, bot.id, { kind: 'run_command', payload: { cmd: 'external-cli', args: ['a b'], cwd: '/outside' }, why: '交付' });
+    const row = await submitOutbox(ctx, bot.id, { kind: 'run_command', payload: { cmd: 'external-cli', args: ['a b'], cwd: bot.homeDir }, why: '交付' });
     await decideApproval(ctx, row.approvalId!, true); await executeReadyOutbox(ctx);
     expect(ctx.exec.calls[0]?.args).toEqual(['a b']); expect(ctx.store.table('outbox').get(row.id)?.result).toBe('成功');
   });
@@ -171,7 +171,7 @@ describe('C03 出站四种执行', () => {
   });
   it('并发 tick 也只执行一次', async () => {
     const { ctx, bot } = setup(); ctx.exec.set('external-cli', [], { code: 0, stdout: '成功', stderr: '', timedOut: false });
-    const row = await submitOutbox(ctx, bot.id, { kind: 'run_command', payload: { cmd: 'external-cli', args: [], cwd: '/outside' }, why: '交付' });
+    const row = await submitOutbox(ctx, bot.id, { kind: 'run_command', payload: { cmd: 'external-cli', args: [], cwd: bot.homeDir }, why: '交付' });
     await decideApproval(ctx, row.approvalId!, true); await Promise.all([executeReadyOutbox(ctx), executeReadyOutbox(ctx)]); expect(ctx.exec.calls).toHaveLength(1);
   });
   it('L0 与受保护文件不能经出站绕过', async () => {

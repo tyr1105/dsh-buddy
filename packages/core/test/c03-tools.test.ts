@@ -1,4 +1,4 @@
-/** 十五个工具逐一验证有效动作、无效输入、等级边界与回合身份，断言落到真实存储事实。 */
+/** 二十个工具逐一验证有效动作、无效输入、等级边界与回合身份，断言落到真实存储事实。 */
 import { describe,it,expect } from 'vitest';
 import { buildTools,runTool } from '../src/tools/index.js';
 import { toolFixture } from './c03-tool-fixtures.js';
@@ -27,7 +27,7 @@ const toolCases=[
   ['hub_release',{resource:'report'},{resource:''}],
   ['hub_routine_save',{name:'复核',whenToUse:'发现新来源',steps:['查看原文']},{name:'复核',whenToUse:'发现新来源',steps:[]}],
 ] as const;
-describe('十五个工具逐项',()=>{
+describe('二十个工具逐项',()=>{
   for(const [name,valid,invalid] of toolCases){
     it(`${name} 有效参数产生预期结果`,async()=>{
       const {ctx,bot,tc,wake,commitArgs}=toolFixture();
@@ -65,7 +65,7 @@ describe('十五个工具逐项',()=>{
     });
   }
 });
-it('工具数量恰好15，每个都有对象JSON Schema和中文说明',()=>{const{ctx}=toolFixture();const tools=buildTools(ctx);expect(tools).toHaveLength(15);expect(new Set(tools.map(t=>t.name)).size).toBe(15);for(const t of tools){expect(t.description).toMatch(/[\u4e00-\u9fff]/);expect(t.jsonSchema).not.toHaveProperty('$schema');expect(t.jsonSchema).toMatchObject({type:'object',properties:expect.any(Object)});}});
+it('工具数量恰好23，每个都有对象JSON Schema和中文说明',()=>{const{ctx}=toolFixture();const tools=buildTools(ctx);expect(tools).toHaveLength(23);expect(new Set(tools.map(t=>t.name)).size).toBe(23);expect(tools.some(t=>t.name==='hub_artifact_read')).toBe(true);expect(tools.some(t=>t.name==='hub_task_list')).toBe(true);expect(tools.some(t=>t.name==='hub_task_update')).toBe(true);expect(tools.some(t=>t.name==='hub_project_context_propose')).toBe(true);for(const t of tools){expect(t.description).toMatch(/[\u4e00-\u9fff]/);expect(t.jsonSchema).not.toHaveProperty('$schema');expect(t.jsonSchema).toMatchObject({type:'object',properties:expect.any(Object)});}});
 it('未知工具不抛异常',async()=>{const{ctx,tc}=toolFixture();expect(await runTool(ctx,tc,'missing',{})).toMatchObject({ok:false});});
 it('错误会话不能冒充另一机器人',async()=>{const{ctx,tc}=toolFixture();expect(await runTool(ctx,{...tc,sessionId:'session-b'},'hub_state_get',{})).toMatchObject({ok:false,error:expect.stringContaining('sessionId')});});
 it('错误唤醒单不能借用身份',async()=>{const{ctx,tc}=toolFixture();expect(await runTool(ctx,{...tc,wakeId:'missing'},'hub_state_get',{})).toMatchObject({ok:false,error:expect.stringContaining('wakeId')});});

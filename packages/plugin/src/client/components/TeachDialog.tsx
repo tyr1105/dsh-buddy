@@ -1,9 +1,10 @@
 /**
- * 「教它一招」弹窗：列出 recentSessions（标题、更新时间，可搜索），选一个 + 一句说明
+ * 「教它技能」弹窗：列出 recentSessions（标题、更新时间，可搜索），选一个 + 一句说明
  * → teach 命令 → 线程里出现中心消息「已把会话 {标题} 交给 {名字} 学习」。
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { RecentSessionView } from '../../shared/views.js'
+import { useDialogFocus } from './use-dialog-focus.js'
 
 export function TeachDialog(props: {
   botName: string
@@ -13,9 +14,10 @@ export function TeachDialog(props: {
 }): ReactNode {
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState<string>('')
-  const [note, setNote] = useState('把我刚才在这个会话里做的事学成套路')
+  const [note, setNote] = useState('把该会话里的做法整理成技能')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const dialogRef = useDialogFocus(props.onClose, busy)
 
   useEffect(() => { if (props.sessions.length > 0 && picked === '') setPicked(props.sessions[0]!.sessionId) }, [props.sessions, picked])
 
@@ -39,13 +41,16 @@ export function TeachDialog(props: {
   }
 
   return (
-    <div className="ah-dialog-mask" role="dialog" aria-label={`教 ${props.botName} 一招`}>
+    <div className="ah-dialog-mask" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`教 ${props.botName} 技能`}>
       <div className="ah-dialog ah-dialog-wide">
-        <h3>教 {props.botName} 一招</h3>
-        <p className="ah-right-kv">选一个你最近做过的会话，它会读记录写成套路，以后照做；学完会在线程里复述步骤请你纠正。</p>
-        <input className="ah-teach-search" placeholder="搜索会话标题" value={query} onChange={e => setQuery(e.target.value)} />
+        {/* 与其它弹窗同构：标题从 h2 起（弹窗是独立表面，WCAG 1.3.1），视觉统一走 ah-wizard-head。 */}
+        <header className="ah-wizard-head">
+          <h2>教 {props.botName} 技能</h2>
+        </header>
+        <p className="ah-right-kv">选择一个近期会话，系统将读取记录生成技能。生成后会在线程中复述步骤，供核对。</p>
+        <input className="ah-teach-search" aria-label="搜索会话标题" placeholder="搜索会话标题" value={query} onChange={e => setQuery(e.target.value)} />
         <ul className="ah-teach-list">
-          {filtered.length === 0 ? <li className="ah-empty">没有找到会话。先在 DSH 里做一遍，再回来教它。</li> : null}
+          {filtered.length === 0 ? <li className="ah-empty">暂无匹配会话。请先在 DSH 中完成一次会话。</li> : null}
           {filtered.slice(0, 12).map(s => (
             <li key={s.sessionId}>
               <label className={picked === s.sessionId ? 'ah-teach-picked' : ''}>
@@ -56,12 +61,12 @@ export function TeachDialog(props: {
             </li>
           ))}
         </ul>
-        <textarea className="ah-teach-note" rows={2} value={note} onChange={e => setNote(e.target.value)} placeholder="一句说明：把它学成什么套路" />
+        <textarea className="ah-teach-note" aria-label="学习说明" rows={2} value={note} onChange={e => setNote(e.target.value)} placeholder="说明：生成什么技能" />
         {error ? <p className="ah-settings-error" role="alert">{error}</p> : null}
         <div className="ah-dialog-actions">
           <button type="button" className="ah-btn" onClick={props.onClose} disabled={busy}>取消</button>
           <button type="button" className="ah-btn ah-btn-primary" disabled={busy || picked === ''} onClick={() => void teach()}>
-            {busy ? '提交中…' : '交给它学'}
+            {busy ? '提交中…' : '教它技能'}
           </button>
         </div>
       </div>

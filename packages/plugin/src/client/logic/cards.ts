@@ -22,6 +22,9 @@ export function isApproveOption(option: string): boolean { return option === '�
  */
 export function expiryMeaningOf(card: CardPayload): string | null {
   if (card.expiresText === null || card.expiresText === '') return null
+  // 视图可能已经带上了后果说明（样例数据、旧版本或后续接口变化），
+  // 再拼一遍会得到「今晚 20:00 前有效前有效，过期视为拒绝」这种重复句。
+  if (/前有效|按默认|自动撤回|前未答复|视为拒绝/.test(card.expiresText)) return card.expiresText
   // 视图给的时间常以「后」结尾（如「72 小时后」）；拼「…前」前先去掉，避免「后前」。
   const at = card.expiresText.endsWith('后') ? card.expiresText.slice(0, -1) : card.expiresText
   if (card.type === 'question') {
@@ -34,11 +37,11 @@ export function expiryMeaningOf(card: CardPayload): string | null {
 }
 
 /**
- * 卡片结果文字（D07 第 11 条）：只有主人亲手作答才写「你选了：X」——过期按默认
+ * 卡片结果文字（D07 第 11 条）：只有主人亲手作答才写「已选：X」——过期按默认
  * 处理、提议到期撤回、中心关闭的告警都不是主人选的，照实写。
  */
 export function cardResultText(card: CardPayload): string | null {
-  if (card.status === 'answered') return `你选了：${card.answer ?? '已处理'}`
+  if (card.status === 'answered') return `已选：${card.answer ?? '已处理'}`
   if (card.status === 'expired') return `已过期，已按默认：${card.answer ?? '默认选项'}`
   if (card.status === 'withdrawn') return '已撤回'
   if (card.status === 'closed') return '已关闭'

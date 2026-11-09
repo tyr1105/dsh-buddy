@@ -39,9 +39,35 @@ export const BotSchema = z.strictObject({
   releasedAt: timestamp.optional(), // 主人解除隔离的边界，旧故障与旧超量不重新累计
   quotaRest: z.strictObject({ activity: z.enum(['watching', 'queued']), activityText: text }).nullable().optional(), // 额度休息前的展示状态
   workDataAllowed: bool.default(false), // 是否允许接触工作数据，默认关闭
+  presetSkillIds: z.array(nonempty).default([]), // P40 主人勾选的预置 skill id；空数组即未启用，行为与过去完全一致
+  // P48 归档：只在退役后可写；旧档案没有这个字段时按「未归档」读取，零迁移。
+  archivedAt: timestamp.nullable().optional(),
   updatedAt: timestamp, // 最近修改时间（Unix 毫秒）
 });
 export type Bot = z.infer<typeof BotSchema>;
+
+/**
+ * 名册状态口径（P48）：活跃、退役、归档三者互斥，草稿/暂停/隔离归为非活跃。
+ * - active：在岗或试岗，会接活、会被唤醒；
+ * - retired：已退役，不唤醒，但仍留在左栏名单里；
+ * - archived：已归档，不在名单显示，只出现在「已归档」折叠区；
+ * - inactive：草稿、暂停、隔离，仍在名单里，但不接活。
+ * 归档标记优先：只要 archivedAt 有值就视为归档，不受 lifecycle 影响。
+ */
+export type BotRosterState = 'active' | 'retired' | 'archived' | 'inactive';
+
+/** 是否已归档；旧档案缺字段时返回 false，读取不报错。 */
+export function botIsArchived(bot: Pick<Bot, 'archivedAt'>): boolean {
+  return bot.archivedAt != null;
+}
+
+/** 名册状态：归档优先，其次按生命周期分成活跃、退役、非活跃。 */
+export function botRosterState(bot: Pick<Bot, 'lifecycle' | 'archivedAt'>): BotRosterState {
+  if (botIsArchived(bot)) return 'archived';
+  if (bot.lifecycle === 'retired') return 'retired';
+  if (bot.lifecycle === 'probation' || bot.lifecycle === 'active') return 'active';
+  return 'inactive';
+}
 
 /** 校验长期志向及批准状态，保留目标的共同方向。 */
 export const AspirationSchema = z.strictObject({
