@@ -2,11 +2,15 @@
   "name": "@tyr1105/dsh-buddy",
   "private": true,
   "version": "0.1.1",
-  "description": "Agent 中心（DSH 版 Grok Bot）：常驻、有名字、会自己决定何时思考的主动型机器人队友",
+  "description": "给一人公司（OPC）的 DeepSeek Harness 插件：分角色、派任务、验收返工，需要拍板时才找你。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tyr1105/dsh-buddy.git",
     "directory": "packages/plugin"
+  },
+  "homepage": "https://tyr1105.github.io/dsh-buddy-landing/",
+  "bugs": {
+    "url": "https://github.com/tyr1105/dsh-buddy/issues"
   },
   "license": "MIT",
   "type": "module",
