@@ -16,6 +16,7 @@ import { buildCandidate } from '../appraisal/think.js';
 import { refreshBotFiles } from '../memory/files.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { localDateKey } from '../util/time.js';
+import { settleFailedTopicDelivery, sweepStuckTopics } from '../project/topics.js';
 
 // 已清理日期仅作加速；新实例首次仍读取持久化审计，成功后才缓存。
 const prunedDays = new WeakMap<HubContext, string>();
@@ -51,9 +52,11 @@ async function checkHealth(ctx: HubContext, now: number, hooks: TickHooks): Prom
         if (result.action === 'retry') {
           const bot = ctx.store.table('bots').get(wake.botId)!;
           if (bot.activity === 'thinking') ctx.store.table('bots').patch(bot.id, { activity: 'watching', activityText: '投递失败，等待重排', updatedAt: now });
-          hooks.offer(buildCandidate(ctx, { botId: wake.botId, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
+          // 主题回合不重试：这一棒已经跳过，讨论继续往下走，隔一会儿再叫它只会插错话。
+          if (!wake.topicId) hooks.offer(buildCandidate(ctx, { botId: wake.botId, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
             evidence: [wake.id], summary: error, ownerSummary: '上次唤醒没有送达，稍后重新尝试', notBefore: result.retryAt!, now }));
         }
+        if (wake.topicId) settleFailedTopicDelivery(ctx, wake.topicId, wake.botId);
         return;
       }
       try { if (wake.sessionId) await ctx.host.cancel(wake.sessionId); }
@@ -97,6 +100,8 @@ export async function runTick(ctx: HubContext, hooks: TickHooks): Promise<void> 
     ['调度放行', async () => {
       for (const bot of ctx.store.table('bots').list()) await hooks.safe('反思检查', () => { shouldReflect(ctx, bot.id, now); }, bot.id);
       await hooks.safe('总管信号', () => { checkTeamSignals(ctx, now); });
+      // P63：等待名单里的人既没排队也没在跑时按「没接上」处理，保证主题讨论不会永远卡住。
+      await hooks.safe('主题讨论兜底', () => { sweepStuckTopics(ctx); });
       hooks.collect(now);
       await hooks.pump();
     }],

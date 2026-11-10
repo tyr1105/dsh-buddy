@@ -19,14 +19,18 @@ export interface OfficeAppearance {
   pants: string
 }
 
-/** 演示里用到的色板；新增颜色只改这里，渲染与测试共用同一份。 */
+/**
+ * 小人的色板：P54 改成明亮的颜色，和新房间配套。
+ * 每个列表的长度和顺序都没动：同一个队友哈希到的还是同一格，只是这一格变亮了。
+ * 新增颜色只改这里，渲染与测试共用同一份。
+ */
 export const OFFICE_HAIR_STYLES: readonly OfficeHairStyle[] = ['short', 'bowl', 'spiky', 'bob', 'buzz', 'side']
-export const OFFICE_HAIR_COLORS: readonly string[] = ['#4a352a', '#7a5334', '#a55a3a', '#3a4a5e', '#c9a24a', '#7a3f3f']
-export const OFFICE_SKINS: readonly string[] = ['#f0c49a', '#e2b085', '#cf9469']
-export const OFFICE_SHIRTS: readonly string[] = ['#b5584d', '#4f8a7d', '#c9a24a', '#5a6aa8', '#7a8a4a', '#a06a8a']
+export const OFFICE_HAIR_COLORS: readonly string[] = ['#6b4a36', '#a8693a', '#e0814a', '#4f71b5', '#f3c14f', '#c85a72']
+export const OFFICE_SKINS: readonly string[] = ['#ffdfbd', '#f7cba1', '#e3ad82']
+export const OFFICE_SHIRTS: readonly string[] = ['#ff8a75', '#45c2ae', '#ffc94d', '#6a9bf2', '#9bd35f', '#d48fe3']
 export const OFFICE_ACCESSORIES: readonly OfficeAccessory[] = ['none', 'none', 'glasses', 'cap', 'scarf']
-export const OFFICE_ACCENT_COLORS: readonly string[] = ['#3a281d', '#2f4a6b', '#7a3f3f', '#4a5a3a']
-export const OFFICE_PANTS: readonly string[] = ['#3f4152', '#4a4038', '#3a4650', '#514a3e']
+export const OFFICE_ACCENT_COLORS: readonly string[] = ['#ff6f61', '#3f8fe0', '#ffb703', '#2fb39a']
+export const OFFICE_PANTS: readonly string[] = ['#5b6ea8', '#8a6f5a', '#4f8aa0', '#a08a5a']
 
 /**
  * FNV-1a 哈希：与 Demo 相同的算法，保证同一 id 在页面重开后仍得到同一外观。

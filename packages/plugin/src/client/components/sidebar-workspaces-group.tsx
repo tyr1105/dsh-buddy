@@ -1,15 +1,15 @@
 /**
  * 左栏第三组「工作区」（P44，U01 第 45 轮从主组件拆出）。
  *
- * 项目是母、会话是子，母子都在左栏内展开；组头加号与项目页共用同一个
+ * 项目是母、主题聊天是子（P63），母子都在左栏内展开；组头加号与项目页共用同一个
  * 新建项目表单。滚动提示（U01 第 43 轮）放在组头之下、滚动列表之外，
  * 是否出现由父层的真实裁切测量决定，本组件只按 clipped 渲染；
  * 内层列表的 ref 由父层传入，测量逻辑仍集中在主组件一处。
  */
 import type { ReactNode, Ref } from 'react'
-import type { SidebarProjectNode, SidebarSession } from '../logic/sidebar-groups.js'
+import type { SidebarProjectNode } from '../logic/sidebar-groups.js'
 import { SIDEBAR_GROUP_TITLES } from '../logic/sidebar-groups.js'
-import { Chevron, sessionDotClass } from './sidebar-nav-parts.js'
+import { Chevron } from './sidebar-nav-parts.js'
 import type { SidebarFormState } from './sidebar-session-form.js'
 
 export interface WorkspacesGroupProps {
@@ -18,8 +18,8 @@ export interface WorkspacesGroupProps {
   projects: SidebarProjectNode[]
   /** 项目视图还没加载：空态说「还没读出来」，不假装没有工作。 */
   projectUnloaded: boolean
-  /** 当前线程对应的会话 id：子行显示选中态（P44-R2）。 */
-  activeTaskId?: string | null
+  /** 当前打开的线程 id：是某个主题时，那一行显示选中态。 */
+  selectedThread: string
   notice?: string | null
   /** 内层列表是否被真实裁切，控制滚动提示（U01 第 43 轮）。 */
   clipped: boolean
@@ -30,7 +30,7 @@ export interface WorkspacesGroupProps {
   onToggleProject: (node: SidebarProjectNode) => void
   onOpenProject: (projectId: string) => void
   onOpenProjectForm: (projectId: string) => void
-  onOpenSession: (session: SidebarSession) => void
+  onOpenTopic: (topicId: string) => void
   /** 父层测量内层溢出用的 ref，挂在 .ah-nav-rows 上。 */
   rowsRef: Ref<HTMLDivElement>
   form: SidebarFormState | null
@@ -97,34 +97,36 @@ export function WorkspacesGroup(props: WorkspacesGroupProps): ReactNode {
                   onClick={() => props.onOpenProject(project.projectId)}
                 >
                   <span className="ah-nav-project-label">{project.name}</span>
-                  <span className="ah-nav-project-count">{project.sessionCount}</span>
+                  <span className="ah-nav-project-count">{project.topicCount}</span>
                 </button>
-                <button
-                  type="button"
-                  className="ah-nav-row-add"
-                  aria-label={`在${project.name}新建会话`}
-                  title={`在${project.name}新建会话`}
-                  onClick={() => props.onOpenProjectForm(project.projectId)}
-                >＋</button>
+                {/* 只有进行中的项目能开主题，core 也会拒绝其余状态；不放一个写完一句话才报错的加号。 */}
+                {project.status === 'active' ? (
+                  <button
+                    type="button"
+                    className="ah-nav-row-add"
+                    aria-label={`在${project.name}新建会话`}
+                    title={`在${project.name}新建会话`}
+                    onClick={() => props.onOpenProjectForm(project.projectId)}
+                  >＋</button>
+                ) : null}
               </div>
               {project.expanded ? (
                 <div className="ah-nav-sessions">
-                  {project.sessions.length === 0 ? <p className="ah-nav-empty">暂无会话。点击项目行「＋」新建。</p> : null}
-                  {project.sessions.map(session => {
-                    // P2-N3：当前线程对应的那条子行要有选中态，两条相似会话才能一眼分辨。
-                    const current = props.activeTaskId !== undefined && props.activeTaskId === session.id
+                  {project.topics.length === 0 ? <p className="ah-nav-empty">{project.status === 'active' ? '暂无会话。点击项目行「＋」新建。' : '暂无会话。'}</p> : null}
+                  {project.topics.map(topic => {
+                    // P2-N3：正在看的那条要有选中态，两条相似的会话才能一眼分辨。
+                    const current = props.selectedThread === topic.id
                     return (
                       <button
-                        key={session.id}
+                        key={topic.id}
                         type="button"
-                        className={`ah-nav-session${session.blocked ? ' ah-nav-session-blocked' : ''}${current ? ' ah-nav-session-current' : ''}`}
-                        title={`${session.title} · ${session.statusLabel}`}
+                        className={`ah-nav-session${current ? ' ah-nav-session-current' : ''}`}
+                        title={topic.preview === null ? topic.title : `${topic.title} · ${topic.preview}`}
                         aria-current={current ? 'true' : undefined}
-                        onClick={() => props.onOpenSession(session)}
+                        onClick={() => props.onOpenTopic(topic.id)}
                       >
-                        <span className={sessionDotClass(session)} aria-hidden="true" />
-                        <span className="ah-nav-session-title">{session.title}</span>
-                        {session.pendingCheck ? <span className="ah-nav-session-flag">待验收</span> : null}
+                        <span className="ah-nav-session-title">{topic.title}</span>
+                        {topic.unread > 0 ? <span className="ah-nav-topic-unread" role="img" aria-label={`${topic.unread} 条未读`} /> : null}
                       </button>
                     )
                   })}

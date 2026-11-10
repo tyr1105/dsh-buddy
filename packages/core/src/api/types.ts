@@ -11,6 +11,9 @@ import type { ArtifactVersion, ArtifactReview } from '../model/artifact.js';
 import type { ArtifactListView } from '../artifacts/views.js';
 import type { PresetSkillOption } from '../config/preset-skills.js';
 export type { PresetSkillOption } from '../config/preset-skills.js';
+import type { DshSkillOption } from './skills.js';
+export type { DshSkillOption } from './skills.js';
+import type { SpeechStyle, Temperament } from '../model/enums.js';
 export type { ArtifactListView, ArtifactVersionRow } from '../artifacts/views.js';
 
 /** 资料视图里的一条授权展开行：带上资料名与授权对象（队友）中文名，界面不再自行查表。 */
@@ -45,6 +48,37 @@ export interface ProjectMemberView {
   botId: string;
   name: string | null;
   invalid: boolean;
+  /** P60：执行风格；队友档案查不到时为 null。 */
+  role: Role | null;
+  roleLabel: string | null;
+  /** P60：是不是这个项目的负责人。 */
+  isOwner: boolean;
+}
+/** P60 项目背景：正文加「谁、什么时候更新的」；还没更新过时后三项为 null。 */
+export interface ProjectBackgroundView {
+  text: string;
+  /** 'owner' 表示主人，否则是队友 id。 */
+  updatedBy: string | null;
+  updatedByName: string | null;
+  updatedAt: number | null;
+  updatedText: string | null;
+}
+/** P60 项目文件路径：工作区目录和共享目录现在是同一个，两个都给，界面不用猜。 */
+export interface ProjectPathView {
+  workspaceDir: string;
+  sharedDir: string;
+}
+/** P63 项目页的一条主题：点开后用线程查询读楼层，线程 id 就是主题 id。 */
+export interface ProjectTopicView {
+  id: string;
+  title: string;
+  lastMessageAt: number;
+  lastMessageText: string | null;
+  /** 主人还没看过的队友发言和中心提示条数。 */
+  unread: number;
+  lastMessagePreview: string | null;
+  /** 最后一条消息是谁说的；没有消息时为 null。 */
+  lastMessageFrom: string | null;
 }
 /** 验收项视图：原始记录加中文状态标签。 */
 export interface ProjectCriterionView {
@@ -96,6 +130,10 @@ export interface ProjectTaskAcceptanceView {
 /** 任务视图行：状态标签、指派队友名字与失效标记、关联产物、验收提醒、关联唤醒链接。 */
 export interface ProjectTaskView {
   task: ProjectTask;
+  /** P60：事务清单直接取用的三项；task 里的原始字段先保留，界面重做前老代码还在读。 */
+  title: string;
+  assigneeName: string | null;
+  topicId: string | null;
   statusLabel: string;
   assigneeBotId: string | null;
   assigneeBotName: string | null;
@@ -177,9 +215,17 @@ export interface ProjectViewRow {
   contextRevisions: ProjectContextRevisionView[];
   /** 待主人确认的队友建议，最新在前；已处理的不再返回。 */
   contextProposals: ProjectContextProposalView[];
+  /** P60：项目背景，随项目推进由负责人更新。 */
+  background: ProjectBackgroundView;
+  /** P60：项目文件路径。 */
+  path: ProjectPathView;
+  /** P63：这个项目下的主题，最近有消息的在前。 */
+  topics: ProjectTopicView[];
 }
 /** 项目容器全貌：非归档项目在前、归档沉底；旧存档缺两表时全部为空。 */
 export interface ProjectView {
+  /** 这份视图只是占位，projects 为空不代表主题都没了；目前只有中心停用时的 DisabledHub 会带上它。 */
+  rosterUnavailable?: true;
   asOf: number;
   projects: ProjectViewRow[];
   counts: {
@@ -246,6 +292,8 @@ export interface WakeLedgerRow {
   openedAt: number; openedText: string; sealedAt: number | null; sealedText: string | null;
   steps: number; tokens: number; actionCount: number; evidenceCount: number;
   truncated: boolean; hasMissing: boolean; missingLabels: string[];
+  /** P62/P63 办公室动线要用：这一回合属于哪个项目、在做哪件事（主题名或事务名）；不属于项目时为 null。 */
+  projectName: string | null; itemTitle: string | null;
 }
 export interface WakeLedgerEvidenceView {
   kind: LedgerEvidenceKind; kindLabel: string; refId: string; summary: string;
@@ -285,7 +333,8 @@ export interface BotView {
     modelText: string; homeDir: string; sessionId: string | null; createdAt: number; createdText: string;
     probationAt: number | null; probationText: string | null; workDataAllowed: boolean;
     /** P40：主人勾选的预置 skill id；界面用设置视图里的清单翻译成人话。 */
-    presetSkillIds: string[] };
+    presetSkillIds: string[]; dshSkillNames: string[];
+    temperament: Temperament | null; speechStyle: SpeechStyle | null; brief: string; onDemand: boolean };
   aspirations: Array<{ id: string; text: string; status: string }>;
   goals: Array<{ id: string; title: string; doneWhen: string; period: string; periodAt: number | null; periodText: string;
     status: Goal['status']; statusLabel: string; lastProgressAt: number; lastProgressText: string; createdBy: 'owner' | 'bot'; checkText?: string }>;
@@ -301,6 +350,8 @@ export interface BotView {
 }
 export interface InboxItemView {
   id: string; botId: string | null; botName: string | null; botColor: string | null; type: InboxItem['type']; typeLabel: string;
+  /** P65：这件事来自哪个项目主题（主题 id 就是线程 id）和主题名；不来自主题或主题已删除时为空。 */
+  topicId: string | null; topicTitle: string | null;
   /** 仅审批卡为实际批准票 id；调用 decideApproval 使用它，不能误传收件箱 id。 */
   approvalId: string | null;
   goalId?: string | null;
@@ -314,8 +365,10 @@ export interface ActivityRow {
 }
 export interface ActivityView { rows: ActivityRow[]; hasMore: boolean }
 export interface SettingsView { settings: Settings; pushChannelOptions: string[]; modelOptions: Array<{ value: ModelChoice; label: string }>;
-  /** P40：内置预置 skill 的只读候选清单（名称、用途、加载条件），供向导与档案页勾选。 */
-  presetSkillOptions: PresetSkillOption[] }
+  /** 内置预置 skill 的只读候选清单（名称和用途），供向导与档案页勾选。 */
+  presetSkillOptions: PresetSkillOption[];
+  /** P55：DSH 里可选的技能；读不到目录时是空数组。 */
+  dshSkillOptions: DshSkillOption[] }
 /**
  * P38 设置页「测试连接」结果：unconfigured 未配置；invalid 配置形状不合法（errors 逐项中文）；
  * unsupported 协议暂无适配；ok 连通；failed 适配返回的失败原因（连不上、鉴权失败等）。
@@ -377,6 +430,8 @@ export interface UiApi {
   assignTask(input: unknown): Promise<CommandResult<ProjectTask>>;
   /** 主人点名派活/催办/改派：必须带项目与任务、队友 id，可带留言；复用议程与 owner_message 候选。 */
   dispatchTask(input: unknown): Promise<CommandResult<ProjectTask>>;
+  /** P63：在项目里开一个主题，text 就是第一句话；消息发给负责人或被 @ 的队友。之后发消息用 sendMessage(topicId, text)，读楼层用 thread(topicId)。 */
+  createProjectTopic(input: unknown): Promise<CommandResult<{ topicId: string }>>;
   taskBlock(id: string): Promise<CommandResult<ProjectTask>>;
   taskResume(id: string): Promise<CommandResult<ProjectTask>>;
   reportDone(id: string): Promise<CommandResult<ProjectTask>>;

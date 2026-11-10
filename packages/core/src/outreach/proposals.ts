@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import type { HubContext } from '../engine/context.js';
 import { parseInput } from '../engine/validation.js';
-import { nonempty, ratio } from '../model/primitives.js';
+import { nonempty, ratio, recordId } from '../model/primitives.js';
 import type { InboxItem } from '../model/outreach.js';
 import { localParts, startOfLocalDay } from '../util/time.js';
 import { createInboxItem, retireProposalRecord } from './inbox.js';
@@ -11,7 +11,11 @@ import { readAuditDetail, writeOutreachAudit } from './audit.js';
 import { proposalAnswer } from './inbox-options.js';
 import { botMbti } from '../personality/profile.js';
 import { personalityBehavior } from '../personality/behavior.js';
-const ProposalSchema = z.strictObject({ title: nonempty, detail: nonempty, value: ratio, confidence: ratio, refId: nonempty.nullable().optional(), subjectKey: nonempty.optional() });
+import { topicIdOfOpenWake } from '../project/topics.js';
+const ProposalSchema = z.strictObject({ title: nonempty, detail: nonempty, value: ratio, confidence: ratio, refId: nonempty.nullable().optional(), subjectKey: nonempty.optional(),
+    // P65：这条建议是在哪个项目主题里提的。交账带来的建议由调用方按本回合明确给出（null 表示不属于主题）；
+    // 不传时（工具里提的建议）按这个队友正在进行的主题回合算。
+    topicId: recordId('ptp').nullable().optional() });
 export type ProposalInput = z.infer<typeof ProposalSchema>;
 /** 按价值、置信度、周限额和拒绝冷却决定提议入箱或进点子池，避免重复打扰主人。 */
 export async function submitProposal(ctx: HubContext, botId: string, input: ProposalInput): Promise<InboxItem | null> {
@@ -43,8 +47,11 @@ export async function submitProposal(ctx: HubContext, botId: string, input: Prop
     const minValue = behavior?.proposalMinValue ?? ctx.settings.proposalMinValue;
     const minConfidence = behavior?.proposalMinConfidence ?? ctx.settings.proposalMinConfidence;
     const admitted = !limited && value.value >= minValue && value.confidence >= minConfidence;
+    // P65：记下来源主题，主人接受或不做之后，接着做的那一回合回到这个主题。
+    const topicId = value.topicId !== undefined ? value.topicId : topicIdOfOpenWake(ctx, botId);
     const item = createInboxItem(ctx, { botId, type: 'proposal', title: value.title, body: value.detail, options: ['接受', '不做'], defaultOption: null,
-        priority: 'P2', refId: value.refId ?? null, subjectKey: value.subjectKey ?? `proposal:${botId}:${value.title}`, status: admitted ? 'open' : 'closed', answer: admitted ? null : 'idea_pool' });
+        priority: 'P2', refId: value.refId ?? null, subjectKey: value.subjectKey ?? `proposal:${botId}:${value.title}`, status: admitted ? 'open' : 'closed', answer: admitted ? null : 'idea_pool',
+        ...(topicId ? { topicId } : {}) });
     writeOutreachAudit(ctx, 'proposal_submitted', { id: item.id, value: value.value, confidence: value.confidence,
         admitted, limited, mbti, minValue, minConfidence }, botId);
     if (!admitted)

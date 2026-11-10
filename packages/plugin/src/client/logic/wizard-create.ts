@@ -1,16 +1,12 @@
 /**
- * 「新建队友」向导的提交流程：createBot → 补存头像色 →（可选）第一件事放进项目待领
- * → 刷新总览/项目。
+ * 「新建队友」的提交流程：createBot →（模板带头像色时）补存头像色 → 刷新总览。
  * 放在 logic 层而不是 HubPage：这些都是对 hub 命令的顺序编排，不含 React 状态，
  * hub 以最小接口注入，同样输入得到同样的调用序列，便于对形状断言。
  *
- * 关键取舍：颜色保存失败只记日志、不挡创建（core 已按角色给默认色）；
- * 第一件事保存失败也不挡创建——队友已经建成是事实，只把中文原因作为 warning
- * 交回界面提示，让主人可以稍后到项目页重试。只有创建本身失败才返回 { error }。
- * 编制取消后没有「入座」这一步：队友建成即出现在办公室里。
+ * 关键取舍：颜色保存失败只记日志、不挡创建（core 已按执行风格给默认色）。
+ * 只有创建本身失败才返回 { error }。队友建成即出现在办公室里。
  *
- * 文件后半段是模板库的批量添加（P52）：按选择顺序逐个走上面这套流程，
- * 再把对外角色的红线写进它自己的规矩。
+ * 文件后半段是模板库的批量添加（P52）：按选择顺序逐个走上面这套流程。
  */
 import type { BotCard, CommandResult } from '../../shared/views.js'
 import { buildTemplateInput, freeTemplateName, type BotTemplate } from './bot-templates.js'
@@ -19,17 +15,9 @@ import { buildTemplateInput, freeTemplateName, type BotTemplate } from './bot-te
 export interface WizardCreateHub {
   command: (name: string, input: Record<string, unknown>) => Promise<CommandResult>
   refreshOverview: () => Promise<unknown> | unknown
-  /** 有第一件事时刷新项目视图；不传则跳过（旧调用路径保持不变）。 */
-  refreshProject?: () => Promise<unknown> | unknown
 }
 
-/** 可选的第一件事：放进项目待领，不指派（任务由 core 建成 todo）。 */
-export interface FirstProjectTask {
-  projectId: string
-  title: string
-}
-
-/** 向导创建结果：带着新队友 id 成功（可能附带不挡创建的 warning），或创建失败。 */
+/** 创建结果：带着新队友 id 成功，或创建失败。 */
 export type WizardCreateResult = { botId: string; warning?: string } | { error: string }
 
 /** 从成功的命令结果里取新队友 id；core 没给 id 属于契约破坏，按创建失败如实说明。 */
@@ -38,40 +26,28 @@ function createdBotId(result: Extract<CommandResult, { ok: true }>): string | un
 }
 
 /**
- * 建队友并存头像色（以及可选的第一件事）：
- * 1. createBot 失败 → 直接把中文原因交回向导；
- * 2. updateBot 存色板失败 → 只记错误日志（不影响队友已建成的事实）；
- * 3. saveTask 失败 → 只返回 warning（同上，不把已建好的队友丢掉）；
- * 4. 成功后主动刷总览；放了第一件事的再刷项目，保证主人立刻看到落项。
+ * 建队友：
+ * 1. createBot 失败 → 直接把中文原因交回表单；
+ * 2. 模板带头像色时存一下，失败只记错误日志（不影响队友已建成的事实）；
+ * 3. 成功后主动刷总览，保证主人立刻看到新队友。
  */
 export async function createTeammate(
   hub: WizardCreateHub,
   input: Record<string, unknown>,
-  color: string,
-  firstTask?: FirstProjectTask,
+  color?: string,
 ): Promise<WizardCreateResult> {
   const created = await hub.command('createBot', input)
   if (!created.ok) return { error: created.error }
   const botId = createdBotId(created)
   if (botId === undefined) return { error: '创建成功但没有返回机器人 id' }
 
-  const colored = await hub.command('updateBot', { botId, patch: { color } })
-  if (!colored.ok) console.error('[agent-hub] 保存头像颜色失败:', colored.error)
-
-  let warning: string | undefined
-  if (firstTask !== undefined) {
-    // 不指派给新队友：任务是「待领」，谁领走谁负责（P35 的口径）。
-    const saved = await hub.command('saveTask', { projectId: firstTask.projectId, title: firstTask.title })
-    if (!saved.ok) {
-      console.error('[agent-hub] 第一件事放进项目待领失败:', saved.error)
-      warning = `队友已建好，但「${firstTask.title}」没能放进项目待领：${saved.error}`
-    } else {
-      await hub.refreshProject?.()
-    }
+  if (color !== undefined) {
+    const colored = await hub.command('updateBot', { botId, patch: { color } })
+    if (!colored.ok) console.error('[agent-hub] 保存头像颜色失败:', colored.error)
   }
 
   await hub.refreshOverview()
-  return warning === undefined ? { botId } : { botId, warning }
+  return { botId }
 }
 
 // ---------- 模板库批量添加（P52） ----------
@@ -108,11 +84,6 @@ export async function addTeammatesFromTemplates(
       if ('error' in created) { result.failed.push({ name, error: created.error }); continue }
       taken.push(name)
       result.added.push({ botId: created.botId, name })
-      // 红线存不上不算添加失败：对外动作本来就要审批，这里只提醒主人补上。
-      for (const text of template.redLines ?? []) {
-        const saved = await hub.command('upsertRule', { scope: created.botId, text, redLine: true })
-        if (!saved.ok) result.warnings.push(`「${name}」的红线没存上：${saved.error}`)
-      }
     } catch (error) {
       console.error('[agent-hub] 从模板添加队友失败:', error)
       result.failed.push({ name, error: errorText(error) })

@@ -13,7 +13,8 @@
 import type {
   Project, ProjectContext, ProjectContextProposal, ProjectContextProposalView, ProjectContextRevision,
   ProjectContextRevisionView, ProjectCriterionView, ProjectIssueView, ProjectMemberView, ProjectTask,
-  ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView, ProjectView, ProjectViewRow, TaskStatus,
+  ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView, ProjectTopicView, ProjectView, ProjectViewRow, Role, TaskStatus,
+  ThreadMessageView, ThreadView,
 } from './views.js'
 
 /** 样例基准时刻：与样例办公室/资料一致（2026-11-06 14:20 UTC），避免每次刷新漂移。 */
@@ -26,6 +27,13 @@ const BOT_NAME: Readonly<Record<string, string>> = {
   'bot-tanlu': '探路',
   'bot-xunjian': '巡检员',
   'bot-zongguan': '总管',
+}
+
+/** 样例队友的执行风格：和 fixtures.ts 里的队友卡一致，项目页要显示。 */
+const BOT_ROLE: Readonly<Record<string, { role: Role; roleLabel: string }>> = {
+  'bot-tanlu': { role: 'researcher', roleLabel: '调研' },
+  'bot-xunjian': { role: 'sentinel', roleLabel: '盯守' },
+  'bot-zongguan': { role: 'chief', roleLabel: '总管' },
 }
 
 /** 项目状态中文标签（手工对齐 core PROJECT_STATUS_LABELS）。 */
@@ -175,9 +183,80 @@ function wake(input: {
 }
 
 /** 成员队友展开行：有效队友给名字；失效队友（已删除/退役）name 为 null 并标 invalid。 */
-function member(botId: string): ProjectMemberView {
+function member(botId: string, isOwner = false): ProjectMemberView {
   const name = BOT_NAME[botId] ?? null
-  return { botId, name, invalid: name === null }
+  const style = BOT_ROLE[botId] ?? null
+  return { botId, name, invalid: name === null, role: style?.role ?? null, roleLabel: style?.roleLabel ?? null, isOwner }
+}
+
+/** P60/P63 新项目页用的三块：背景、路径、主题。背景有内容的样例写明谁更新的，空的项目不编造。 */
+function pageOf(p: Project, topics: ProjectTopicView[] = []): Pick<ProjectViewRow, 'background' | 'path' | 'topics'> {
+  const hasText = p.context.background.trim() !== ''
+  return {
+    background: {
+      text: p.context.background,
+      updatedBy: hasText ? 'bot-tanlu' : null,
+      updatedByName: hasText ? '探路' : null,
+      updatedAt: hasText ? NOW - 2 * 60 * MIN : null,
+      updatedText: hasText ? '今天 12:20' : null,
+    },
+    path: { workspaceDir: p.sharedDir, sharedDir: p.sharedDir },
+    topics,
+  }
+}
+
+// ---------- P63 主题聊天的样例楼层 ----------
+
+/** 样例楼层的发言人：名字和头像色跟 fixtures.ts 的队友一致。 */
+const FLOOR_SENDER: Readonly<Record<string, { fromName: string; fromColor: string | null }>> = {
+  owner: { fromName: '主人', fromColor: null },
+  hub: { fromName: 'Agent 中心', fromColor: null },
+  'bot-tanlu': { fromName: '探路', fromColor: 'var(--dsw-alias-success)' },
+  'bot-xunjian': { fromName: '巡检员', fromColor: 'var(--dsw-alias-accent)' },
+  'bot-gone': { fromName: '已删除的队友', fromColor: null },
+}
+
+/** 造一层楼：样例只关心谁说的、说了什么、几点说的。 */
+function floor(thread: string, index: number, from: string, kind: ThreadMessageView['kind'], text: string, minutesAgo: number): ThreadMessageView {
+  const sender = FLOOR_SENDER[from]!
+  return { id: `${thread}_m${index}`, thread, from, ...sender, kind, text, createdAt: NOW - minutesAgo * MIN, timeText: `${minutesAgo} 分钟前`, card: null }
+}
+
+const TOPIC_PRICE = 'ptp_weekly_price'
+const TOPIC_SOURCES = 'ptp_weekly_sources'
+
+/** 两条样例主题：一条讨论还在进行，一条已经到上限等主人。 */
+export const fixtureTopicThreads: ThreadView[] = [
+  {
+    threadId: TOPIC_PRICE, title: '这周周报先把价格变化列出来', hasMore: false, oldestId: `${TOPIC_PRICE}_m1`,
+    messages: [
+      floor(TOPIC_PRICE, 1, 'owner', 'chat', '这周周报先把价格变化列出来\n五家都要有，抓不到的单独写一节。', 42),
+      floor(TOPIC_PRICE, 2, 'bot-tanlu', 'reply', '收到。价格这块我来抓。@巡检员 帮我看下两家需要登录的站点还能不能进。', 40),
+      floor(TOPIC_PRICE, 3, 'bot-xunjian', 'reply', '看了，A 站登录态过期了，B 站正常。我先把 A 站记成受阻。', 36),
+      floor(TOPIC_PRICE, 4, 'hub', 'system', '点名的 老周（现在不在岗）这次没有叫醒。', 35),
+      floor(TOPIC_PRICE, 5, 'bot-tanlu', 'reply', '好。A 站先用公开价格页，缺的部分周报里单独写「缺漏」。今天下午出初稿。', 30),
+    ],
+  },
+  {
+    threadId: TOPIC_SOURCES, title: '信源要不要加上公众号', hasMore: false, oldestId: `${TOPIC_SOURCES}_m1`,
+    messages: [
+      floor(TOPIC_SOURCES, 1, 'owner', 'chat', '信源要不要加上公众号？你们讨论一下给我结论。', 25),
+      floor(TOPIC_SOURCES, 2, 'bot-tanlu', 'reply', '我倾向加，竞品的促销大多先发公众号。@巡检员 抓取上有风险吗？', 24),
+      floor(TOPIC_SOURCES, 3, 'bot-xunjian', 'reply', '有风险，公众号没有稳定的公开入口，容易断。可以先手工收，一周看一次。', 22),
+      floor(TOPIC_SOURCES, 4, 'bot-gone', 'reply', '（这位队友已经不在了，历史发言还留着。）', 21),
+      floor(TOPIC_SOURCES, 5, 'bot-tanlu', 'report', '结论：先加两家核心竞品的公众号，手工收，一周一次；稳定了再考虑自动。', 20),
+      floor(TOPIC_SOURCES, 6, 'hub', 'system', '这轮讨论已到 8 次发言，等你下一句', 20),
+    ],
+  },
+]
+
+/** 主题列表的一行：预览取最后一条，未读数显式给，走查时能看到未读点。 */
+function topicRow(thread: ThreadView, unread: number): ProjectTopicView {
+  const last = thread.messages.at(-1)!
+  return {
+    id: thread.threadId, title: thread.title, lastMessageAt: last.createdAt, lastMessageText: last.timeText, unread,
+    lastMessagePreview: last.text.slice(0, 60), lastMessageFrom: last.fromName,
+  }
 }
 
 /** 产物结论中文标签（手工对齐 core ARTIFACT_VERDICT_LABELS）。 */
@@ -218,11 +297,15 @@ function taskRow(
   wakes: ProjectTaskWakeView[] = [],
   artifacts: ProjectTaskArtifactView[] = [],
   hints: string[] = [],
+  topicId: string | null = null,
 ): ProjectTaskView {
   const assigneeBotId = t.assigneeBotId
   const assigneeBotName = assigneeBotId === null ? null : BOT_NAME[assigneeBotId] ?? null
   return {
     task: t,
+    title: t.title,
+    assigneeName: assigneeBotName,
+    topicId,
     statusLabel: TASK_STATUS_LABEL[t.status],
     assigneeBotId,
     assigneeBotName,
@@ -381,13 +464,13 @@ const rowWeekly: ProjectViewRow = {
   ownerBotId: 'bot-tanlu',
   ownerName: '探路',
   ownerInvalid: false,
-  members: [member('bot-tanlu'), member('bot-xunjian'), member('bot-gone')],
+  members: [member('bot-tanlu', true), member('bot-xunjian'), member('bot-gone')],
   criteria: prjWeekly.acceptanceCriteria.map(criterionRow),
   // 与 core TASK_SORT_GROUP 一致：doing/blocked 在前，todo/待验收居中，已通过沉底。
   // pt_weekly_2 是进行中有承接人的任务，让催办/改派入口在样例里可见；
   // pt_weekly_4 指派给失效队友，两条派活入口都不出现。
   tasks: [
-    taskRow(tWeekly2, [wakeWk2]),
+    taskRow(tWeekly2, [wakeWk2], [], [], TOPIC_PRICE),
     taskRow(tWeekly4, [wakeRetired]),
     taskRow(tWeekly3),
     taskRow(tWeekly1),
@@ -400,6 +483,7 @@ const rowWeekly: ProjectViewRow = {
   issues: weeklyIssues,
   layers: layersOf(prjWeekly),
   ...contextOf(prjWeekly, { revisions: weeklyRevisionViews, proposals: [weeklyProposal] }),
+  ...pageOf(prjWeekly, [topicRow(fixtureTopicThreads[1]!, 2), topicRow(fixtureTopicThreads[0]!, 0)]),
 }
 
 // ---------- 项目二：进行中的空项目（没有负责人、成员、验收项与任务） ----------
@@ -428,6 +512,7 @@ const rowEmpty: ProjectViewRow = {
   layers: layersOf(prjEmpty),
   // 空项目保持空上下文：验证「四段全空即不显示卡片」。
   ...contextOf(prjEmpty),
+  ...pageOf(prjEmpty),
 }
 
 // ---------- 项目三：暂停项目（一个已通过任务，无问题） ----------
@@ -450,7 +535,7 @@ const rowMigrate: ProjectViewRow = {
   ownerBotId: 'bot-xunjian',
   ownerName: '巡检员',
   ownerInvalid: false,
-  members: [member('bot-xunjian')],
+  members: [member('bot-xunjian', true)],
   criteria: [],
   tasks: [taskRow(tMigrate1)],
   taskCounts: { todo: 0, doing: 0, blocked: 0, done_pending_check: 0, accepted: 1, rejected: 0, total: 1 },
@@ -458,6 +543,7 @@ const rowMigrate: ProjectViewRow = {
   issues: [],
   layers: layersOf(prjMigrate),
   ...contextOf(prjMigrate),
+  ...pageOf(prjMigrate),
 }
 
 // ---------- 项目四：已完成但还有任务没验收（core 会给 warning） ----------
@@ -494,6 +580,7 @@ const rowOnboard: ProjectViewRow = {
   ],
   layers: layersOf(prjOnboard),
   ...contextOf(prjOnboard),
+  ...pageOf(prjOnboard),
 }
 
 // ---------- 项目五：已归档项目（沉底、不报问题，任务只读陈列） ----------
@@ -526,6 +613,7 @@ const rowOld: ProjectViewRow = {
   issues: [],
   layers: layersOf(prjOld),
   ...contextOf(prjOld),
+  ...pageOf(prjOld),
 }
 
 /**

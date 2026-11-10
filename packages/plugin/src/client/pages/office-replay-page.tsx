@@ -224,7 +224,7 @@ export function OfficeReplayPage(props: Props): ReactNode {
       {crossedDay ? <p className="ah-replay-empty" role="status">所选时刻已不在今天；请返回现在查看今天的时间轴。</p> : historical ? pending && !error ? (
         <p className="ah-replay-empty" role="status">正在读取所选时刻的房间……</p>
       ) : error ? null : index?.room ? (
-        <OfficePage {...safeProps} office={index.room} loading={false} timezone={index.timezone} showWelcome={false} />
+        <OfficePage {...safeProps} office={index.room} loading={false} timezone={index.timezone} showWelcome={false} replaying />
       ) : (
         <p className="ah-replay-empty" role="status">{index?.missing ?? '这个时刻没有房间记录'}</p>
       ) : <OfficePage {...safeProps} timezone={index?.timezone} />}

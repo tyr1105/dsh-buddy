@@ -68,7 +68,7 @@ export function defineTool<T>(name: string, description: string, schema: z.ZodTy
                     throw new Error('机器人当前不在岗，不能修改事项');
                 if (wake && !readOnly && !['hub_commit', 'hub_reflect_commit'].includes(name) && (wake.commitId || !['running', 'delivering'].includes(wake.status)))
                     throw new Error('本轮已结束，不能在交账后继续修改事项');
-                const reflectionWrites = ['hub_agenda_upsert', 'hub_agenda_close', 'hub_watch_update', 'hub_watch_propose', 'hub_goal_upsert', 'hub_send', 'hub_handoff', 'hub_claim', 'hub_release', 'hub_task_update', 'hub_project_context_propose'];
+                const reflectionWrites = ['hub_agenda_upsert', 'hub_agenda_close', 'hub_watch_update', 'hub_watch_propose', 'hub_goal_upsert', 'hub_send', 'hub_handoff', 'hub_claim', 'hub_release', 'hub_task_update', 'hub_project_context_propose', 'hub_project_task_upsert', 'hub_project_background_update'];
                 if (wake?.variant === 'reflection' && reflectionWrites.includes(name))
                     throw new Error('反思回合只读；关注调整请写进 hub_reflect_commit，其他事项留到下一回合');
                 return await run(ctx, toolCtx, args);

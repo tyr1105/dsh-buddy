@@ -130,6 +130,7 @@ export const SettingsSchema = z.strictObject({
   turnLimitsByVariant: turnLimitsByVariantSchema, // 第 5 节思考回合上限：各变体与主人，单位：步、毫秒、token。
   closingGraceMs: positive, // 第 5 节收口：提醒后等待时间，单位：毫秒。
   wakePacketMaxBytes: integer, // 第 5 节唤醒包：最大正文，单位：字节。
+  topicAgentTurnsPerOwnerMessage: integer, // P63 主题聊天：主人每说一句后队友最多连续发言次数，单位：次。
   botAgentsMaxBytes: integer, // 第 5 节唤醒包：单个 AGENTS.md 上限，单位：字节。
   globalRulesMaxBytes: integer, // 第 5 节唤醒包：全体守则上限，单位：字节。
   memorySummaryMaxBytes: integer, // 第 5 节唤醒包：记忆摘要上限，单位：字节。

@@ -2,17 +2,15 @@
  * P52 岗位专属预置 skill - core 测试。
  * 这批内容只是 P40 机制上的新条目，所以这里主要钉住三件事：
  * - 内容质量的底线：id 能当文件夹名、不重复、界面文案不带内部黑话、都写明不提高权限；
- * - 走的还是 P40 的路：能被勾选、能物化到家目录、唤醒包只列名称不塞正文；
+ * - 走的还是 P40 的路：能被勾选、能物化到家目录，DSH 的目录只拿到名称和用途；
  * - 界面拿得到「岗位专属」这个分组标记，但拿不到正文。
  */
 import { describe, expect, it } from 'vitest';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { createBot, updateBot } from '../src/api/bots.js';
 import { settingsView } from '../src/api/feed-views.js';
-import { buildPresetSkillsSection } from '../src/wake/preset-skills.js';
 import { PRESET_SKILLS, presetSkillById, presetSkillOptions, renderPresetSkillFile } from '../src/config/preset-skills.js';
 import { ROLE_PRESET_SKILLS } from '../src/config/role-preset-skills.js';
-import { botFixture } from './model-fixtures.js';
 
 /** 文案审计定下的禁用词：这些词不能出现在主人看得到的名称和用途里。 */
 const JARGON = ['产物', '交账', '唤醒', '上下文', '治理', '投影', '额度保护', '套路'];
@@ -25,11 +23,8 @@ describe('P52 岗位专属技能的内容底线', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('都标成岗位专属、每次唤醒都列出，通用项不受影响', () => {
-    for (const skill of ROLE_PRESET_SKILLS) {
-      expect(skill.audience).toBe('role');
-      expect(skill.condition).toBe('every_wake');
-    }
+  it('都标成岗位专属，通用项不受影响', () => {
+    for (const skill of ROLE_PRESET_SKILLS) expect(skill.audience).toBe('role');
     expect(PRESET_SKILLS.slice(0, 4).map(skill => skill.id)).toEqual(['owner-brief', 'project-handoff', 'incident-triage', 'data-check']);
     expect(PRESET_SKILLS.slice(0, 4).every(skill => skill.audience === undefined)).toBe(true);
   });
@@ -49,7 +44,7 @@ describe('P52 岗位专属技能的内容底线', () => {
   });
 });
 
-describe('P52 沿用 P40 的物化与唤醒规则', () => {
+describe('P52 沿用 P40 的物化规则', () => {
   it('勾选后写进家目录，内容带中心标记（清理时靠它识别）', async () => {
     const ctx = createTestContext();
     const bot = await createBot(ctx, { name: '工程师', role: 'executor', persona: '做完就说', aspirations: ['按时做完'], presetSkillIds: ['build-self-check', 'review-checklist'] });
@@ -64,10 +59,12 @@ describe('P52 沿用 P40 的物化与唤醒规则', () => {
       .rejects.toThrow('预置 skill');
   });
 
-  it('唤醒包只列名称和用途，不塞正文', () => {
-    const section = buildPresetSkillsSection({ ...botFixture, presetSkillIds: ['acceptance-check'] }, { projectWork: false, triggerText: '', lightCheck: false })!;
-    expect(section.body).toContain('逐项验收');
-    expect(section.body).not.toContain('把验收项逐条列出来');
+  it('YAML 头只有名称和用途，正文只在模型真正加载时才读到', () => {
+    const file = renderPresetSkillFile(presetSkillById('acceptance-check')!);
+    const header = file.slice(0, file.indexOf('\n---\n'));
+    expect(header).toContain('逐项验收');
+    expect(header).not.toContain('把验收项逐条列出来');
+    expect(file).toContain('把验收项逐条列出来');
   });
 });
 

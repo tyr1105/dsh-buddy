@@ -22,6 +22,7 @@ import { buildBackfillEntry } from './backfill.js';
 import { capLedgerEntry } from './caps.js';
 import { buildOpenLedger, sealLedger, sealMissingWake } from './entry.js';
 import { snapshotEvidence, type EvidenceCandidate } from './evidence.js';
+import { botCanSeeTopic } from '../project/topics.js';
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -106,7 +107,8 @@ export function evidencePool(ctx: HubContext, botId: string): EvidenceCandidate[
     });
   }
   for (const message of ctx.store.log('thread').all()) {
-    if (message.thread !== botId && message.thread !== 'team') continue;
+    // P63：项目主题的楼层只有项目成员能引用；楼层是这次回合的证据，封存后要能查到说了什么。
+    if (message.thread !== botId && message.thread !== 'team' && !botCanSeeTopic(ctx, botId, message.thread)) continue;
     items.push({
       kind: 'thread', refId: message.id, summary: message.text, occurredAt: message.createdAt,
       trust: ['owner', 'hub'].includes(message.from) ? 'trusted' : 'untrusted',

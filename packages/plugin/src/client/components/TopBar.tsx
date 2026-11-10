@@ -1,37 +1,21 @@
 /**
- * 顶栏：当前位置、页面导航（动态 / 资料 / 项目）、额度灯、跳转、设置、新建队友。
+ * 顶栏：品牌和状态句、额度灯。
  *
- * P1-1（2026-11-09 评审）：办公室与「待你处理」的主入口在左栏，顶栏不再放同名同目的地的
- * 第二套按钮；原来中间的导航位改成「当前位置」面包屑——从主视图离开后仍能一眼看出在哪，
- * 也能点「队友」回去。顶栏只保留左栏不承担的页面入口。
+ * P61（主人 2026-11-10）：中间那条「队友 / 当前页 | 动态 | 项目」切换，所有页面都删掉了。
+ * 为什么删：左栏已经是唯一的主导航（队友、项目、办公室、待你处理、设置都在那里），
+ * 顶栏再放一套只会让人分不清该点哪个。回队友页走左栏，项目从左栏「工作区」进；
+ * 动态页不再有常驻入口，需要时从「跳转」面板（⌘K / Ctrl+K 快捷键）进。
+ *
+ * P61（主人 2026-11-10 再次要求）：顶栏右侧的「新建队友」和「跳转」两个按钮也删了。
+ * 为什么删：新建队友的入口留在左栏队友组的「＋」；跳转面板只靠 ⌘K / Ctrl+K 打开
+ * （快捷键监听在 HubPage 里，不在顶栏），顶栏不再需要任何回调，只负责显示状态。
  */
 import type { ReactNode } from 'react'
 import type { OverviewView } from '../../shared/views.js'
-import type { PageView } from '../hub-state.js'
 import { quotaMeaning } from '../logic/quota.js'
-
-/** 当前位置文案：与页面标题、跳转面板使用同一套叫法，不另起名字。 */
-const PAGE_TITLES: Record<Exclude<PageView, 'main'>, string> = {
-  office: '办公室',
-  inbox: '待你处理',
-  activity: '动态',
-  resource: '设置',
-  project: '项目',
-  settings: '设置',
-}
 
 export function TopBar(props: {
   overview: OverviewView
-  view: PageView
-  /** 打开资料授权矩阵页（V2-PH2-04）：顺序有测试与走查脚本断言。 */
-  /** 打开项目页（V2-PH4-02）：顺序有测试与走查脚本断言。 */
-  onOpenProject: () => void
-  onOpenActivity: () => void
-  /** 面包屑里的「队友」：只在非主视图时出现，点它回到主视图。 */
-  onBack: () => void
-  onNewBot: () => void
-  /** 打开跳转面板（WCAG 2.4.5）：单个入口，不占常驻布局。 */
-  onOpenPalette: () => void
 }): ReactNode {
   const o = props.overview
   // 额度灯不再显示「绿灯」：主人需要知道的是「还能不能让队友干活」，不是灯的颜色。
@@ -44,36 +28,12 @@ export function TopBar(props: {
   const statusLine = o.quietNow
     ? '免打扰开着。提醒先攒着，结束了一起给你。'
     : `${busyCount} 个队友在忙。${o.inbox.total} 件事卡在你这儿。`
-  // 面包屑：主视图只写「队友」；离开主视图后「队友」可点回主视图，右侧是当前页面名。
-  // 这里只做「我在哪」的表达，不放与左栏重复的办公室/待你处理入口。
   return (
     <header className="ah-topbar">
       <div className="ah-topbar-title">
         <span className="ah-brand-mark" aria-hidden="true">B</span>
         <div><h1>DSH Buddy</h1><span className="ah-topbar-now">{statusLine}</span></div>
       </div>
-      <nav className="ah-topbar-nav" aria-label="页面导航">
-        {props.view === 'main' ? (
-          <span className="ah-topbar-here" aria-current="page">队友</span>
-        ) : props.view === 'settings' || props.view === 'resource' ? (
-          // 设置是全局配置，不显示「队友 /」路径。
-          <span className="ah-topbar-here" aria-current="page">设置</span>
-        ) : (
-          <>
-            <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onBack}>队友</button>
-            <span className="ah-topbar-sep" aria-hidden="true">/</span>
-            <span className="ah-topbar-here" aria-current="page">{PAGE_TITLES[props.view]}</span>
-          </>
-        )}
-        {/* 设置页只管全局配置，不放「动态」「项目」这些工作入口；要离开时走左侧导航。 */}
-        {props.view === 'settings' || props.view === 'resource' ? null : (
-          <>
-            <span className="ah-topbar-divider" role="presentation" />
-            <button type="button" className="ah-btn ah-btn-ghost" aria-current={props.view === 'activity' ? 'page' : undefined} onClick={props.onOpenActivity}>动态</button>
-            <button type="button" className="ah-btn ah-btn-ghost" aria-current={props.view === 'project' ? 'page' : undefined} onClick={props.onOpenProject}>项目</button>
-          </>
-        )}
-      </nav>
       <div className="ah-topbar-status">
         <span
           title={`${o.nowText} · ${quota.hint} · ${o.quota.usedText}`}
@@ -85,15 +45,6 @@ export function TopBar(props: {
               「还能不能让队友干活」的状态信号不能在小窗口整条消失。 */}
           <span className="ah-quota-text">{quota.label} · {o.quota.usedText}</span>
         </span>
-        <button
-          type="button"
-          className="ah-btn ah-btn-ghost"
-          aria-haspopup="dialog"
-          aria-keyshortcuts="Meta+K Control+K"
-          title="跳转（⌘K 或 Ctrl+K）"
-          onClick={props.onOpenPalette}
-        >跳转</button>
-        <button type="button" className="ah-btn ah-btn-primary" onClick={props.onNewBot}>新建队友</button>
       </div>
     </header>
   )

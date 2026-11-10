@@ -58,7 +58,7 @@ export function CompactRail(props: CompactRailProps): ReactNode {
           key={project.projectId}
           type="button"
           className={`ah-rail-btn${project.active ? ' ah-selected' : ''}`}
-          title={`${project.name} · ${project.sessionCount} 条会话`}
+          title={`${project.name} · ${project.topicCount} 条会话`}
           aria-label={`项目：${project.name}`}
           onClick={() => props.onOpenProject(project.projectId)}
         >

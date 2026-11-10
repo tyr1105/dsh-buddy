@@ -24,6 +24,8 @@ export interface HubContext {
   ownerHome?: string;
   /** 可选宿主模型目录，供设置视图和机器人编辑共用。 */
   listModels?: ListModels;
+  /** P55：宿主提供的 DSH 技能目录；没有时选择界面就没有 DSH 这一组。 */
+  listSkills?: () => Promise<Array<{ name: string; description: string }>>;
   /**
    * P38 公共知识库协议适配（I15 未确认前生产环境为空数组）。
    * 由宿主按设置里的 protocol 名注入；core 只定义 transport 接口，不假设任何厂商。

@@ -6,7 +6,7 @@ import { bool, byteText, nonempty, recordId, text, timestamp } from './primitive
 /** 校验对话线程消息，保留发送者、来源记录和已读时间。 */
 export const ThreadMessageSchema = z.strictObject({
   id: recordId('m'), // 记录的唯一标识；前缀区分记录类型
-  thread: nonempty, // 机器人 id 或 team，决定消息所在的对话线程
+  thread: nonempty, // 机器人 id、team 或项目主题 id（ptp_ 开头），决定消息所在的对话线程
   from: nonempty, // 发送者：owner、hub 或机器人 id
   kind: e.ThreadKindSchema, // 聊天、回复、汇报、提问、审批、提议、告警、日报、交接、同伴或系统消息
   text, // 正文
@@ -33,6 +33,9 @@ export const InboxItemSchema = z.strictObject({
   createdAt: timestamp, // 创建时间（Unix 毫秒）
   expiresAt: timestamp.nullable(), // 到期时间；无到期约束时可为空
   answeredAt: timestamp.nullable(), // 主人回答的时间
+  // P65：这件事是在哪个项目主题的回合里提出的；主人处理后，队友接着做的那一回合回到这个主题。
+  // 旧记录和不在主题里提出的事项没有这一项，一律按「不属于主题」处理，照旧落私聊。
+  topicId: recordId('ptp').nullable().optional(),
 });
 export type InboxItem = z.infer<typeof InboxItemSchema>;
 /** 校验审批内容与一次性票据状态，防止不同参数误用批准。 */
@@ -51,6 +54,9 @@ export const ApprovalSchema = z.strictObject({
   decidedAt: timestamp.nullable(), // 主人批准或拒绝的时间
   expiresAt: timestamp, // 到期时间；无到期约束时可为空
   usedAt: timestamp.nullable(), // 一次性批准票被消费的时间
+  // P65：申请审批时队友正在哪个项目主题的回合里；主人批准或拒绝后，接着做的那一回合回到这个主题。
+  // 旧审批单没有这一项，按「不属于主题」处理。
+  topicId: recordId('ptp').nullable().optional(),
 });
 export type Approval = z.infer<typeof ApprovalSchema>;
 /** 校验中心代执行动作的状态，保留审批和执行结果的关联。 */

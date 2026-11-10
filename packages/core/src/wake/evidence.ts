@@ -1,6 +1,7 @@
 /** 唤醒证据还原可读事实；中心生成的来源、时间和记录类型可信，外部引文单独保留信任标记。 */
 import type { HubContext } from '../engine/context.js';
 import { formatShort, formatDuration } from '../util/time.js';
+import { botCanSeeTopic } from '../project/topics.js';
 export interface PacketEvidence {
     text: string;
     untrusted: boolean;
@@ -26,11 +27,14 @@ export function packetEvidence(ctx: HubContext, botId: string, id: string, now: 
             : { text: `${percept.source}：${summary}（${when(percept.createdAt)}）`, untrusted: false };
     }
     const message = ctx.store.log('thread').all().find(m => m.id === id);
-    if (message && (message.thread === botId || message.thread === 'team')) {
+    // P63：项目主题的楼层只给项目成员看；楼层全文已在主题段，这里只放短摘要，不占两份预算。
+    const topicMessage = message !== undefined && botCanSeeTopic(ctx, botId, message.thread);
+    if (message && (message.thread === botId || message.thread === 'team' || topicMessage)) {
         const untrusted = !['owner', 'hub'].includes(message.from);
+        const shown = excerpt(message.text, topicMessage ? ctx.settings.c03.packetPerceptChars : undefined);
         return untrusted
-            ? { text: '线程：', quote: excerpt(message.text), suffix: `（${when(message.createdAt)}）`, untrusted, original: message.text }
-            : { text: `线程：${excerpt(message.text)}（${when(message.createdAt)}）`, untrusted };
+            ? { text: '线程：', quote: shown, suffix: `（${when(message.createdAt)}）`, untrusted, original: message.text }
+            : { text: `线程：${shown}（${when(message.createdAt)}）`, untrusted };
     }
     const agenda = ctx.store.table('agenda').get(id);
     if (agenda?.botId === botId) {

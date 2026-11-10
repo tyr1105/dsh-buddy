@@ -23,12 +23,14 @@ export function collectTimeCandidates(ctx: HubContext, now: number): Candidate[]
         summary: `议程「${item.title}」${due ? '已到期' : '将在一小时内到期'}`,
         evidence: [item.id], agendaId: item.id, toOwner: item.toOwner && due, now }));
     }
-    if (bot.nextThinkAt !== null && bot.nextThinkAt <= now) {
+    // P55：听吩咐的队友只有手上还有活时，自己约的下次思考才生效；定期轻复查一律不做。
+    const noOpenWork = bot.onDemand && !agenda.some(item => item.botId === bot.id);
+    if (bot.nextThinkAt !== null && bot.nextThinkAt <= now && !noOpenWork) {
       add(buildCandidate(ctx, { botId: bot.id, kind: 'next_think', score: ctx.settings.c02.nextThinkScore,
         subjectKey: `next_think:${bot.id}:${bot.nextThinkAt}`,
         summary: `已到机器人约定的下次思考时间：${bot.nextThinkReason ?? '继续检查进展'}`, now }));
     }
-    if (bot.lightCheckAt !== null && bot.lightCheckAt <= now) {
+    if (bot.lightCheckAt !== null && bot.lightCheckAt <= now && !bot.onDemand) {
       add(buildCandidate(ctx, { botId: bot.id, kind: 'light_check', variant: 'light_check',
         subjectKey: `light_check:${bot.id}:${bot.lightCheckAt}`,
         score: ctx.settings.c02.lightCheckScore, summary: '距上次思考已到最长间隔，做一次轻复查',

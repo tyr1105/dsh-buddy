@@ -25,8 +25,10 @@ export function ActivityPane(props: {
   error: string | null
   onRetry: () => void
   onLoadMore: () => void
+  /** 从别的页面点某位队友的唤醒记录进来时，替主人先筛好这位队友（P64）；普通进入不传。 */
+  initialBotId?: string | null
 }): ReactNode {
-  const [botId, setBotId] = useState('')
+  const [botId, setBotId] = useState(props.initialBotId ?? '')
   const [kind, setKind] = useState<ActivityRow['kind'] | ''>('')
   // U01 第 32 轮（3.2.3/3.2.4）：①首屏加载失败时页内给一句原因加「重试」按钮——
   // 旧版只有「刷新试试」一句话，筛选条在本态不渲染，键盘和鼠标都没有出口；

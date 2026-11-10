@@ -16,7 +16,7 @@ export function TeamTree(props: {
   bots: readonly BotCard[]
   /** 项目视图还没加载时为 null：只画队友、不画项目行，不假装没有项目。 */
   projects: readonly ProjectViewRow[] | null
-  /** 当前打开的队友（主页或线程）；团队全景与别的页面不传。 */
+  /** 当前打开的队友（对话线程）；团队全景与别的页面不传。 */
   selectedBotId: string | null
   onSelectBot: (botId: string) => void
   /** 点项目子行时打开项目页；不传则项目行只读展示。 */

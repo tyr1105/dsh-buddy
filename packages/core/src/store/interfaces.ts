@@ -3,7 +3,7 @@ import type {
   ArtifactHead, ArtifactVersion, ArtifactReview, ArtifactBatch, OfficeFrame,
   Bot, BotProfile, Aspiration, Goal, AgendaItem, Watch, Percept, DriveState, QueueEntry,
   WakeTicket, WakeLedgerEntry, ResultCheck, V2Config, Resource, Grant,
-  Project, ProjectTask, ProjectContextProposal, Commit, InboxItem,
+  Project, ProjectTask, ProjectTopic, ProjectContextProposal, Commit, InboxItem,
   Approval, OutboxAction, Routine, Mail, Handoff, Claim, Rule, QuotaState, Alert, Downtime,
   Settings, ThreadMessage, AppraisalLog, LedgerEntry, AuditEntry,
 } from '../model/index.js';
@@ -35,6 +35,8 @@ export interface TableTypes {
   // v2 第四期：项目容器两表；项目软归档不删任务，不做自动清理（见 v2 计划 4.6）。
   projects: Project;
   projectTasks: ProjectTask;
+  // P63：项目主题；楼层在线程日志里，这张表只存「讨论走到哪了」，旧存档没有这张表时按空表读取。
+  projectTopics: ProjectTopic;
   // P39：队友提交的上下文修改建议；只增不删，采纳/驳回后保留决策记录。
   projectContextProposals: ProjectContextProposal;
   commits: Commit;
@@ -65,7 +67,7 @@ export const TABLE_NAMES = [
   'artifactHeads', 'artifactVersions', 'artifactReviews', 'artifactBatches',
   'bots', 'botProfiles', 'aspirations', 'goals', 'agenda', 'watches', 'percepts', 'drives',
   'queue', 'wakes', 'wakeLedger', 'resultChecks', 'v2Config', 'resources', 'grants',
-  'projects', 'projectTasks',
+  'projects', 'projectTasks', 'projectTopics',
   'projectContextProposals',
   'commits', 'inbox', 'approvals', 'outbox', 'routines',
   'mail', 'handoffs', 'claims', 'rules', 'quota', 'alerts', 'downtime', 'settings',

@@ -7,7 +7,7 @@ import { bool, count, nonempty, positive, ratio, recordId, text, timestamp, Mode
 export const BotSchema = z.strictObject({
   id: recordId('b'), // 机器人 id，前缀 b_
   name: nonempty.max(20, '名字不能超过 20 字'), // 给主人显示的名称
-  role: e.RoleSchema, // 团队分工：总管、调研、执行或盯守
+  role: e.RoleSchema, // 执行风格：总管、调研、执行、盯守或建议
   persona: text.max(300, '性格说明不能超过 300 字'), // 性格与说话风格，最多 300 字，写入机器人身份文件
   color: nonempty, // 头像底色
   lifecycle: e.LifecycleSchema, // 草稿、试岗、在岗、暂停、隔离或退役状态
@@ -40,6 +40,12 @@ export const BotSchema = z.strictObject({
   quotaRest: z.strictObject({ activity: z.enum(['watching', 'queued']), activityText: text }).nullable().optional(), // 额度休息前的展示状态
   workDataAllowed: bool.default(false), // 是否允许接触工作数据，默认关闭
   presetSkillIds: z.array(nonempty).default([]), // P40 主人勾选的预置 skill id；空数组即未启用，行为与过去完全一致
+  // P55 配置精简：以下字段旧档案都没有，读取时按默认值补齐，老队友行为不变。
+  dshSkillNames: z.array(nonempty).default([]), // 主人从 DSH 技能目录里选的技能名
+  temperament: e.TemperamentSchema.nullable().default(null), // 性格选择题；旧档案为空，身份文件沿用 persona 原文
+  speechStyle: e.SpeechStyleSchema.nullable().default(null), // 说话风格选择题
+  brief: text.max(1000, '员工说明不能超过 1000 字').default(''), // 员工说明：主人对这位队友的其他要求都写在这里
+  onDemand: bool.default(false), // 听吩咐：只在被点名或派活时行动，见 scheduler/on-demand.ts
   // P48 归档：只在退役后可写；旧档案没有这个字段时按「未归档」读取，零迁移。
   archivedAt: timestamp.nullable().optional(),
   updatedAt: timestamp, // 最近修改时间（Unix 毫秒）

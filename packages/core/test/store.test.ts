@@ -187,7 +187,7 @@ describe('FileStore 持久化与恢复', () => {
   it('跳过无 id 与非对象，保留具有 id 的旧版本记录', async () => {
     const { store, fs } = setup('file');
     await fs.writeTextAtomic(`${ROOT}/.hub/state/bots.json`, JSON.stringify([null, 1, [], {}, { id: '' }, { id: 'legacy' }]));
-    await store.load(); expect(store.table('bots').list()).toEqual([{ id: 'legacy', presetSkillIds: [] }]);
+    await store.load(); expect(store.table('bots').list()).toEqual([{ id: 'legacy', presetSkillIds: [], dshSkillNames: [], temperament: null, speechStyle: null, brief: '', onDemand: false }]);
   });
   it('不能 load 覆盖未落盘更改', async () => {
     const { store } = setup('file'); store.table('rules').put(rule());

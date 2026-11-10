@@ -32,8 +32,8 @@ export interface CommandActionItem {
 export type CommandItem = CommandViewItem | CommandActionItem
 
 /**
- * 七个一级视图，顺序与顶栏导航一致。
- * 文案必须与 TopBar 的按钮逐字相同，静态契约测试会逐项核对，防止面板里出现同义词。
+ * 七个一级视图。顶栏的页面切换已删除（P61），动态页的常驻入口只剩这里。
+ * 顺序和文案由静态契约测试固定，防止面板里出现和左栏不一样的叫法。
  */
 export const COMMAND_VIEWS: ReadonlyArray<CommandViewItem> = [
   { kind: 'view', id: 'main', label: '队友', keywords: ['首页', '线程', '私聊'] },

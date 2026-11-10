@@ -30,7 +30,7 @@ export function botCard(ctx: HubContext, bot: Bot): BotCard {
   const activityText = bot.activity === 'resting' && bot.activityText.startsWith('额度保护，')
     && ['active', 'probation'].includes(bot.lifecycle) && quota.light === 'red'
     ? quotaProtectionText(quota, ctx.clock.now(), ctx.settings.timezone) : ownerActivityText(ctx, bot);
-  const nextThinkText = when ? `${when}${bot.nextThinkBy === 'bot' ? `（它自己定的：${bot.nextThinkReason ?? '跟进变化'}）` : ''}`
+  const nextThinkText = bot.onDemand ? '等你点名或派活' : when ? `${when}${bot.nextThinkBy === 'bot' ? `（它自己定的：${bot.nextThinkReason ?? '跟进变化'}）` : ''}`
     : `有变化时${fallback ? `，最晚${fallback}` : ''}`;
   return { id: bot.id, name: bot.name, role: bot.role, roleLabel: ROLE_LABELS[bot.role], color: bot.color,
     archived: bot.archivedAt != null,

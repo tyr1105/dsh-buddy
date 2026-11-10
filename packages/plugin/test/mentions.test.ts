@@ -41,7 +41,7 @@ function row(members: ProjectMemberView[]): ProjectViewRow {
   return { members } as unknown as ProjectViewRow
 }
 
-const member = (botId: string, invalid = false): ProjectMemberView => ({ botId, name: invalid ? null : botId, invalid })
+const member = (botId: string, invalid = false): ProjectMemberView => ({ botId, name: invalid ? null : botId, invalid, role: null, roleLabel: null, isOwner: false })
 
 describe('mentionMembers：项目成员 ∩ 在册队友', () => {
   it('正例：按项目成员顺序列出有效队友', () => {

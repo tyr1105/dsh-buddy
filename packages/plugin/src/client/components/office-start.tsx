@@ -20,7 +20,7 @@ export function FirstTeammate(props: { onNewBot?: () => void }): ReactNode {
           try { setError(null); props.onNewBot?.() } catch { setError('新建向导打开失败。请重试。') }
         }}>新建队友</button>
       ) : null}
-      <p className="ah-office-start-note">创建后先试跑。之后可点名字对话，点桌上结果查看账本。</p>
+      <p className="ah-office-start-note">创建后先试跑。之后可点名字对话。</p>
       {error ? <p role="alert">{error}</p> : null}
     </section>
   )

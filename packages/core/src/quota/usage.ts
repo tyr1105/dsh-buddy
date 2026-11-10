@@ -43,8 +43,12 @@ export function recordUsage(ctx: HubContext, input: UsageInput): LedgerEntry {
   const existed = ctx.store.table('quota').get('quota');
   const rolled = existed ? rollWindow(ctx, now) : null;
   const state = !rolled || rolled.windowPending ? beginQuotaWindow(ctx, firstWindowStart(ctx, now)) : rolled;
-  state.botTurns += 1;
-  state.botTokens += entry.tokens;
+  // P63：主题回合只记账本（成本表能看到），不占窗口的自我保护上限：窗口上限连私聊都算，
+  // 到顶全队暂停，一次讨论就能用光。单次成本靠发言上限兜住，服务商真报额度错误时仍会亮红灯。
+  if (!wake?.topicId) {
+    state.botTurns += 1;
+    state.botTokens += entry.tokens;
+  }
   const previousLight = state.light;
   state.light = computeLight(state, ctx.settings);
   if (state.light === 'red' && previousLight !== 'red') {

@@ -1,15 +1,16 @@
 /**
  * 办公室一屏（F03 / P36）：两种看法共用同一份 core 投影。
  *
- * - 像素视图（默认）：固定工位、固定外观、真实状态气泡；点小人打开它当天的
- *   唤醒轨迹，轨迹可前翻、可下钻到那次唤醒的账本。
+ * - 像素视图（默认）：固定工位、固定外观、真实状态气泡；点小人从页面右侧展开它的
+ *   动线（P62）：一行一段时间，可按天翻看，底部一键打开对话。
  * - 列表视图：F03 起的座位卡，保留原有下钻（座位→详情、桌面→账本/产物、门口→收件箱）。
  *
  * 为什么这样摆：主人队友一多就看不清谁卡住。这里不新增任何数据源，整页只渲染
  * core 的 OfficeView（纯投影）：每个座位就是一位在岗队友，没有空位与部门分组。
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import type { OfficeView, SeatView, WakeLedgerRow } from '../../shared/views.js'
+import type { OfficeView, ProjectView, SeatView, WakeLedgerRow } from '../../shared/views.js'
+import { api } from '../api.js'
 import {
   deskTarget, doorTarget, doorwayTarget, officeLightTone, officeSummary, seatTarget,
 } from '../logic/office.js'
@@ -111,16 +112,20 @@ export function OfficePage(props: {
   showWelcome?: boolean
   onNewBot?: () => void
   onRetry: () => void
-  /** 打开队友详情；带 wakeId 时展开账本，带 artifactId 时展开产物面板（F08）。 */
+  /** 打开队友；带 wakeId 时去动态页看这次唤醒的记录，其余直接进和它的对话（右栏账本与产物面板已删除）。 */
   onOpenBot: (botId: string, wakeId?: string, artifactId?: string) => void
   /** 打开「待你处理」；带 inboxId 时直接聚焦那张卡（F04）。 */
   onOpenInbox: (inboxId?: string) => void
-  /** 按需读某个队友的唤醒账本行（P36 轨迹面板）；缺省时轨迹面板不出现。 */
+  /** 按需读某个队友的唤醒账本行（P62 动线面板）；缺省时动线面板不出现。 */
   loadTrail?: (botId: string) => Promise<WakeLedgerRow[]>
+  /** 读项目全貌，动线据此判断每次唤醒属于哪个任务；缺省时直接读中心接口。 */
+  loadProjects?: () => Promise<ProjectView>
+  /** true=这是倒带回看的历史房间：动线的时间停在所选时刻，也不自动刷新。 */
+  replaying?: boolean
 }): ReactNode {
   /** 房间的两种看法：像素是 P36 默认，列表保留 F03 的座位卡。 */
   const [mode, setMode] = useState<'pixel' | 'list'>('pixel')
-  /** 当前打开轨迹的队友；null 表示没选，右侧显示一句话引导。 */
+  /** 当前打开动线的队友；null 表示没选，办公室全宽，画布下方显示一句话引导。 */
   const [trailBotId, setTrailBotId] = useState<string | null>(null)
 
   // 刷新或倒带换了房间后，已选队友可能不在场：自动收起，避免面板指向不存在的人。
@@ -146,17 +151,9 @@ export function OfficePage(props: {
   const office = props.office
   const summary = officeSummary(office)
   const doorway = doorwayTarget(office)
-  // 轨迹面板指向的座位必须仍在投影里；不在就当作没选，不打开一个不存在的队友。
+  // 动线面板指向的座位必须仍在投影里；不在就当作没选，不打开一个不存在的队友。
   const trailSeat = trailBotId === null ? null : office.seats.find(seat => seat.botId === trailBotId) ?? null
   const loadTrail = props.loadTrail
-
-  /** 点轨迹面板里的桌上产出：沿用列表视图同一套下钻规则，不另编一套。 */
-  const openDeskOf = (seat: SeatView): void => {
-    const go = deskTarget(seat)
-    if (go.kind === 'artifact') props.onOpenBot(go.botId, undefined, go.artifactId)
-    else if (go.kind === 'ledger') props.onOpenBot(go.botId, go.wakeId)
-    else props.onOpenBot(go.botId)
-  }
 
   return (
     <section className="ah-office" aria-label="办公室">
@@ -202,26 +199,24 @@ export function OfficePage(props: {
                 // U01 第 37 轮（1.3.1）：引导块是 aside 互补地标，补可访问名，不再是未命名区域。
                 <aside className="ah-office-pixel-guide" aria-label="像素办公室引导">
                   <strong>选择一位队友</strong>
-                  <p>查看今日唤醒轨迹。轨迹仅取自真实账本，点击可打开对应唤醒。</p>
+                  <p>点击小人，右侧展开今日动线。</p>
                   {office.seats.length > 0 && loadTrail === undefined
-                    ? <p className="ah-office-pixel-warn">唤醒账本接口未接入，当前仅显示房间。</p>
+                    ? <p className="ah-office-pixel-warn">动线暂时读不到，当前仅显示房间。</p>
                     : null}
                 </aside>
               )} />
+            {/* 动线面板写在这里，但不占这一列：宽屏由 CSS 定位到页面右侧成侧栏，窄窗是抽屉。 */}
             {trailSeat !== null && loadTrail !== undefined ? (
               <OfficeTrailPanel
                 botId={trailSeat.occupant.botId}
                 botName={trailSeat.occupant.name}
-                deskKindLabel={trailSeat.desk.kindLabel}
-                deskTitle={trailSeat.desk.title}
-                doorCount={trailSeat.door.count}
                 now={office.asOf}
+                live={props.replaying !== true}
                 timezone={props.timezone}
                 loadRows={loadTrail}
-                onOpenWake={(botId, wakeId) => props.onOpenBot(botId, wakeId)}
-                onOpenDesk={() => openDeskOf(trailSeat)}
-                onOpenBotDetail={() => props.onOpenBot(trailSeat.occupant.botId)}
-                onOpenInbox={() => props.onOpenInbox(trailSeat.door.inboxIds[0])}
+                // HubPage 这次不动：项目数据先由这里直接读中心接口，以后想改成由上层传入只用填这个 prop。
+                loadProjects={props.loadProjects ?? api.project}
+                onOpenChat={() => props.onOpenBot(trailSeat.occupant.botId)}
                 onClose={() => setTrailBotId(null)}
               />
             ) : null}

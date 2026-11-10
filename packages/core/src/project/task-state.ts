@@ -136,3 +136,16 @@ export function nextStatus(from: TaskStatus, action: TaskAction, options: Transi
   if (error !== null) throw new Error(error);
   return edge.to;
 }
+
+/**
+ * P60：负责人维护事务清单时可以设的状态。
+ * 事务清单是负责人记账用的，不走执行者那条一步步的状态机，但 rejected 只是瞬时结论，不让它落库。
+ */
+export const OWNER_SETTABLE_TASK_STATUSES = ['todo', 'doing', 'blocked', 'done_pending_check', 'accepted'] as const;
+
+/** 负责人改状态是否允许：只有已完成是终态，改不回去；其余都由负责人自己判断。允许时返回 null。 */
+export function explainOwnerStatusChange(from: TaskStatus, to: TaskStatus): string | null {
+  if (from === to) return null;
+  if (from === 'accepted') return `这件事已经${TASK_STATUS_LABELS.accepted}，是终态，不能再改状态；要接着做请新建一件事务`;
+  return null;
+}

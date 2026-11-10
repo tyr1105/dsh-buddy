@@ -50,6 +50,8 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     assignTask: record('assignTask') as any,
     // V2-PH4-03 五模式派活：整对象透传由 core zod 校验。
     dispatchTask: record('dispatchTask') as any,
+    // P63：开项目主题，整对象透传由 core zod 校验。
+    createProjectTopic: record('createProjectTopic') as any,
     taskBlock: record('taskBlock') as any,
     taskResume: record('taskResume') as any,
     reportDone: record('reportDone') as any,
@@ -246,6 +248,17 @@ describe('dispatchCommand：命令表与边界校验', () => {
     expect(api.calls).toEqual([{ name: 'attachTaskArtifact', args: [attachInput] }])
     expect(api.calls[0]!.args[0]).toBe(attachInput)
   })
+  it('P63 createProjectTopic 整对象透传，业务错误由 core 用中文返回', async () => {
+    const api = fakeApi()
+    const input = { projectId: 'prj_1', text: '第一句话' }
+    await dispatchCommand(api, 'createProjectTopic', input)
+    expect(api.calls).toEqual([{ name: 'createProjectTopic', args: [input] }])
+    expect(api.calls[0]!.args[0]).toBe(input)
+    // core 抛错时门面不能带崩宿主，转成结果对象返回给界面。
+    ;(api.createProjectTopic as any) = () => Promise.reject(new Error('这个项目还没有能当负责人的成员'))
+    expect(await dispatchCommand(api, 'createProjectTopic', input)).toEqual({ ok: false, error: '这个项目还没有能当负责人的成员' })
+  })
+
   it('V2-PH4-04 dispatchTask 整对象透传：projectId/taskId/botId/note 原样进 core（引用相等）', async () => {
     const api = fakeApi()
     const dispatchInput = { projectId: 'prj_1', taskId: 'pt_1', botId: 'bot_1', note: '今天先出初稿' }

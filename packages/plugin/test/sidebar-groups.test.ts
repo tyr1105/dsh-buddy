@@ -1,13 +1,13 @@
 /**
- * 左栏三组导航的纯逻辑测试（P44）。
+ * 左栏三组导航的纯逻辑测试（P44，P63 起项目下的子行是主题）。
  *
  * 主人定的 IA 是「一套左栏、办公室 → 队友 → 工作区」；这里锁定三件事：
- * 组顺序固定、工作区只收「已指派且还在推进」的会话、项目展开规则稳定。
+ * 组顺序固定、工作区列的是主题聊天、项目展开规则稳定。
  * 只测纯函数，不渲染组件；组件形状由源码契约测试与浏览器走查覆盖。
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import type { BotCard, ProjectTask, ProjectTaskView, ProjectView, ProjectViewRow, TaskStatus } from '../src/shared/views.js'
+import type { BotCard, ProjectTopicView, ProjectView, ProjectViewRow } from '../src/shared/views.js'
 import { fixtureOverview } from '../src/shared/fixtures.js'
 import { rowActivityText } from '../src/client/components/sidebar-teammates-group.js'
 import {
@@ -16,10 +16,8 @@ import {
   buildWorkspaceProjects,
   collectSidebarProjects,
   isGroupExpanded,
-  isSidebarSessionCandidate,
   projectsForBot,
   shouldShowWorkspaceScrollHint,
-  toSidebarSession,
   toggleGroup,
 } from '../src/client/logic/sidebar-groups.js'
 
@@ -42,48 +40,13 @@ const navMainSource = readFileSync(navComponentUrl('team-sidebar-nav.tsx'), 'utf
 const sidebarSource = readFileSync(new URL('../src/client/components/team-sidebar.tsx', import.meta.url), 'utf8')
 const cssSource = readFileSync(new URL('../src/client/workspace.css', import.meta.url), 'utf8')
 
-/** 造一条任务展开行；默认已指派给 bot-1、进行中。 */
-function taskView(over: {
-  id?: string
-  title?: string
-  status?: TaskStatus
-  assigneeBotId?: string | null
-  updatedAt?: number
-  wakes?: ProjectTaskView['wakes']
-} = {}): ProjectTaskView {
-  const task: ProjectTask = {
-    id: over.id ?? 'pt_1',
-    projectId: 'prj_1',
-    title: over.title ?? '某任务',
-    detail: '',
-    assigneeBotId: over.assigneeBotId === undefined ? 'bot-1' : over.assigneeBotId,
-    status: over.status ?? 'doing',
-    wakeIds: [],
-    artifactIds: [],
-    createdAt: 1,
-    updatedAt: over.updatedAt ?? 1,
-    dueAt: null,
-  }
-  return {
-    task,
-    statusLabel: '进行中',
-    assigneeBotId: task.assigneeBotId,
-    assigneeBotName: task.assigneeBotId === null ? null : '小观',
-    assigneeInvalid: false,
-    artifactCount: 0,
-    wakes: over.wakes ?? [],
-    artifacts: [],
-    acceptance: { hints: [] },
-  }
-}
-
-/** 造一个项目视图行；project 字段只填本测试用到的部分。 */
+/** 造一个项目视图行；只填本测试用到的部分。 */
 function row(over: {
   id?: string
   name?: string
   status?: ProjectViewRow['project']['status']
   members?: string[]
-  tasks?: ProjectTaskView[]
+  topics?: ProjectTopicView[]
 } = {}): ProjectViewRow {
   const id = over.id ?? 'prj_1'
   return {
@@ -93,8 +56,13 @@ function row(over: {
       status: over.status ?? 'active',
       memberBotIds: over.members ?? ['bot-1'],
     },
-    tasks: over.tasks ?? [],
+    topics: over.topics ?? [],
   } as unknown as ProjectViewRow
+}
+
+/** 造一个主题。 */
+function topic(id: string, unread = 0): ProjectTopicView {
+  return { id, title: `主题 ${id}`, lastMessageAt: 1, lastMessageText: null, unread, lastMessagePreview: '最后一句', lastMessageFrom: '探路' }
 }
 
 function view(rows: ProjectViewRow[]): ProjectView {
@@ -110,45 +78,7 @@ describe('三组的顺序与标题', () => {
   })
 })
 
-describe('工作会话口径（DC17 / P33）', () => {
-  it('已指派且已开工的三种状态才算会话：doing / blocked / done_pending_check', () => {
-    for (const status of ['doing', 'blocked', 'done_pending_check'] as const) {
-      expect(isSidebarSessionCandidate(status, 'bot-1')).toBe(true)
-    }
-  })
-
-  it('todo 还没开工，不算会话；未指派、已验收、已驳回也都不进左栏', () => {
-    // P1-2：左栏展开的是工作会话，不是任务记录；待领任务留在项目页。
-    expect(isSidebarSessionCandidate('todo', 'bot-1')).toBe(false)
-    expect(isSidebarSessionCandidate('doing', null)).toBe(false)
-    expect(isSidebarSessionCandidate('doing', '')).toBe(false)
-    expect(isSidebarSessionCandidate('accepted', 'bot-1')).toBe(false)
-    expect(isSidebarSessionCandidate('rejected', 'bot-1')).toBe(false)
-  })
-
-  it('同一任务转出的会话 id 就是 task id，且状态、项目、下钻唤醒与 work-session 一致', () => {
-    const task = taskView({
-      wakes: [
-        { wakeId: 'w-1', botId: 'bot-1' },
-        { wakeId: 'w-2', botId: null },
-        { wakeId: 'w-3', botId: 'bot-1' },
-      ] as ProjectTaskView['wakes'],
-    })
-    const session = toSidebarSession(row({ name: '周报项目' }), task)
-    expect(session).toMatchObject({
-      id: 'pt_1',
-      projectId: 'prj_1',
-      projectName: '周报项目',
-      title: '某任务',
-      assigneeBotId: 'bot-1',
-      latestWakeId: 'w-3',
-    })
-    // 不符合口径的任务不产出会话，调用方直接跳过。
-    expect(toSidebarSession(row(), taskView({ status: 'todo' }))).toBeNull()
-  })
-})
-
-describe('collectSidebarProjects：从项目视图摊平工作区', () => {
+describe('collectSidebarProjects：项目下面列主题', () => {
   it('归档项目整组不出现', () => {
     const out = collectSidebarProjects(view([
       row({ id: 'prj_live', name: '在推进' }),
@@ -157,17 +87,12 @@ describe('collectSidebarProjects：从项目视图摊平工作区', () => {
     expect(out.map(p => p.id)).toEqual(['prj_live'])
   })
 
-  it('只保留符合条件的任务，待领任务不冒充工作会话', () => {
-    const out = collectSidebarProjects(view([row({
-      tasks: [
-        taskView({ id: 'pt_todo', status: 'todo' }),
-        taskView({ id: 'pt_doing', status: 'doing' }),
-        taskView({ id: 'pt_unassigned', status: 'doing', assigneeBotId: null }),
-        taskView({ id: 'pt_accepted', status: 'accepted' }),
-        taskView({ id: 'pt_rejected', status: 'rejected' }),
-      ],
-    })]))
-    expect(out[0]!.sessions.map(s => s.id)).toEqual(['pt_doing'])
+  it('子行是主题，带上未读和预览，顺序沿用 core 给的（最近有消息的在前）', () => {
+    const out = collectSidebarProjects(view([row({ topics: [topic('ptp_new', 2), topic('ptp_old')] })]))
+    expect(out[0]!.topics).toEqual([
+      { id: 'ptp_new', projectId: 'prj_1', title: '主题 ptp_new', unread: 2, preview: '最后一句' },
+      { id: 'ptp_old', projectId: 'prj_1', title: '主题 ptp_old', unread: 0, preview: '最后一句' },
+    ])
   })
 
   it('项目视图还没加载时返回空数组，不抛错', () => {
@@ -176,10 +101,11 @@ describe('collectSidebarProjects：从项目视图摊平工作区', () => {
 })
 
 describe('buildWorkspaceProjects：项目排序与展开规则', () => {
+  const sampleTopic = { id: 'ptp_1', projectId: 'prj_full', title: '活', unread: 0, preview: null }
   const projects = [
-    { id: 'prj_done', name: '已完成', status: 'done' as const, memberBotIds: [], sessions: [] },
-    { id: 'prj_b', name: '乙项目', status: 'active' as const, memberBotIds: [], sessions: [] },
-    { id: 'prj_a', name: '甲项目', status: 'active' as const, memberBotIds: [], sessions: [] },
+    { id: 'prj_done', name: '已完成', status: 'done' as const, memberBotIds: [], topics: [] },
+    { id: 'prj_b', name: '乙项目', status: 'active' as const, memberBotIds: [], topics: [] },
+    { id: 'prj_a', name: '甲项目', status: 'active' as const, memberBotIds: [], topics: [] },
   ]
 
   it('状态优先、同状态按名字排序，不随输入顺序漂移', () => {
@@ -187,44 +113,28 @@ describe('buildWorkspaceProjects：项目排序与展开规则', () => {
       .toEqual(['prj_a', 'prj_b', 'prj_done'])
   })
 
-  it('没有显式展开集合时，有会话的项目默认展开、空项目收起', () => {
+  it('没有显式展开集合时，有主题的项目默认展开、空项目收起', () => {
     const nodes = buildWorkspaceProjects({
       projects: [
-        { id: 'prj_full', name: '有活', status: 'active', memberBotIds: [], sessions: [
-          { id: 'pt_1', projectId: 'prj_full', projectName: '有活', title: '活', status: 'doing', statusLabel: '进行中', assigneeBotId: 'bot-1', latestWakeId: null, blocked: false, pendingCheck: false, updatedAt: 1 },
-        ] },
-        { id: 'prj_empty', name: '空', status: 'active', memberBotIds: [], sessions: [] },
+        { id: 'prj_full', name: '有话题', status: 'active', memberBotIds: [], topics: [sampleTopic] },
+        { id: 'prj_empty', name: '空', status: 'active', memberBotIds: [], topics: [] },
       ],
     })
     expect(nodes.find(n => n.projectId === 'prj_full')!.expanded).toBe(true)
+    expect(nodes.find(n => n.projectId === 'prj_full')!.topicCount).toBe(1)
     expect(nodes.find(n => n.projectId === 'prj_empty')!.expanded).toBe(false)
   })
 
-  it('显式展开集合优先：可以手动展开空项目，也可以收起有会话的项目', () => {
+  it('显式展开集合优先：可以手动展开空项目，也可以收起有主题的项目', () => {
     const nodes = buildWorkspaceProjects({
       projects: [
-        { id: 'prj_full', name: '有活', status: 'active', memberBotIds: [], sessions: [
-          { id: 'pt_1', projectId: 'prj_full', projectName: '有活', title: '活', status: 'doing', statusLabel: '进行中', assigneeBotId: 'bot-1', latestWakeId: null, blocked: false, pendingCheck: false, updatedAt: 1 },
-        ] },
-        { id: 'prj_empty', name: '空', status: 'active', memberBotIds: [], sessions: [] },
+        { id: 'prj_full', name: '有话题', status: 'active', memberBotIds: [], topics: [sampleTopic] },
+        { id: 'prj_empty', name: '空', status: 'active', memberBotIds: [], topics: [] },
       ],
       expandedProjectIds: ['prj_empty'],
     })
     expect(nodes.find(n => n.projectId === 'prj_full')!.expanded).toBe(false)
     expect(nodes.find(n => n.projectId === 'prj_empty')!.expanded).toBe(true)
-  })
-
-  it('组内会话按最近变动倒序，时间相同按 id 稳定', () => {
-    const nodes = buildWorkspaceProjects({
-      projects: [{
-        id: 'prj_1', name: '项目', status: 'active', memberBotIds: [],
-        sessions: [
-          { id: 'pt_old', projectId: 'prj_1', projectName: '项目', title: '旧', status: 'doing', statusLabel: '进行中', assigneeBotId: 'bot-1', latestWakeId: null, blocked: false, pendingCheck: false, updatedAt: 10 },
-          { id: 'pt_new', projectId: 'prj_1', projectName: '项目', title: '新', status: 'blocked', statusLabel: '卡住了', assigneeBotId: 'bot-1', latestWakeId: null, blocked: true, pendingCheck: false, updatedAt: 20 },
-        ],
-      }],
-    })
-    expect(nodes[0]!.sessions.map(s => s.id)).toEqual(['pt_new', 'pt_old'])
   })
 
   it('停在项目页时高亮对应项目', () => {
@@ -245,8 +155,8 @@ describe('折叠与按队友找项目', () => {
 
   it('projectsForBot 只列该队友是成员的项目', () => {
     const projects = [
-      { id: 'prj_1', name: '一', status: 'active' as const, memberBotIds: ['bot-1'], sessions: [] },
-      { id: 'prj_2', name: '二', status: 'active' as const, memberBotIds: ['bot-2'], sessions: [] },
+      { id: 'prj_1', name: '一', status: 'active' as const, memberBotIds: ['bot-1'], topics: [] },
+      { id: 'prj_2', name: '二', status: 'active' as const, memberBotIds: ['bot-2'], topics: [] },
     ]
     expect(projectsForBot(projects, 'bot-1').map(p => p.id)).toEqual(['prj_1'])
     expect(projectsForBot(projects, 'bot-9')).toEqual([])
@@ -314,9 +224,8 @@ describe('左栏组件契约（P44 复审）', () => {
     expect(cssSource).toMatch(/\.ah-host-botlist \.ah-botlist \{[^}]*width: 100%/)
   })
 
-  it('打开工作会话必须把任务 id 放在第三参数，避免子行落错线程（P1-2）', () => {
-    expect(sidebarSource).toContain('requestWorkSession(session.assigneeBotId, session.projectId, session.id, session.latestWakeId)')
-    expect(sidebarSource).not.toContain('requestWorkSession(session.assigneeBotId, session.projectId, session.latestWakeId)')
+  it('点主题行直接进那条主题聊天（P63）', () => {
+    expect(sidebarSource).toContain('onOpenTopic={topicId => navigate(() => props.hub.selectThread(topicId))}')
   })
 })
 

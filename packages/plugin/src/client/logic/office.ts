@@ -33,7 +33,7 @@ export function seatTarget(seat: SeatView): { kind: 'bot'; botId: string } {
   return { kind: 'bot', botId: seat.occupant.botId }
 }
 
-/** 桌面下钻目标：产物面板、账本，或只打开队友详情。 */
+/** 桌面下钻目标：产物、账本，或只打开队友详情（界面上现在统一落到该队友的对话或动态页）。 */
 export type DeskTarget =
   | { kind: 'ledger'; botId: string; wakeId: string }
   | { kind: 'artifact'; botId: string; artifactId: string }
@@ -41,9 +41,9 @@ export type DeskTarget =
 
 /**
  * 点桌上的产出去哪：
- * - 有产物（refKind='artifact'）→ 打开该队友详情并展开产物面板的最新一版；
- * - 有账本（refKind='wake'）→ 打开队友详情并直接展开这次唤醒的账本；
- * - 只有队友（refKind='bot'）→ 打开队友详情，不展开。
+ * - 有产物（refKind='artifact'）→ 带上产物 id 去该队友那边（右栏产物面板已删除，界面直接进和它的对话）；
+ * - 有账本（refKind='wake'）→ 带上唤醒 id，界面去动态页看这次唤醒的记录；
+ * - 只有队友（refKind='bot'）→ 直接进和它的对话。
  */
 export function deskTarget(seat: SeatView): DeskTarget {
   if (seat.desk.refKind === 'artifact' && seat.desk.refId !== '') {
@@ -57,8 +57,9 @@ export function deskTarget(seat: SeatView): DeskTarget {
 
 /**
  * 从产物列表里挑出某个产物头下最新的一版：先比创建时间，再比版本号，最后比 id。
- * 为什么界面也要挑一次：core 的桌面只给产物头 id，右栏要落到具体版本；
+ * 为什么界面也要挑一次：core 的桌面只给产物头 id，要落到具体版本得自己挑；
  * 规则与 core 上桌时一致，保证「桌上看到的那份」就是「点开选中的那版」。
+ * （右栏产物面板删除后，目前只有测试在用这个函数。）
  */
 export function artifactFocusVersion(
   rows: ReadonlyArray<ArtifactVersionRow>,
@@ -145,8 +146,10 @@ export function utcOffsetMinutesAt(at: number, timezone?: string | null): number
 }
 
 /**
- * 把唤醒账本行压成轨迹事件：id 用 wakeId，点轨迹时才能直接下钻到那次唤醒。
+ * 把唤醒账本行压成轨迹事件：id 用 wakeId，按天分组后还能对回原来的账本行。
  * 文案优先交账摘要，其次触发理由，最后退到「某类唤醒」；不编故事、不补空白。
+ * P62 起员工动线只借这里的时间和 id 分天，面板上的文字另由 office-trail-timeline.ts 算，
+ * 这里的文案不上屏。
  */
 export function trailEventsFromWakes(rows: readonly WakeLedgerRow[]): OfficeTrailEventInput[] {
   return rows.map(row => {

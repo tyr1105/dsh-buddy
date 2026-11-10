@@ -1,5 +1,6 @@
 /**
- * 队友主页：像聊天软件的三栏页面——左队友列表、中对话线程/收件箱/活动流/设置、右详情（可收起）。
+ * 中心页：像聊天软件的三栏页面——左队友列表、中对话线程/收件箱/活动流/设置、右侧边栏（默认收起）。
+ * 点队友直接进对话（P64）；忙碌状态、额度、在办的事放在按需展开的右侧边栏。
  * 数据全部来自 HubStore（唯一仓库）；加载超过 300ms 显示骨架；宿主连不上整页提示；
  * 每个页面块外包 BlockBoundary（出错只显示「这块没显示出来，刷新试试」）。
  */
@@ -20,7 +21,6 @@ import { SettingsPane } from '../components/SettingsPane.js'
 import { OfficeReplayPage } from './office-replay-page.js'
 import { ResourcePage } from './ResourcePage.js'
 import { ProjectPage } from './ProjectPage.js'
-import { TeammateHomePage } from './TeammateHomePage.js'
 import { addTeammatesFromTemplates, createTeammate } from '../logic/wizard-create.js'
 import { NewBotWizard } from '../components/NewBotWizard.js'
 import { TeachDialog } from '../components/TeachDialog.js'
@@ -32,8 +32,9 @@ import { cardSubmission } from '../logic/cards.js'
 import { OPEN_SESSION_HINTS, openBotSessionWith } from '../logic/thread.js'
 import { lifecycleAllTargets, pauseResumeAction } from '../logic/lifecycle.js'
 import { collectWorkSessions, sessionsForBot, type WorkSession } from '../logic/work-session.js'
-import type { WorkBoardCard } from '../logic/work-board.js'
-import { mentionMembers } from '../logic/mentions.js'
+import { findTopic, isTopicThreadId, openNewTopic, topicPaneInfo } from '../logic/topics.js'
+import { sendDraftFirstMessage, sidebarSelectedThread, topicDraftThreadId } from '../logic/topic-draft.js'
+import { TopicDraftPane } from '../components/topic-draft-pane.js'
 
 /**
  * 没有外部定位来源时的空仓库（P43）：保证 useStore 始终被调用，
@@ -68,46 +69,55 @@ export function HubPage(props: {
   const [teachOpen, setTeachOpen] = useState(false)
   /** 跳转面板（WCAG 2.4.5）：打开时覆盖在页面上，关闭后不渲染、不占布局。 */
   const [paletteOpen, setPaletteOpen] = useState(false)
-  /** 当前线程是否是从收件箱跳转来的：决定头部是否显示「返回收件箱」。 */
-  const [fromInbox, setFromInbox] = useState(false)
+  /**
+   * 从「待你处理」跳进来的是哪条线程：头部据此显示「返回待你处理」。
+   * 记线程 id 而不是一个开关（P64）：宿主侧栏点别的队友时页面收不到通知，
+   * 记了 id，切到别的线程回程钮自然就不成立，不会挂在不相干的对话上。
+   */
+  const [inboxReturnThread, setInboxReturnThread] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   /** 试跑提示归属的机器人：它的线程里出现第一条回复后自动消失（D04 3c-3）。 */
   const [noticeAutoClearBot, setNoticeAutoClearBot] = useState<string | null>(null)
-  /** 从办公室桌上产出下钻时要展开的账本 id（F03）：只对当前打开的队友生效。 */
-  const [focusWakeId, setFocusWakeId] = useState<string | null>(null)
-  /** 从办公室桌上产物下钻时要展开的产物头 id（F08）：右栏自动选中并读取最新一版。 */
-  const [focusArtifactId, setFocusArtifactId] = useState<string | null>(null)
+  /** 跳到动态页时替主人先筛好的队友（P64）：点某位队友的唤醒记录进来才有值。 */
+  const [activityBotId, setActivityBotId] = useState<string | null>(null)
   /** 从办公室门口点进来时要聚焦的收件箱卡（F04）；普通进入收件箱为 null。 */
   const [focusInboxId, setFocusInboxId] = useState<string | null>(null)
-  /** 当前线程是否从队友主页的工作会话进入（P33）：线程头显示「返回队友主页」。 */
-  const [fromHome, setFromHome] = useState(false)
-  /** 当前项目会话属于哪个项目（P37）：决定输入框是否出现 @ 与候选成员。 */
-  const [mentionProjectId, setMentionProjectId] = useState<string | null>(null)
-  /** 队友主页上的一次性提示（交账结果等）；切换队友或进入线程即清空。 */
-  const [homeNotice, setHomeNotice] = useState<string | null>(null)
-  /** 正在交账的工作会话 id：只禁用那一行的按钮。 */
-  const [homeBusyTaskId, setHomeBusyTaskId] = useState<string | null>(null)
-  /**
-   * 当前线程里正在看哪条工作会话（P1-2）：侧栏子行和队友主页都带任务 id 进来，
-   * 线程头据此显示这条会话的标题与状态——同一队友同项目的两条子行才不会看起来一样。
-   */
-  const [openedTaskId, setOpenedTaskId] = useState<string | null>(null)
 
   const selectedThread = state.selectedThread
-  const view = state.view
-  /** 主视图表面（P33）：对话线程或队友主页；放在仓库里，左栏与宿主侧栏共用。 */
-  const mainFace = state.mainFace
+  /**
+   * P60 草稿主题：中栏摆着「新开会话」的空聊天时，本页把它当成单独的视图 'topic-draft'。
+   * 这样下面所有「页面正摆着选中线程（view === 'main'）」的判断自动不成立：不给上一条线程标已读、
+   * 不开它的右侧边栏、不留它的回程钮。仓库里的 view 仍是 'main'；换页、切线程都会清掉草稿。
+   */
+  const topicDraft = state.view === 'main' ? state.topicDraft : null
+  const view: PageView | 'topic-draft' = topicDraft !== null ? 'topic-draft' : state.view
 
   // 首次挂载拉全部基础视图；此后由 SSE changed 事件驱动刷新。
   useEffect(() => {
     void hub.refreshAll()
     void hub.refreshSettings()
   }, [hub])
+  // P58：选中某位队友时，等名册到手再拉对话，因为本地记住的 id 可能早已不存在。
+  // 团队线程不依赖名册，照旧立刻拉；这个布尔值只在名册第一次到手时翻转，不会造成多拉。
+  const threadLoadable = selectedThread === 'team' || state.overview !== null
   useEffect(() => {
-    if (state.connectionDown) return
+    if (state.connectionDown || !threadLoadable) return
     setThreadError(null)
     void hub.refreshThread(selectedThread).catch(() => setThreadError('线程读取失败。点击「重试」；仍失败请确认插件未停用。'))
-  }, [hub, selectedThread, state.connectionDown])
+  }, [hub, selectedThread, state.connectionDown, threadLoadable])
+
+  // P58：选中的队友已不存在、仓库把选中退回团队全景时，页面里跟这位队友绑定的状态也要归位，
+  // 否则团队全景上会留着旧提示条，下次选别人时右侧边栏和教学弹窗也会莫名打开。
+  // 挂载时也会跑一次，这些状态本来就是初始值，等于什么都没做。
+  // 这段必须排在下面几个「接住定位请求」的 effect 前面：同一轮里既退出又有新请求时，新请求要赢。
+  const selectionExitSeq = state.selectionExitSeq
+  useEffect(() => {
+    setInboxReturnThread(null)
+    setRightOpen(false)
+    setTeachOpen(false)
+    setNotice(null)
+    setNoticeAutoClearBot(null)
+  }, [selectionExitSeq])
 
   // P43：提示点进来时，外层先记下目标收件箱项、再切队友模式打开中心页；
   // 页面挂载（或已在页内）后消费一次：切到收件箱、定位并描边那一项，然后清空。
@@ -116,29 +126,16 @@ export function HubPage(props: {
   const pendingInboxFocus = useStore(inboxFocusStore)
   useEffect(() => {
     if (pendingInboxFocus === null) return
-    setFromInbox(false)
     setFocusInboxId(pendingInboxFocus)
     hub.setView('inbox')
     void hub.refreshInbox()
     inboxFocusStore.set(null)
   }, [hub, inboxFocusStore, pendingInboxFocus])
 
-  // P44：左栏点开一条工作会话。侧栏只负责写信号（选中线程已在仓库里切好），
-  // 页面负责把「返回队友主页」、项目 @ 上下文、右栏账本展开这几件本地状态补齐，
-  // 然后清空信号，避免重挂载时又被旧目标拽回同一条线程。
-  const sessionOpen = state.sessionOpen
+  // 离开对话页或换了线程，「从待你处理来」这件事就结束了，回程钮不再留着。
   useEffect(() => {
-    if (sessionOpen === null) return
-    setFromInbox(false)
-    setFromHome(true)
-    setMentionProjectId(sessionOpen.projectId)
-    setHomeNotice(null)
-    setFocusArtifactId(null)
-    setOpenedTaskId(sessionOpen.taskId)
-    setFocusWakeId(sessionOpen.wakeId)
-    setRightOpen(sessionOpen.wakeId !== null)
-    hub.clearWorkSession()
-  }, [hub, sessionOpen])
+    if (view !== 'main' || selectedThread !== inboxReturnThread) setInboxReturnThread(null)
+  }, [view, selectedThread, inboxReturnThread])
 
   // P37：宿主一级侧栏的「新建队友」加号把请求写进仓库计数；有没处理的请求就开向导。
   // P53：接住后立刻清零，不再用 ref 记「挂载时的值」。主人在别的页面点加号时，
@@ -147,7 +144,6 @@ export function HubPage(props: {
   useEffect(() => {
     if (newBotRequest === 0) return
     hub.clearNewBotRequest()
-    setFromInbox(false)
     setWizardOpen(true)
   }, [hub, newBotRequest])
 
@@ -159,7 +155,6 @@ export function HubPage(props: {
   useEffect(() => {
     if (newProjectRequest === 0) return
     hub.clearNewProjectRequest()
-    setFromInbox(false)
     setPendingNewProject(true)
   }, [hub, newProjectRequest])
 
@@ -173,34 +168,41 @@ export function HubPage(props: {
     if (teachOpen) void hub.refreshRecentSessions()
   }, [hub, teachOpen])
 
-  // 回到队友主页就清掉「从主页进入线程」的标记，避免以后进别的线程时还挂着回程钮。
-  useEffect(() => {
-    if (mainFace === 'home') setFromHome(false)
-  }, [mainFace])
-
-  // 工作会话投影（P33）：项目视图还没到时不假装没有工作，页面显示骨架与重试。
+  // 工作会话投影（P33）：项目视图还没到时是 null，右侧边栏显示骨架，不假装没有工作。
   const workSessions = state.project === null ? null : collectWorkSessions(state.project)
   const selectedSessions = selectedBot !== null && workSessions !== null
     ? sessionsForBot(workSessions, selectedBot.id)
     : null
-  /**
-   * 线程头要显示的当前工作会话（P1-2）：只认从工作会话入口进来的那一次，
-   * 任务被交账/改状态后查不到就自然不显示，不拿旧标题冒充。
-   */
-  const openedTask = fromHome && openedTaskId !== null && workSessions !== null
-    ? workSessions.find(session => session.id === openedTaskId) ?? null
-    : null
 
   /**
-   * @ 上下文（P37）：只有「从项目工作会话进入、且还停在那条线程」时才成立。
-   * 从普通入口或左栏直接进线程都会清掉 fromHome，所以私聊里永远不会有 @。
+   * 当前线程是项目主题时的页面信息（P63）。只看 id 前缀来判断，
+   * 项目视图还没到时也按主题模式画，等视图到了再补上项目名和成员。
    */
-  const mentionRow = fromHome && mentionProjectId !== null && state.project !== null
-    ? state.project.projects.find(row => row.project.id === mentionProjectId) ?? null
-    : null
-  const mention = mentionRow !== null && selectedThread !== 'team'
-    ? { projectName: mentionRow.project.name, members: mentionMembers(mentionRow, overview?.bots ?? [], selectedThread) }
-    : null
+  const topicThread = isTopicThreadId(selectedThread)
+  const foundTopic = topicThread ? findTopic(state.project, selectedThread) : null
+  const topicInfo = topicThread ? topicPaneInfo(foundTopic, state.threads[selectedThread]?.title ?? null, overview?.bots ?? []) : null
+
+  // P63：页面把主题摆出来才算读过。看着的时候新楼层还在进来，未读数一变就再标一次，左栏的点才不会一直亮着。
+  const topicUnread = foundTopic?.topic.unread ?? 0
+  useEffect(() => {
+    if (view !== 'main' || !isTopicThreadId(selectedThread) || topicUnread === 0) return
+    void hub.command('markThreadRead', { threadId: selectedThread }).then(() => hub.refreshProject()).catch(() => undefined)
+  }, [hub, view, selectedThread, topicUnread])
+
+  // P68：私聊同理。仓库的 selectThread 只在「点进去」那一下标已读，主人开着对话时队友又回了新消息，
+  // 左栏这位队友的未读点就一直亮着。这里照主题的写法：页面正摆着这条私聊（view === 'main'）、
+  // 名册里它的未读数大于 0 时，再标一次已读并刷新名册。
+  // - 团队线程（'team'）也是私聊同类的线程，未读数在 overview.team.unread，一并处理。
+  // - 名册里查不到这个 id（已删除的队友）时 selectedBot 为 null，未读数按 0 算，不发标已读（P58 的规矩）。
+  // - 不会循环：未读为 0 不发；标完刷新名册后未读归 0，依赖变了但条件不成立，就停了；
+  //   标已读失败时未读数不变、依赖不变，effect 不会重跑。
+  // 少数夹具/占位名册没有 team 字段，所以按可选读取，缺了就当 0。
+  const teamUnread = (overview?.team as { unread?: number } | undefined)?.unread ?? 0
+  const chatUnread = selectedThread === 'team' ? teamUnread : (selectedBot?.unread ?? 0)
+  useEffect(() => {
+    if (view !== 'main' || isTopicThreadId(selectedThread) || chatUnread === 0) return
+    void hub.command('markThreadRead', { threadId: selectedThread }).then(() => hub.refreshOverview()).catch(() => undefined)
+  }, [hub, view, selectedThread, chatUnread])
 
   // 试跑提示只在试跑排队或进行中显示（D04 3c-3 / D07 第 19 条）：该机器人线程出现
   // 第一条回复，或试跑唤醒单已结束（无论有没有回复）就消失。
@@ -236,95 +238,32 @@ export function HubPage(props: {
 
   // 打开「待你处理」：普通入口不聚焦；从办公室门口点具体一张卡时带上 inboxId（F04）。
   const openInbox = (inboxId?: string): void => {
-    setFromInbox(false)
-    setFromHome(false)
-    setMentionProjectId(null)
-    setOpenedTaskId(null)
     setFocusInboxId(inboxId ?? null)
     hub.setView('inbox')
     void hub.refreshInbox()
   }
 
   /**
-   * 从项目页任务行下钻到项目引用的那次唤醒（F08 尾巴）：切到队友线程、展开右栏，
-   * 右栏的账本区会按 focusWakeId 直接展开这次唤醒；不在最近 50 条里时按 wakeId 单独拉详情。
+   * 原来跳到右栏「为什么醒」的入口（项目页任务行、办公室）统一落到这里（P64）：
+   * 右侧边栏不再放账本，改去动态页，并替主人筛好这位队友，打开就能看到它最近醒了几次、做了什么。
    */
-  const openWake = (botId: string, wakeId: string): void => {
-    setFromInbox(false)
-    setFromHome(false)
-    setMentionProjectId(null)
-    setOpenedTaskId(null)
-    setFocusWakeId(wakeId)
-    setFocusArtifactId(null)
-    setRightOpen(true)
-    hub.setView('main')
-    hub.selectThread(botId)
+  const openActivityFor = (botId: string): void => {
+    setActivityBotId(botId)
+    hub.setView('activity')
+    void hub.refreshActivity()
   }
 
-  /**
-   * 打开一条工作会话（P33）：进入该队友的线程，头部给「返回队友主页」；
-   * 有最近一次唤醒就顺手展开右栏账本，让主人直接看到这次工作的证据。
-   */
+  /** 右侧边栏点一件事：有主题就进那条讨论，没有主题的老事务去它所在的项目页。 */
   const openWorkSession = (session: WorkSession): void => {
-    setFromInbox(false)
-    setFromHome(true)
-    // 项目会话才有 @（P37）：记下项目，输入框按项目成员给出候选。
-    setMentionProjectId(session.projectId)
-    setHomeNotice(null)
-    setFocusArtifactId(null)
-    // P1-2：带上任务 id，线程头显示的就是这一条会话，不再只按队友区分。
-    setOpenedTaskId(session.id)
-    setFocusWakeId(session.latestWakeId)
-    setRightOpen(session.latestWakeId !== null)
-    hub.selectThread(session.assigneeBotId)
-    // P44-R2：selectThread 会清空子行选中态，这里补回当前这条会话，左栏才亮对那一行。
-    hub.setActiveTask(session.id)
+    if (session.topicId !== null) hub.selectThread(session.topicId)
+    else hub.requestProject(session.projectId)
   }
 
   /**
-   * 队友主页头部「打开对话」（U01 r46）：进这个队友的普通私聊线程。
-   * 与工作会话行一样置 fromHome，线程头部给「← 返回队友主页」，来回都不迷路；
-   * 但不带项目/任务上下文：没有 @ 候选、不展开账本、不挂任务头，就是一条纯对话。
-   * 这条入口补上了新队友还没有工作会话时「第一次对话无路可走」的断点。
+   * 左栏队友行加号的「新建会话」（P63）：开一个主题并进去。
+   * 项目页「新开会话」和项目行加号从 P60（2026-11-10）起改走草稿主题，见下面的 TopicDraftPane。
    */
-  const openTeammateThread = (): void => {
-    if (!selectedBot) return
-    setFromInbox(false)
-    setFromHome(true)
-    setMentionProjectId(null)
-    setHomeNotice(null)
-    setOpenedTaskId(null)
-    setFocusWakeId(null)
-    setFocusArtifactId(null)
-    setRightOpen(false)
-    hub.selectThread(selectedBot.id)
-  }
-
-  /**
-   * 左栏内联新建会话（P44）：只发一条 saveTask；成功后刷新项目与总览，
-   * 有指派就直接打开该队友线程（复用 requestWorkSession 的交接），
-   * 没有指派就停在当前页，任务会出现在项目页的待领区。
-   */
-  const createSession = async (input: NewSessionInput): Promise<string | null> => {
-    try {
-      const result = await hub.command('saveTask', {
-        projectId: input.projectId,
-        title: input.title,
-        assigneeBotId: input.assigneeBotId,
-      })
-      if (!result.ok) return result.error
-      const created = result.data as { id?: unknown } | undefined
-      const taskId = typeof created?.id === 'string' ? created.id : ''
-      await Promise.all([hub.refreshProject(), hub.refreshOverview()])
-      // P1-2：新任务也带着自己的 id 打开，线程头才能落到这条会话本身。
-      if (input.assigneeBotId !== null && taskId !== '') {
-        hub.requestWorkSession(input.assigneeBotId, input.projectId, taskId, null)
-      }
-      return null
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e)
-    }
-  }
+  const createSession = (input: NewSessionInput): Promise<string | null> => openNewTopic(hub, input.projectId, input.text)
 
   /** P48：归档前置校验；失败转成中文错误字符串，左栏据此弹拦截框。 */
   const checkArchive = async (botId: string): Promise<ArchiveCheckInfo | string> => {
@@ -346,64 +285,6 @@ export function HubPage(props: {
     } catch (e) {
       return e instanceof Error ? e.message : String(e)
     }
-  }
-
-  /**
-   * 完成并归档（P33）：只发 reportDone——任务从进行中推进到「待验收」，
-   * 工作会话随之从「在做」落到「已归档」。不直接改本地状态，等刷新回填。
-   */
-  const completeWork = (session: WorkSession): void => {
-    if (!session.canComplete) return
-    void (async () => {
-      setHomeBusyTaskId(session.id)
-      try {
-        const result = await hub.command('reportDone', { id: session.id })
-        setHomeNotice(result.ok ? `「${session.title}」已提交。下一步：验收，负责人 待安排。` : result.error)
-        await Promise.all([hub.refreshProject(), hub.refreshOverview()])
-      } catch (e) {
-        setHomeNotice(e instanceof Error ? e.message : String(e))
-      } finally {
-        setHomeBusyTaskId(null)
-      }
-    })()
-  }
-
-  /**
-   * P35 看板领取：让当前队友领走一条待领事项。只发 dispatchTask（core 负责
-   * 校验项目进行中、队友在岗且是成员、议程名额），成功与否等刷新回填，不本地改状态。
-   */
-  const claimTaskForBot = (card: WorkBoardCard): void => {
-    if (!selectedBot) return
-    void (async () => {
-      setHomeBusyTaskId(card.id)
-      try {
-        const result = await hub.command('dispatchTask', {
-          projectId: card.projectId, taskId: card.id, botId: selectedBot.id,
-        })
-        setHomeNotice(result.ok ? `任务「${card.title}」已派给「${selectedBot.name}」，进行中。` : result.error)
-        await Promise.all([hub.refreshProject(), hub.refreshOverview()])
-      } catch (e) {
-        setHomeNotice(e instanceof Error ? e.message : String(e))
-      } finally {
-        setHomeBusyTaskId(null)
-      }
-    })()
-  }
-
-  /** P35 看板交账：把进行中的工作推进到待验收，和列表里的「完成并归档」同一条命令。 */
-  const submitTaskForBot = (card: WorkBoardCard): void => {
-    void (async () => {
-      setHomeBusyTaskId(card.id)
-      try {
-        const result = await hub.command('reportDone', { id: card.id })
-        setHomeNotice(result.ok ? `「${card.title}」已提交。下一步：验收，负责人 待安排。` : result.error)
-        await Promise.all([hub.refreshProject(), hub.refreshOverview()])
-      } catch (e) {
-        setHomeNotice(e instanceof Error ? e.message : String(e))
-      } finally {
-        setHomeBusyTaskId(null)
-      }
-    })()
   }
 
   const overviewLoading = overview === null
@@ -429,7 +310,9 @@ export function HubPage(props: {
   }
 
   // 线程头部信息（团队线程没有）。
-  const header: ThreadHeaderInfo | null = selectedThread === 'team' ? null : selectedBot ? {
+  const header: ThreadHeaderInfo | null = selectedThread === 'team' ? null : topicInfo !== null ? {
+    name: topicInfo.title, roleLabel: null, activityText: null, nextThinkText: null, lifecycle: null, thinking: false,
+  } : selectedBot ? {
     name: selectedBot.name,
     roleLabel: selectedBot.roleLabel,
     activityText: selectedBot.activityText,
@@ -493,7 +376,7 @@ export function HubPage(props: {
       if (!result.ok) failed += 1
     }
     await hub.refreshOverview()
-    return failed === 0 ? null : `有 ${failed} 个队友操作未成功。请重试或进入队友详情单独操作；仍失败请检查 DSH 运行状态。`
+    return failed === 0 ? null : `有 ${failed} 个队友操作未成功。请重试，或在对话页点「查看状态」后用「编辑队友」单独操作；仍失败请检查 DSH 运行状态。`
   }
 
   /**
@@ -517,11 +400,11 @@ export function HubPage(props: {
   }, [])
 
   /**
-   * 跳转面板选了一个页面：与顶栏按钮同口径——先归位收件箱来源标记，
-   * 再切视图并拉对应表面，避免面板与顶栏两套入口行为漂移。
+   * 跳转面板选了一个页面：切视图并拉对应表面，和左栏入口同口径。
+   * 动态页从这里进是看全队，把之前替主人筛的队友清掉。
    */
   const handlePaletteNavigate = (target: PageView): void => {
-    setFromInbox(false)
+    setActivityBotId(null)
     if (target === 'main') { hub.setView('main'); return }
     if (target === 'inbox') { openInbox(); return }
     hub.setView(target)
@@ -535,7 +418,6 @@ export function HubPage(props: {
   /** 跳转面板选了一个动作：只做面板里列出的两件小事，不悄悄扩成第二个设置页。 */
   const handlePaletteAction = (action: CommandActionId): void => {
     if (action === 'new-bot') {
-      setFromInbox(false)
       setWizardOpen(true)
       return
     }
@@ -576,15 +458,7 @@ export function HubPage(props: {
       >跳到主内容</a>
       {overview ? (
         <BlockBoundary label="顶栏">
-          <TopBar
-            overview={overview}
-            view={view}
-            onOpenProject={() => { setFromInbox(false); hub.setView('project'); void hub.refreshProject() }}
-            onOpenActivity={() => { setFromInbox(false); hub.setView('activity'); void hub.refreshActivity() }}
-            onNewBot={() => { setFromInbox(false); setWizardOpen(true) }}
-            onBack={() => { setFromInbox(false); hub.setView('main') }}
-            onOpenPalette={() => setPaletteOpen(true)}
-          />
+          <TopBar overview={overview} />
         </BlockBoundary>
       ) : showSkeleton ? <header className="ah-topbar"><Skeleton rows={1} /></header> : null}
 
@@ -593,24 +467,17 @@ export function HubPage(props: {
         <BlockBoundary label="新建队友">
           <NewBotWizard
             existingBots={overview.bots}
-            // 第一件事只能放进未归档项目（已归档项目不能再加任务）。
-            projects={state.project === null ? [] : state.project.projects
-              .filter(row => row.project.status !== 'archived')
-              .map(row => ({ id: row.project.id, name: row.project.name }))}
             modelOptions={state.settings?.modelOptions ?? []}
             modelOptionsError={state.settings ? null : state.settingsError}
             presetSkillOptions={state.settings?.presetSkillOptions ?? []}
-            onCreate={(input, color, firstTask) => createTeammate(hub, input, color, firstTask)}
+            dshSkillOptions={state.settings?.dshSkillOptions ?? []}
+            onCreate={input => createTeammate(hub, input)}
             // P52：传完整名册（含退役和归档），名字被占时要能自动加序号。
             onCreateFromTemplates={templates => addTeammatesFromTemplates(hub, templates, overview.bots)}
             onOpenThread={(botId, warning) => {
               setWizardOpen(false)
-              setFromInbox(false)
-              setFromHome(false)
-              setMentionProjectId(null)
               hub.selectThread(botId)
               // 提示条改放线程顶部（D04 3c-3），该机器人第一次交账（线程出现 reply）后自动消失。
-              // 第一件事没落进项目时不挡创建，把原因并进同一条提示。
               setNotice(`${warning ? `${warning} ` : ''}正在试跑：先进行自我介绍，请稍候。`)
               setNoticeAutoClearBot(botId)
               void hub.refreshOverview()
@@ -642,39 +509,24 @@ export function HubPage(props: {
       <div
         id="ah-main"
         tabIndex={-1}
-        className={`ah-body${rightOpen && selectedBot && view === 'main' && mainFace === 'thread' ? ' ah-body-right' : ''}`}
+        className={`ah-body${rightOpen && selectedBot && view === 'main' ? ' ah-body-right' : ''}`}
       >
         {!props.sidebarInHost && overview ? (
           <BlockBoundary label="团队空间左栏">
             <TeamSidebarNav
               overview={overview}
               project={state.project}
-              view={view}
-              mainFace={mainFace}
-              selectedThread={selectedThread}
-              activeTaskId={state.activeTaskId}
+              view={state.view}
+              // P60：草稿主题摆在中栏时左栏哪一行都不亮。
+              selectedThread={sidebarSelectedThread(state)}
               activeProjectId={view === 'project' ? state.activeProjectId : null}
-              onOpenOffice={() => { setFromInbox(false); hub.setView('office'); void hub.refreshOffice() }}
-              onSelectBot={(threadId) => {
-                setFromInbox(false)
-                setFromHome(false)
-                setMentionProjectId(null)
-                setHomeNotice(null)
-                setOpenedTaskId(null)
-                setFocusWakeId(null)
-                setFocusArtifactId(null)
-                // 团队全景进对话线程；点队友先进它的主页（P33）。
-                if (threadId === 'team') hub.selectThread(threadId)
-                else hub.selectTeammate(threadId)
-              }}
+              onOpenOffice={() => { hub.setView('office'); void hub.refreshOffice() }}
+              // 团队全景和队友都直接进对话（P64）。
+              onSelectBot={threadId => hub.selectThread(threadId)}
               onOpenInbox={() => openInbox()}
-              onOpenSettings={() => { setFromInbox(false); hub.setView('settings'); void hub.refreshSettings() }}
-              onNewBot={() => { setFromInbox(false); setWizardOpen(true) }}
+              onOpenSettings={() => { hub.setView('settings'); void hub.refreshSettings() }}
+              onNewBot={() => setWizardOpen(true)}
               onNewProject={() => {
-                setFromInbox(false)
-                setFromHome(false)
-                setMentionProjectId(null)
-                setOpenedTaskId(null)
                 // 与宿主侧栏加号同一条路径：切到项目页 + 发一次打开表单的请求。
                 hub.setView('project')
                 void hub.refreshProject()
@@ -682,16 +534,13 @@ export function HubPage(props: {
               }}
               onRetryProject={() => hub.refreshProject()}
               onOpenProject={(projectId) => {
-                setFromInbox(false)
-                setFromHome(false)
-                setMentionProjectId(null)
-                setOpenedTaskId(null)
                 // P1：带上被点的项目 id，项目页据此定位并高亮对应项目。
                 hub.requestProject(projectId)
                 void hub.refreshProject()
               }}
-              onOpenSession={session => hub.requestWorkSession(session.assigneeBotId, session.projectId, session.id, session.latestWakeId)}
+              onOpenTopic={topicId => hub.selectThread(topicId)}
               onCreateSession={createSession}
+              onOpenTopicDraft={projectId => hub.openTopicDraft(projectId)}
               onCheckArchive={checkArchive}
               onArchiveBot={botId => runBotArchiveCommand('archiveBot', botId)}
               onRestoreArchivedBot={botId => runBotArchiveCommand('restoreArchivedBot', botId)}
@@ -708,15 +557,10 @@ export function HubPage(props: {
               loading={state.office === null}
               onNewBot={() => setWizardOpen(true)}
               onRetry={() => void hub.refreshOffice()}
-              onOpenBot={(botId, wakeId, artifactId) => {
-                // 从办公室下钻：选中队友并展开右栏；点桌上产物时带上产物头，点账本时带上唤醒。
-                setFromInbox(false)
-                setFromHome(false)
-                setMentionProjectId(null)
-                setFocusWakeId(wakeId ?? null)
-                setFocusArtifactId(artifactId ?? null)
-                setRightOpen(true)
-                hub.selectThread(botId)
+              onOpenBot={(botId, wakeId) => {
+                // P64：账本和产物都不在右侧边栏了。点账本去动态页看记录，其余直接进和它的对话。
+                if (wakeId) openActivityFor(botId)
+                else hub.selectThread(botId)
               }}
               onOpenInbox={openInbox}
               loadTrail={botId => hub.wakeRows(botId)}
@@ -730,12 +574,12 @@ export function HubPage(props: {
               onRetry={() => void hub.refreshProject()}
               run={(name, input) => hub.command(name, input)}
               onRefresh={() => hub.refreshProject()}
-              bots={overview ? overview.bots.map(b => ({ id: b.id, name: b.name, lifecycle: b.lifecycle })) : []}
+              bots={overview ? overview.bots.map(b => ({ id: b.id, name: b.name, lifecycle: b.lifecycle, role: b.role })) : []}
               botsLoaded={overview !== null}
-              loadBotArtifacts={botId => hub.botArtifacts(botId)}
-              onOpenWake={openWake}
-              focusProjectId={state.activeProjectId}
-              focusSeq={state.projectOpenSeq}
+              selectedProjectId={state.activeProjectId}
+              onSelectProject={projectId => hub.requestProject(projectId)}
+              onOpenTopic={topicId => hub.selectThread(topicId)}
+              onNewTopic={projectId => hub.openTopicDraft(projectId)}
               openNewProject={pendingNewProject}
               onNewProjectOpened={() => setPendingNewProject(false)}
               onProjectSaved={(projectId) => {
@@ -754,13 +598,15 @@ export function HubPage(props: {
               onRetry={() => void hub.refreshInbox()}
               actions={cardActions}
               busyId={busyInboxId}
-              onOpenThread={id => { setFromHome(false); setMentionProjectId(null); setFromInbox(true); hub.selectThread(id) }}
+              onOpenThread={id => { setInboxReturnThread(id); hub.selectThread(id) }}
               focusInboxId={focusInboxId}
             />
           </BlockBoundary>
         ) : view === 'activity' ? (
           <BlockBoundary label="活动流">
             <ActivityPane
+              key={activityBotId ?? 'all'}
+              initialBotId={activityBotId}
               activity={state.activity}
               bots={overview?.bots ?? []}
               error={state.activityError}
@@ -798,22 +644,15 @@ export function HubPage(props: {
               )}
             />
           </BlockBoundary>
-        ) : mainFace === 'home' && selectedBot ? (
-          // 队友主页（P33）：中栏看「它在做什么」；右栏只在对话线程面出现。
-          <BlockBoundary label="队友主页">
-            <TeammateHomePage
-              bot={selectedBot}
-              sessions={selectedSessions}
+        ) : topicDraft !== null ? (
+          // P60：项目里「新开会话」的空聊天。key 带打开序号，再点一次就是一张全新的白纸。
+          <BlockBoundary label="新会话">
+            <TopicDraftPane
+              key={topicDraftThreadId(topicDraft)}
+              draft={topicDraft}
               project={state.project}
-              loading={state.project === null}
-              notice={homeNotice}
-              busyTaskId={homeBusyTaskId}
-              onRetry={() => void hub.refreshProject()}
-              onOpenSession={openWorkSession}
-              onComplete={completeWork}
-              onOpenThread={openTeammateThread}
-              onClaimTask={claimTaskForBot}
-              onSubmitTask={submitTaskForBot}
+              bots={overview?.bots ?? []}
+              onSendFirst={(projectId, text) => sendDraftFirstMessage(hub, projectId, text)}
             />
           </BlockBoundary>
         ) : (
@@ -844,47 +683,35 @@ export function HubPage(props: {
               onInterrupt={interrupt}
               rightCollapsed={view === 'main' && !rightOpen && selectedBot !== null}
               onExpandRight={() => setRightOpen(true)}
-              fromInbox={fromInbox}
+              fromInbox={inboxReturnThread === selectedThread}
               onBackToInbox={() => openInbox()}
-              fromHome={fromHome}
-              onBackHome={() => {
-                // 回到原队友主页；主页不标已读，线程里的消息才算读过。
-                setFromHome(false)
-                setMentionProjectId(null)
-                hub.selectTeammate(selectedThread)
-              }}
-              mention={mention}
-              openedTask={openedTask === null ? null : {
-                title: openedTask.title,
-                projectName: openedTask.projectName,
-                statusLabel: openedTask.statusLabel,
-              }}
+              topic={topicInfo}
             />
           </BlockBoundary>
         )}
-        {/* 窄屏抽屉的遮罩：宽屏由 CSS 隐藏；点一下就把详情收起。 */}
-        {view === 'main' && mainFace === 'thread' && rightOpen && selectedBot ? (
+        {/* 窄屏抽屉的遮罩：宽屏由 CSS 隐藏；点一下就把侧边栏收起。 */}
+        {view === 'main' && rightOpen && selectedBot ? (
           <div className="ah-right-scrim" aria-hidden="true" onClick={() => setRightOpen(false)} />
         ) : null}
-        {view === 'main' && mainFace === 'thread' && rightOpen && selectedBot ? (
-          <BlockBoundary label="详情">
+        {view === 'main' && rightOpen && selectedBot && overview ? (
+          <BlockBoundary label="队友侧边栏">
             <RightPanel
               key={selectedBot?.id ?? 'none'}
-              bot={selectedBot ? state.bots[selectedBot.id] ?? null : null}
+              card={selectedBot}
+              detail={state.bots[selectedBot.id] ?? null}
+              light={overview.quota.light}
+              costs={overview.costs}
+              sessions={selectedSessions}
+              onOpenSession={openWorkSession}
+              onCollapse={() => setRightOpen(false)}
+              roster={overview.bots}
               modelOptions={state.settings?.modelOptions ?? []}
               modelOptionsError={state.settings ? null : state.settingsError}
-              presetSkillOptions={state.settings?.presetSkillOptions ?? []}
               onRetrySettings={() => void hub.refreshSettings()}
-              clientCtx={props.clientCtx}
+              presetSkillOptions={state.settings?.presetSkillOptions ?? []}
+              dshSkillOptions={state.settings?.dshSkillOptions ?? []}
               run={(name, input) => hub.command(name, input)}
-              onRefresh={() => { if (selectedBot) void hub.refreshBot(selectedBot.id); void hub.refreshOverview() }}
-              onTeach={() => setTeachOpen(true)}
-              onCollapse={() => setRightOpen(false)}
-              ledgers={state.ledgers}
-              ledgerErrors={state.ledgerErrors}
-              onLoadLedger={wakeId => void hub.refreshLedgerDetail(wakeId)}
-              focusWakeId={focusWakeId}
-              focusArtifactId={focusArtifactId}
+              onRefresh={() => { void hub.refreshBot(selectedBot.id); void hub.refreshOverview() }}
             />
           </BlockBoundary>
         ) : null}

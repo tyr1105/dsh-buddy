@@ -1,4 +1,4 @@
-/** 机器人工具注册表：统一导出二十三个已校验工具，所有未知名称与异常都成为中文失败结果。 */
+/** 机器人工具注册表：统一导出二十四个已校验工具，所有未知名称与异常都成为中文失败结果。 */
 import type { HubContext } from '../engine/context.js';
 import type { ToolContext, ToolResult, HubTool } from './types.js';
 import { hubStateGet } from './hub-state-get.js';
@@ -26,12 +26,13 @@ import { hubTaskUpdate } from './hub-task-update.js';
 // P38：公共知识库只读工具（检索条目 + 按 id 读正文；未配置时不发请求）。
 import { hubKnowledgeSearch } from './hub-knowledge-search.js';
 import { hubKnowledgeRead } from './hub-knowledge-read.js';
-// P39：项目共享上下文的建议入口（队友不能直接改正文）。
-import { hubProjectContextPropose } from './hub-project-context-propose.js';
+// P60：项目负责人专用的两个工具：维护事务清单、直接更新项目背景。
+import { hubProjectTaskUpsert } from './hub-project-task-upsert.js';
+import { hubProjectBackgroundUpdate } from './hub-project-background-update.js';
 export * from './types.js';
 /** 返回中心支持的完整工具清单，让宿主注册与统一调用使用同一组定义。 */
 export function buildTools(_ctx: HubContext): HubTool[] {
-    return [hubStateGet, hubCommit, hubAgendaUpsert, hubAgendaClose, hubWatchUpdate, hubWatchPropose, hubGoalUpsert, hubOutboxSubmit, hubLessonPropose, hubReflectCommit, hubSend, hubHandoff, hubClaim, hubRelease, hubRoutineSave, hubResourceList, hubResourceRead, hubArtifactRead, hubTaskList, hubTaskUpdate, hubKnowledgeSearch, hubKnowledgeRead, hubProjectContextPropose];
+    return [hubStateGet, hubCommit, hubAgendaUpsert, hubAgendaClose, hubWatchUpdate, hubWatchPropose, hubGoalUpsert, hubOutboxSubmit, hubLessonPropose, hubReflectCommit, hubSend, hubHandoff, hubClaim, hubRelease, hubRoutineSave, hubResourceList, hubResourceRead, hubArtifactRead, hubTaskList, hubTaskUpdate, hubKnowledgeSearch, hubKnowledgeRead, hubProjectTaskUpsert, hubProjectBackgroundUpdate];
 }
 /** 按名称查找并执行工具，未知名称和异常统一转为可读失败结果。 */
 export async function runTool(ctx: HubContext, toolCtx: ToolContext, name: string, rawArgs: unknown): Promise<ToolResult> {

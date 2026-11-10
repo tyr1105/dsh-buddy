@@ -1,4 +1,7 @@
-/** 中心审批按完整内容哈希绑定一次性批准；界面决定和过期都生成明确的结果感知。 */
+/**
+ * 中心审批按完整内容哈希绑定一次性批准；界面决定和过期都生成明确的结果感知。
+ * P65：在项目主题回合里申请的审批记下来源主题，主人批准或拒绝后接着做的那一回合回到原主题。
+ */
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { z } from 'zod';
 import type { HubContext } from '../engine/context.js';
@@ -15,6 +18,8 @@ import { buildCandidate } from '../appraisal/think.js';
 import { enqueue } from '../scheduler/queue.js';
 import { describeAction, approvalDisplayText } from '../util/action-text.js';
 import { approvalModelSummary, approvalOwnerSummary } from '../util/owner-text.js';
+import { noteTopicOfOpenWake, topicIdOfOpenWake } from '../project/topics.js';
+import { followUpTopic, startTopicFollowUp } from '../project/topic-followup.js';
 /** 为工具名和规范化参数生成稳定哈希，确保批准不能移用于另一组参数。 */
 export function approvalContentHash(tool: string, args: unknown): string {
     return sha256Hex(tool + stableStringify(args));
@@ -49,15 +54,22 @@ export function prepareApproval(ctx: HubContext, botId: string, tool: string, ar
         ctx.emit(HUB_EVENT_SCOPES.bot, botId);
         return { approval: updated, notify: async () => undefined };
     }
+    // P65：记下这张审批是在哪个主题的回合里申请的（和下面那句主题提示同一个口径），
+    // 主人批准或拒绝后，接着做的那一回合回到这个主题；不在主题回合里申请的不记。
+    const topicId = topicIdOfOpenWake(ctx, botId);
     const row = parseInput(ApprovalSchema, { id: newId('ap', ctx.rng), botId, tool, actionText, actionTextVersion: 2, actionClass: input.cls,
         argsPreview: approvalPreview(args, ctx.settings.c03.approvalPreviewMaxBytes, ctx.settings.c03.approvalPreviewEdgeChars), contentHash, why,
-        status: 'pending', createdAt: now, decidedAt: null, expiresAt: now + ctx.settings.approvalExpiryMs, usedAt: null }, '审批单');
+        status: 'pending', createdAt: now, decidedAt: null, expiresAt: now + ctx.settings.approvalExpiryMs, usedAt: null,
+        ...(topicId ? { topicId } : {}) }, '审批单');
     // 同步落表先于任何 await，同一事件循环内的重复申请不会产生两张单。
     ctx.store.table('approvals').put(row);
     const { title, body } = approvalDisplayText(row, ctx.settings.c03.actionCommandMaxChars, ctx.settings.c03.approvalOwnerParamsMaxChars, stableStringify(args));
     const inbox = createInboxItem(ctx, { botId, type: 'approval', title, body,
-        options: ['批准', '拒绝'], defaultOption: '拒绝', priority: 'P1', refId: row.id, subjectKey: `approval:${row.id}`, expiresAt: row.expiresAt });
+        options: ['批准', '拒绝'], defaultOption: '拒绝', priority: 'P1', refId: row.id, subjectKey: `approval:${row.id}`, expiresAt: row.expiresAt,
+        ...(topicId ? { topicId } : {}) });
     postThread(ctx, { thread: botId, from: 'hub', kind: 'approval', text: body, refId: inbox.id });
+    // P63：审批的去处不变，只在主题里留一句提示，主人才知道这边在等它批准。
+    noteTopicOfOpenWake(ctx, botId, '这一步要你批准，已放进「待你处理」；批准后它会接着做。', inbox.id);
     /** 落表与决定同步完成，通知可由同步宿主钩子交给中心跟踪。 */
     const notify = async (): Promise<void> => { try {
         const result = await requestPush(ctx, { botId, level: 'P1', title: inbox.title, body: inbox.body, subjectKey: inbox.subjectKey });
@@ -101,10 +113,16 @@ function finishDecision(ctx: HubContext, row: Approval, status: 'approved' | 're
         ctx.store.table('inbox').patch(inbox.id, { status: status === 'expired' ? 'expired' : 'answered', answer: status === 'approved' ? '批准' : '拒绝', answeredAt: now });
     }
     const percept = recordApprovalDecision(ctx, { botId: row.botId, id: `${row.id}:${status}`, summary, at: now });
+    // P65：在主题里申请、主人亲手批准或拒绝、主题还能接着聊时，接着做的那一回合回到主题，
+    // 并和主题里其他回合一样算主人发起；过期是中心处理的，照旧落私聊。
+    const topic = status === 'expired' ? null : followUpTopic(ctx, row.botId, row.topicId);
     const candidate = buildCandidate(ctx, { botId: row.botId, kind: 'approval_decided', score: ctx.settings.c02.replySalience, summary, ownerSummary,
-        evidence: [row.id, ...(percept ? [percept.id] : [])], subjectKey: `approval:${row.id}`, now });
+        evidence: [row.id, ...(percept ? [percept.id] : [])], subjectKey: `approval:${row.id}`, now,
+        ...(topic ? { topicId: topic.id, ownerInitiated: true } : {}) });
     candidate.priority = ctx.settings.c02.priorities.reply;
-    enqueue(ctx, candidate);
+    // 审批卡在私聊里，私聊照旧记一笔结果；来自主题的，主题里另落一句同样的话（「你批准了：……」）。
+    if (topic) startTopicFollowUp(ctx, { topic, candidate, perceptId: percept?.id ?? null, note: ownerSummary, refId: row.id });
+    else enqueue(ctx, candidate);
     postThread(ctx, { thread: row.botId, from: 'hub', kind: 'system', text: ownerSummary, refId: row.id });
     ctx.emit(HUB_EVENT_SCOPES.activity, row.botId);
     ctx.emit(HUB_EVENT_SCOPES.inbox, row.botId);

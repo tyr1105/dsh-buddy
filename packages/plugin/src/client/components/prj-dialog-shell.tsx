@@ -3,8 +3,8 @@
  * - DialogShell：遮罩 + 宽对话框 + 头部关闭，焦点圈定走 useDialogFocus
  *   （打开聚焦、Tab 不外逃、Esc 关闭、提交中不关闭），项目页所有模态表单共用；
  * - FieldError：字段级错误，命令错误优先显示在外壳底部，避免同一句红字出现两遍；
- * - botText：队友选项的一行文案（名字＋生命周期），项目表单与派活对话框共用。
- * 单独成文件是因为 project-dialogs.tsx 加入五模式派活框后会超过单文件 400 行上限。
+ * - botText：队友选项的一行文案（名字＋生命周期），项目表单里选负责人和成员时用。
+ * 单独成文件是为了让 project-dialogs.tsx 聚焦项目表单本身，也方便其他弹窗复用外壳。
  */
 import { type ReactNode } from 'react'
 import type { BotOption } from '../logic/project-page.js'
@@ -18,11 +18,13 @@ export function DialogShell(props: {
   children: ReactNode
   footer: ReactNode
   error?: string | null
+  /** 个别弹窗要自己的布局时（比如编辑队友的中间滚动）追加的类名。 */
+  className?: string
 }): ReactNode {
   const ref = useDialogFocus(props.onClose, props.busy)
   return (
     <div className="ah-dialog-mask" ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={props.title}>
-      <div className="ah-dialog ah-dialog-wide ah-prj-dialog">
+      <div className={`ah-dialog ah-dialog-wide ah-prj-dialog${props.className ? ` ${props.className}` : ''}`}>
         <header className="ah-wizard-head">
           <h2>{props.title}</h2>
           <button type="button" className="ah-btn ah-btn-ghost" disabled={props.busy} onClick={props.onClose}>关闭</button>

@@ -45,6 +45,8 @@ export function useDialogFocus(onClose: () => void, busy: boolean) {
     const keydown = (event: KeyboardEvent): void => {
       try {
         if (event.key === 'Escape') {
+          // 中文输入法组词时 Esc 是用来取消候选词的，不能当成关窗（编辑队友的表单在弹窗里，主人常在这里打字）。
+          if (event.isComposing || event.keyCode === 229) return
           event.preventDefault(); event.stopPropagation()
           if (!latest.current.busy) latest.current.onClose()
         }

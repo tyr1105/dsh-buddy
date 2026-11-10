@@ -54,6 +54,12 @@ function migrateLegacyRow(name: TableName, record: StoredRecord): { row: StoredR
   } else if (name === 'bots') {
     // P40 预置 skill：旧档案没有这个字段，按空数组兼容并标脏，不替主人勾选任何一项。
     fill('presetSkillIds', []);
+    // P55 配置精简：旧档案没有这些字段，补默认值并标脏，不替主人选任何东西。
+    fill('dshSkillNames', []);
+    fill('temperament', null);
+    fill('speechStyle', null);
+    fill('brief', '');
+    fill('onDemand', false);
   } else if (name === 'resources') {
     drop('ownerDepartmentId');
   } else if (name === 'grants') {

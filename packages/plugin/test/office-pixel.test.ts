@@ -20,6 +20,7 @@ import {
   DEFAULT_OFFICE_PALETTE, OFFICE_BUBBLE_TONES, officePixelFrame, paintOfficeFrame,
   type OfficePalette,
 } from '../src/client/office-pixel/render.js'
+import { OFFICE_SUN_COLOR } from '../src/client/office-pixel/window-view.js'
 
 describe('固定布局：两排三列，空位也留桌椅', () => {
   it('正好六个工位，两排三列，序号唯一', () => {
@@ -130,10 +131,13 @@ describe('墙面陈设与地面光影（P36 画面补强）', () => {
     expect(sky.some(rect => rect.x < 234)).toBe(true)
     expect(sky.some(rect => rect.x > 234)).toBe(true)
     expect(frame.rects.filter(rect => rect.color === palette.windowSkyDeep).length).toBeGreaterThanOrEqual(2)
-    expect(frame.rects.some(rect => rect.color === palette.lampBulb && rect.y < 86)).toBe(true)
+    // 默认十点十分：只有一个太阳，这个时间在工作区那扇窗里。
+    const sun = frame.rects.filter(rect => rect.color === OFFICE_SUN_COLOR)
+    expect(sun.length).toBeGreaterThan(0)
+    expect(sun.every(rect => rect.x < 234 && rect.y < 86)).toBe(true)
   })
 
-  it('挂钟、公告栏、壁灯与管道都在墙带内，且高度错开', () => {
+  it('挂钟、公告栏、吸顶灯与立柱都在墙带内，且高度错开', () => {
     const clock = frame.rects.find(rect => rect.color === palette.clockFace)
     expect(clock).toBeDefined()
     expect(clock!.y + clock!.h).toBeLessThanOrEqual(86)
@@ -141,11 +145,11 @@ describe('墙面陈设与地面光影（P36 画面补强）', () => {
     expect(cork).toHaveLength(1)
     // 公告栏在共享区，不跟工位区的窗、钟挤在一起。
     expect(cork[0]!.x).toBeGreaterThanOrEqual(234)
-    // 两盏壁灯加两扇窗里的太阳都用灯色，且都贴在墙上。
+    // 吸顶灯板都用灯色，而且都在墙带以内，地面的物件不许用这个颜色。
     const bulbs = frame.rects.filter(rect => rect.color === palette.lampBulb)
     expect(bulbs.length).toBeGreaterThanOrEqual(3)
     expect(bulbs.every(rect => rect.y < 86)).toBe(true)
-    // 管道是一根贯通墙面的竖条，不是又一件小摆设。
+    // 立柱是一根贯通墙面的竖条，不是又一件小摆设。
     expect(frame.rects.some(rect => rect.color === palette.metal && rect.h >= 60 && rect.y === 0)).toBe(true)
     // 墙饰顶边至少两种高度，避免排成一条。
     const tops = new Set([clock!.y, cork[0]!.y, ...bulbs.map(rect => rect.y)])

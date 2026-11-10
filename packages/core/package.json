@@ -1,7 +1,7 @@
 {
   "name": "@agent-hub/core",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "主动性引擎核心：纯 TypeScript，不依赖任何 DSH 包；时间、文件、网络、子进程、宿主全部通过注入的接口访问",
   "main": "src/index.ts",

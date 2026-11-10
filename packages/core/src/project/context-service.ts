@@ -32,6 +32,7 @@ import {
 } from './context.js';
 import { posix } from 'node:path';
 import { ensureProjectSharedDir } from './shared-dir.js';
+import { requireProjectOwnerBot } from './owner-rules.js';
 
 /** 主人编辑时提交的一条决策：带 id 表示已有项，不带表示新增。 */
 const DecisionInputSchema = z.strictObject({
@@ -161,7 +162,10 @@ async function writeContext(
   });
   // 留痕只保留最近 N 条（卡片默认 50）：旧记录被移出列表，但正文文件与审计仍在。
   const revisions = [...project.contextRevisions, revision].slice(-V2_DEFAULTS.PROJECT_CONTEXT_REVISION_MAX);
-  const record = ctx.store.table('projects').patch(project.id, { context: next, contextRevisions: revisions, updatedAt: now });
+  // P60：项目页要显示背景是谁、什么时候更新的；只有背景这一段真的变了才记。
+  const backgroundChanged = next.background !== project.context.background;
+  const record = ctx.store.table('projects').patch(project.id, { context: next, contextRevisions: revisions, updatedAt: now,
+    ...(backgroundChanged ? { backgroundUpdatedAt: now, backgroundUpdatedBy: meta.editorId } : {}) });
   writeOutreachAudit(ctx, 'project_context_update', {
     id: project.id, name: project.name, hash, summary: revision.summary,
     editorId: revision.editorId, editorKind: revision.editorKind, source: revision.source,
@@ -180,6 +184,27 @@ export async function saveProjectContext(ctx: HubContext, raw: unknown): Promise
   const next = mergeContext(ctx, project, input, 'owner');
   // 全部校验通过后才取随机数并碰盘，失败命令不留半条记录。
   return writeContext(ctx, project, next, { editorId: 'owner', editorKind: 'owner', source: 'owner_edit' });
+}
+
+/** 负责人更新背景的入参：只收背景这一段，其他三段仍归主人。 */
+export const OwnerBackgroundUpdateSchema = z.strictObject({
+  projectId: recordId('prj'),
+  background: nonempty.trim().min(1, '项目背景不能为空').max(2000, '项目背景不能超过 2000 字'),
+});
+
+/**
+ * 项目负责人随项目推进直接更新背景（P60，DC35）：不经主人采纳，但照样写文件、留痕、记谁改的。
+ * 只有这个项目的负责人能调用，项目必须进行中。内容没变时不留痕，返回 changed=false。
+ */
+export async function updateProjectBackgroundByOwner(ctx: HubContext, botId: string, raw: unknown): Promise<{ project: Project; changed: boolean }> {
+  const input = parseInput(OwnerBackgroundUpdateSchema, raw, '项目背景更新');
+  const project = ctx.store.table('projects').get(input.projectId);
+  if (!project) throw new Error(`项目不存在：${input.projectId}`);
+  requireProjectOwnerBot(project, botId);
+  if (project.status !== 'active') throw new Error(`项目「${project.name}」当前不是进行中，暂不能更新背景`);
+  const next = ProjectContextSchema.parse({ ...project.context, background: input.background });
+  const record = await writeContext(ctx, project, next, { editorId: botId, editorKind: 'bot', source: 'owner_bot' });
+  return { project: record, changed: record !== project };
 }
 
 /**

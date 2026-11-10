@@ -35,7 +35,8 @@ export function evaluateDrives(ctx: HubContext, now: number): Candidate[] {
     const progressed = previous && commits.some(item => item.outcome === 'progress' && item.createdAt > previous.updatedAt && item.createdAt <= now);
     if (progressed) {
       state.stagnation = state.obligation = state.waiting = state.frustration = 0;
-    } else {
+    } else if (!bot.onDemand) {
+      // P55：听吩咐的队友没有内驱，只有上面的状态快照还在更新。
       for (const fact of driveFacts(bot, goals, agenda, inbox, handoffs, commits, now, ctx.settings)) {
         if (state.firedToday >= ctx.settings.driveDailyCap) break;
         if ((state.snoozedUntil[fact.name] ?? 0) > now) continue;

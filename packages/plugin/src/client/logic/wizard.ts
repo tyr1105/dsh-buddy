@@ -1,46 +1,81 @@
 /**
- * 新建队友向导的纯逻辑：步骤校验、示例文案、复述一句话、createBot 入参拼装、
- * 草稿的内存与 localStorage 读写（读写包 try/catch，坏了当没有草稿）。
- * 全部是纯函数（除了 localStorage 两个小函数），供 NewBotWizard 组件与测试共用。
- * MBTI 只是性格选项：选项表集中在 MBTI_OPTIONS，校验与提交都在这一层。
+ * 队友配置的纯逻辑（P55 精简后）：选项表、校验、入参拼装、草稿读写。
+ *
+ * 主人把配置收成八项：名字、执行风格、性格、说话风格、MBTI、自主节奏、模型、岗位技能，
+ * 其余要求都写进员工说明。新建队友和编辑队友共用这里的规则，两边不会各说各话。
+ *
+ * 除了 localStorage 的两个小函数，这里全是纯函数，组件和测试共用。
  */
-import type { MbtiType } from '../../shared/views.js'
+import type { MbtiType, Role, SpeechStyle, Temperament } from '../../shared/views.js'
 
-/** 四种角色卡片（向导第 1 步展示；文案与任务卡一致）。 */
-export interface RoleCard { role: 'chief' | 'researcher' | 'executor' | 'sentinel'; label: string; desc: string }
+// ---------- 选项表 ----------
+
+/** 五种执行风格；总管全队只能有一个，建议风格不能选会动手的节奏。 */
+export interface RoleCard { role: Role; label: string; desc: string }
 
 export const ROLE_CARDS: readonly RoleCard[] = [
-  { role: 'chief', label: '总管', desc: '统筹全队、分派与跟进，最多 1 个' },
-  { role: 'researcher', label: '调研', desc: '盯信息源、做研究、写结论' },
-  { role: 'executor', label: '执行', desc: '把事情做完，按规矩交付' },
-  { role: 'sentinel', label: '盯守', desc: '盯运行记录与期望，异常就报' },
+  { role: 'chief', label: '总管', desc: '统筹分派，最多 1 个' },
+  { role: 'researcher', label: '调研', desc: '查资料、写结论' },
+  { role: 'executor', label: '执行', desc: '把事情做完' },
+  { role: 'sentinel', label: '盯守', desc: '盯着运行，异常就报' },
+  { role: 'advisor', label: '建议', desc: '提意见，不动手' },
 ]
 
-/** 8 个预设头像色板（数据驱动的颜色，允许以值存在；渲染时走内联样式）。 */
-export const PRESET_COLORS: readonly string[] = [
-  '#6366f1', '#0ea5e9', '#10b981', '#84cc16',
-  '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6',
+/** 一道选择题的选项：value 提交给 core，desc 说清选了之后它会怎样。 */
+export interface ChoiceOption<T extends string> { value: T; label: string; desc: string }
+
+/** 性格选择题；每项写进身份文件的话在 core 的 persona-choices.ts，id 由测试保证一致。 */
+export const TEMPERAMENT_OPTIONS: ReadonlyArray<ChoiceOption<Temperament>> = [
+  { value: 'steady', label: '稳重靠谱', desc: '按事实和流程办事，不冒进。' },
+  { value: 'rigorous', label: '严谨较真', desc: '证据不够不下结论，细节不放过。' },
+  { value: 'cheerful', label: '开朗热情', desc: '积极回应，愿意鼓励别人。' },
+  { value: 'inventive', label: '点子很多', desc: '爱提新想法，敢试不同的路。' },
+  { value: 'calm', label: '冷静寡言', desc: '话不多，只说关键的。' },
+  { value: 'gentle', label: '温和细心', desc: '替别人着想，说话留余地。' },
 ]
 
-/** 色板的中文名（无障碍标签用，如「头像颜色：绿色」；颜色本体仍走内联样式）。 */
-export const COLOR_NAMES: Readonly<Record<string, string>> = {
-  '#6366f1': '靛蓝', '#0ea5e9': '天蓝', '#10b981': '绿色', '#84cc16': '黄绿',
-  '#f59e0b': '琥珀', '#ef4444': '红色', '#ec4899': '粉色', '#8b5cf6': '紫色',
+/** 说话风格选择题。 */
+export const SPEECH_STYLE_OPTIONS: ReadonlyArray<ChoiceOption<SpeechStyle>> = [
+  { value: 'conclusion_first', label: '结论先行', desc: '第一句给结论，再说依据。' },
+  { value: 'brief', label: '简短干脆', desc: '能一句说完就不说两句。' },
+  { value: 'detailed', label: '详细周到', desc: '把背景和理由讲清楚。' },
+  { value: 'gentle', label: '温和客气', desc: '语气柔和，多用商量的口吻。' },
+  { value: 'blunt', label: '直来直去', desc: '有问题直接指出，不绕弯。' },
+  { value: 'playful', label: '轻松幽默', desc: '可以开点小玩笑，但不耽误正事。' },
+]
+
+/** 自主节奏：把原来的自主等级和节奏合成一道题。 */
+export type Rhythm = 'on_demand' | 'advise' | 'act' | 'drive'
+export type PaceValue = 'active' | 'normal' | 'quiet'
+export type AutonomyValue = 'L0' | 'L1' | 'L2' | 'L3'
+
+export interface RhythmOption extends ChoiceOption<Rhythm> {
+  autonomy: 'L1' | 'L2'
+  pace: PaceValue
+  onDemand: boolean
 }
 
-/** 自主等级（L3 不出现在向导里，只能主人手动设）。 */
-export const AUTONOMY_OPTIONS: ReadonlyArray<{ value: 'L0' | 'L1' | 'L2'; label: string }> = [
-  { value: 'L0', label: 'L0 只观察' },
-  { value: 'L1', label: 'L1 建议（默认）' },
-  { value: 'L2', label: 'L2 执行' },
+export const RHYTHM_OPTIONS: readonly RhythmOption[] = [
+  { value: 'on_demand', label: '听吩咐', desc: '你点名或派活才动', autonomy: 'L1', pace: 'quiet', onDemand: true },
+  { value: 'advise', label: '提建议', desc: '动手前先问你', autonomy: 'L1', pace: 'normal', onDemand: false },
+  { value: 'act', label: '主动做', desc: '常规事直接做', autonomy: 'L2', pace: 'normal', onDemand: false },
+  { value: 'drive', label: '全力推进', desc: '自己找事往前推', autonomy: 'L2', pace: 'active', onDemand: false },
 ]
 
-/** 节奏档。 */
-export const PACE_OPTIONS: ReadonlyArray<{ value: 'active' | 'normal' | 'quiet'; label: string }> = [
-  { value: 'active', label: '积极' },
-  { value: 'normal', label: '适中（默认）' },
-  { value: 'quiet', label: '安静' },
-]
+/** 建议风格只提意见，不能选会动手的两档；core 也有同样的校验。 */
+export function rhythmAllowed(role: Role | '', rhythm: Rhythm): boolean {
+  return role !== 'advisor' || rhythm === 'on_demand' || rhythm === 'advise'
+}
+
+/**
+ * 从已有档案反推选中哪一档。老队友可能是 L0、L3 或别的组合，这里取最接近的一档显示；
+ * 只要主人不改这一项，保存时就不会动它原来的等级（见 buildProfilePatch）。
+ */
+export function rhythmOf(profile: { autonomy: AutonomyValue; pace: PaceValue; onDemand: boolean }): Rhythm {
+  if (profile.onDemand) return 'on_demand'
+  if (profile.autonomy === 'L0' || profile.autonomy === 'L1') return 'advise'
+  return profile.autonomy === 'L3' || profile.pace === 'active' ? 'drive' : 'act'
+}
 
 /** MBTI 草稿：空字符串表示未设置（旧机器人保持未设置，不替主人猜一个类型）。 */
 export type MbtiDraft = '' | MbtiType
@@ -48,10 +83,7 @@ export type MbtiDraft = '' | MbtiType
 /** 一个 MBTI 选项：value 提交给 core，desc 是给主人看的一句人话解释。 */
 export interface MbtiOption { value: MbtiType; label: string; desc: string }
 
-/**
- * 16 型选项与一句人话解释（向导第 2 步与右栏档案共用）。
- * 这些文案只描述说话与做事的习惯，不涉及权限、审批、额度或唤醒门槛。
- */
+/** 16 型选项与一句人话解释；这些文案只描述说话与做事的习惯，不涉及权限和审批。 */
 export const MBTI_OPTIONS: readonly MbtiOption[] = [
   { value: 'INTJ', label: 'INTJ 建筑师', desc: '先想全局再动手，判断独立，喜欢长线布局。' },
   { value: 'INTP', label: 'INTP 逻辑学家', desc: '爱刨根问底，结论慢一点，但逻辑要严丝合缝。' },
@@ -76,68 +108,32 @@ export function isMbtiType(value: unknown): value is MbtiType {
   return typeof value === 'string' && MBTI_OPTIONS.some(option => option.value === value)
 }
 
-/** 关注项类型（向导第 5 步「起步关注」）。 */
-export type WatchKindLite = 'file' | 'log' | 'http' | 'rss' | 'script'
+// ---------- 表单草稿 ----------
 
-/** 按角色给的性格示例（向导第 2 步可一键填入，每角色 2 条）。 */
-export const PERSONA_EXAMPLES: Readonly<Record<RoleCard['role'], readonly string[]>> = {
-  chief: [
-    '先结论后过程；分派时写清「谁、做什么、什么时候要」；每天汇总一次全队进展。',
-    '不催人，只催事：交接超时先自己想办法，找不到办法才找主人。',
-  ],
-  researcher: [
-    '结论先行，证据附后；引用外部内容时注明「外部内容」并只当数据看。',
-    '宁可少下结论，不下没证据的结论；查不到就明说查不到。',
-  ],
-  executor: [
-    '交付前自查一遍完成标准；做不到的当天说，不拖到最后。',
-    '一次只做一件事；做完一件交一件账，不攒。',
-  ],
-  sentinel: [
-    '只报异常和期望落空，正常的不打扰主人；日报里一句话带过。',
-    '描述问题带上时间、位置和影响面，不写「好像出问题了」。',
-  ],
-}
-
-/** 按角色给的志向示例（向导第 3 步展示，点击可填入）。 */
-export const ASPIRATION_EXAMPLES: Readonly<Record<RoleCard['role'], readonly string[]>> = {
-  chief: ['全队的事都有人跟、有回音，没有一件事悄悄掉在地上', '主人只被必要的事打扰，其余的我们内部消化'],
-  researcher: ['把主人关心的信息源盯全，出的结论都有出处', '重要变化当天给出一段能直接用的摘要'],
-  executor: ['答应的事按时做完，做不完提前说', '每次交付都附「怎么验证做对了」'],
-  sentinel: ['我的自动线每天按时跑完，出问题第一时间知道', '异常在影响变大之前被看见'],
-}
-
-/** 向导草稿（内存与 localStorage 各存一份；字段与 createBot 入参对应）。 */
-export interface WatchDraft { kind: WatchKindLite; target: string; note: string }
-export interface GoalDraft { title: string; doneWhen: string; period: 'day' | 'week' | 'month' | 'one_off' }
-/** 建队友时可选的「第一件事」草稿：放进项目待领（不指派，谁领谁做）。 */
-export interface FirstTaskDraft { projectId: string; title: string }
-export interface WizardDraft {
-  step: number                       // 0–5，当前走到哪一步
+/** 八项配置的表单状态；新建队友和编辑队友用同一份形状。 */
+export interface BotConfigDraft {
   name: string
-  role: RoleCard['role'] | ''
-  color: string
-  persona: string
-  mbti: MbtiDraft                    // '' = 未设置；提交时转成 null
-  aspirations: string[]              // 志向 1–3 条
-  goal: GoalDraft | null             // 可选的第一个目标
-  autonomy: 'L0' | 'L1' | 'L2'
-  pace: 'active' | 'normal' | 'quiet'
-  model: string                      // ''/'null' = 跟随宿主默认（提交 model:null）；否则 modelOptions 的 value 序列化
-  /** P40：勾选的预置 skill id；空数组 = 不启用，行为与未接入时完全一致。 */
+  role: Role | ''
+  temperament: Temperament | ''
+  speechStyle: SpeechStyle | ''
+  mbti: MbtiDraft
+  rhythm: Rhythm
+  /** ''/'null' = 跟随 DSH 默认；否则是模型选项 value 的 JSON。 */
+  model: string
   presetSkillIds: string[]
-  watch: WatchDraft | null           // 起步关注（可跳过）
-  firstTask: FirstTaskDraft | null   // 可选：第一件事放进项目待领（不指派，谁领谁做）
+  dshSkillNames: string[]
+  brief: string
 }
 
-export function emptyDraft(): WizardDraft {
+export function emptyDraft(): BotConfigDraft {
   return {
-    step: 0, name: '', role: '', color: PRESET_COLORS[0]!, persona: '', mbti: '', aspirations: [''],
-    goal: null, autonomy: 'L1', pace: 'normal', model: '', presetSkillIds: [], watch: null, firstTask: null,
+    name: '', role: '', temperament: '', speechStyle: '', mbti: '', rhythm: 'advise',
+    model: '', presetSkillIds: [], dshSkillNames: [], brief: '',
   }
 }
 
-const DRAFT_KEY = 'dsh-buddy:wizard-draft:v1'
+/** 六步向导的旧草稿形状对不上，换一个键，旧内容不再读取。 */
+const DRAFT_KEY = 'dsh-buddy:wizard-draft:v2'
 
 /** 可注入的持久层（默认用浏览器 localStorage；测试传内存版）。 */
 type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -152,21 +148,24 @@ function storage(): DraftStorage | null {
 }
 
 /** 草稿存 localStorage（读写全部 try/catch：隐私模式或超额时当没有草稿）。 */
-export function saveDraft(draft: WizardDraft, store: DraftStorage | null = storage()): void {
+export function saveDraft(draft: BotConfigDraft, store: DraftStorage | null = storage()): void {
   try { store?.setItem(DRAFT_KEY, JSON.stringify(draft)) } catch { /* 存不进去就算了 */ }
 }
 
-/** 读回草稿；坏数据返回 null（不把向导卡死在别人的旧草稿上）。 */
-export function loadDraft(store: DraftStorage | null = storage()): WizardDraft | null {
+/** 只留字符串；旧草稿里的脏数据不带进表单。 */
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+/** 读回草稿；坏数据返回 null（不把表单卡死在别人的旧草稿上）。 */
+export function loadDraft(store: DraftStorage | null = storage()): BotConfigDraft | null {
   try {
     const raw = store?.getItem(DRAFT_KEY) ?? null
     if (raw === null) return null
-    const value = JSON.parse(raw) as Partial<WizardDraft>
-    if (typeof value?.name !== 'string' || typeof value?.step !== 'number') return null
-    // 旧草稿没有 mbti 字段：按「未设置」读回，不替主人补一个默认型。
+    const value = JSON.parse(raw) as Partial<BotConfigDraft>
+    if (typeof value?.name !== 'string') return null
     return { ...emptyDraft(), ...value, mbti: isMbtiType(value.mbti) ? value.mbti : '',
-      // 旧草稿没有预置 skill 字段，且不能把非字符串脏数据带进表单。
-      presetSkillIds: Array.isArray(value.presetSkillIds) ? value.presetSkillIds.filter((id): id is string => typeof id === 'string') : [] }
+      presetSkillIds: stringList(value.presetSkillIds), dshSkillNames: stringList(value.dshSkillNames) }
   } catch {
     return null
   }
@@ -177,7 +176,7 @@ export function clearDraft(store: DraftStorage | null = storage()): void {
   try { store?.removeItem(DRAFT_KEY) } catch { /* 忽略 */ }
 }
 
-// ---------- 每步校验（错误信息中文、说清哪一项不对） ----------
+// ---------- 校验 ----------
 
 /** 名字：1–20 字、不与现有机器人重名（重名实时提示）。 */
 export function validateName(name: string, existingNames: readonly string[]): string | null {
@@ -188,119 +187,117 @@ export function validateName(name: string, existingNames: readonly string[]): st
   return null
 }
 
-/** 性格与说话风格：可空，但填了不超过 300 字。 */
-export function validatePersona(persona: string): string | null {
-  if ([...persona.trim()].length > 300) return '性格与说话风格：不能超过 300 字'
-  return null
-}
+/** 员工说明的字数上限，和 core 的校验一致。 */
+export const BRIEF_MAX = 1000
 
-/** MBTI：可跳过（''），选了必须是 16 型之一；它只是性格选项，不承担权限。 */
+/** MBTI：可跳过（''），选了必须是 16 型之一。 */
 export function validateMbti(mbti: string): string | null {
   return mbti === '' || isMbtiType(mbti) ? null : 'MBTI：请从列表里选一个类型，或选「不设置」'
 }
 
-/** 志向文本（多行，一行一条）解析成非空列表。 */
-export function parseAspirations(text: string): string[] {
-  return text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '')
+/** 整张表单的第一个问题；按从上到下的顺序，主人先看到最上面的那一项。 */
+export function configProblem(draft: BotConfigDraft, existingNames: readonly string[]): string | null {
+  return validateName(draft.name, existingNames)
+    ?? (draft.role === '' ? '执行风格：选一张卡片' : null)
+    ?? validateMbti(draft.mbti)
+    ?? ([...draft.brief.trim()].length > BRIEF_MAX ? `员工说明：不能超过 ${BRIEF_MAX} 字` : null)
 }
 
-/** 志向：必须 1–3 条、每条非空。 */
-export function validateAspirations(lines: readonly string[]): string | null {
-  if (lines.length < 1) return '志向：至少写 1 条（它是队友存在的理由）'
-  if (lines.length > 3) return '志向：最多 3 条，挑最重要的'
+/** 错误文案前缀对应到字段，错误才能显示在对应字段旁边。 */
+export type ConfigField = 'name' | 'role' | 'brief'
+
+export function problemField(problem: string | null): ConfigField | null {
+  if (problem === null) return null
+  if (problem.startsWith('名字')) return 'name'
+  if (problem.startsWith('执行风格')) return 'role'
+  if (problem.startsWith('员工说明')) return 'brief'
   return null
 }
 
-/** 起步关注：file/log 要绝对路径（给「选择路径」输入框）；http/rss 校验 URL；script 给命令。 */
-export function validateWatchTarget(kind: WatchKindLite, target: string): string | null {
-  const t = target.trim()
-  if (t === '') return '关注目标：不能为空'
-  if (kind === 'http' || kind === 'rss') {
-    try {
-      const url = new URL(t)
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error()
-    } catch {
-      return '关注目标：网页 / RSS 要填 http(s) 开头的完整网址'
-    }
-  }
-  if ((kind === 'file' || kind === 'log') && !t.startsWith('/') && !t.startsWith('~')) {
-    return '关注目标：文件 / 日志要填以 / 或 ~ 开头的完整路径'
-  }
-  return null
+// ---------- 拼入参 ----------
+
+/** 选中的那一档节奏；传了不存在的值就退回默认档，不让表单崩掉。 */
+function rhythmOption(rhythm: Rhythm): RhythmOption {
+  return RHYTHM_OPTIONS.find(option => option.value === rhythm) ?? RHYTHM_OPTIONS[1]!
 }
 
-/** 第一件事放进项目待领：项目必须在可选列表里，标题 1–120 字（与 core 的 saveTask 口径一致）。 */
-export function validateFirstTask(task: FirstTaskDraft, projectIds: readonly string[]): string | null {
-  if (task.projectId === '') return '项目待领：先选一个项目'
-  if (!projectIds.includes(task.projectId)) return '项目待领：这个项目已经不在了，换一个'
-  const title = task.title.trim()
-  if (title === '') return '项目待领：任务标题不能为空；不想加就点「不放进项目」'
-  if ([...title].length > 120) return '项目待领：任务标题不能超过 120 字'
-  return null
+/** 表单里的模型字符串翻成 core 要的值：跟随默认是 null，其余是 {provider, model}。 */
+function modelValue(model: string): unknown {
+  return model === '' || model === 'null' ? null : JSON.parse(model) as unknown
 }
 
-/** 向导某一步整体能否点「下一步」（第 0 步名字 + 角色 + 颜色）。 */
-export function stepError(draft: WizardDraft, existingNames: readonly string[]): string | null {
-  switch (draft.step) {
-    case 0:
-      // 先指名字再指角色：空表单时主人第一眼要找的是输入框，而不是卡片（U01 第 2 轮遗留）。
-      return validateName(draft.name, existingNames)
-        ?? (draft.role === '' ? '角色：选一张卡片' : null)
-    case 1: return validatePersona(draft.persona) ?? validateMbti(draft.mbti ?? '')
-    case 2: {
-      const lines = draft.aspirations.map(l => l.trim()).filter(l => l !== '')
-      return validateAspirations(lines)
-    }
-    case 4:
-      return draft.watch === null ? null : validateWatchTarget(draft.watch.kind, draft.watch.target)
-    default: return null
-  }
-}
-
-// ---------- 复述与入参 ----------
-
-/** 确认页的一段话复述（任务卡原文格式）。 */
-export function wizardSummary(draft: WizardDraft, roleLabel: string): string {
-  const aspirations = draft.aspirations.map(l => l.trim()).filter(l => l !== '')
-  const aspirationText = aspirations.length > 0 ? `我的志向是${aspirations.join('；')}` : ''
-  const watchText = draft.watch && draft.watch.target.trim() !== ''
-    ? `我会先盯着${draft.watch.target.trim()}`
-    : '我会先熟悉自己的家目录，再自己提议要盯什么'
-  return `我是${draft.name.trim() || '（还没起名）'}，${roleLabel}。${aspirationText}。${watchText}，有事项将在此通知。`
-}
-
-/** 把草稿拼成 createBot 命令的 input（关注项与目标可选；颜色随后用 updateBot 存）。 */
-export function buildCreateBotInput(draft: WizardDraft): Record<string, unknown> {
-  const aspirations = draft.aspirations.map(l => l.trim()).filter(l => l !== '')
+/** 把表单拼成 createBot 的入参；persona 和志向由 core 自动生成。 */
+export function buildCreateBotInput(draft: BotConfigDraft): Record<string, unknown> {
+  const rhythm = rhythmOption(draft.rhythm)
   const input: Record<string, unknown> = {
     name: draft.name.trim(),
     role: draft.role,
-    persona: draft.persona.trim() === '' ? `我是${draft.name.trim()}，按${draft.role === 'chief' ? '总管' : draft.role === 'researcher' ? '调研' : draft.role === 'executor' ? '执行' : '盯守'}的方式做事。` : draft.persona.trim(),
-    aspirations,
-    autonomy: draft.autonomy,
-    pace: draft.pace,
+    temperament: draft.temperament === '' ? null : draft.temperament,
+    speechStyle: draft.speechStyle === '' ? null : draft.speechStyle,
     // MBTI 可跳过：未设置显式提交 null，让 core 保持「未设置」而不是补默认型。
-    mbti: draft.mbti ? draft.mbti : null,
+    mbti: draft.mbti === '' ? null : draft.mbti,
+    autonomy: rhythm.autonomy,
+    pace: rhythm.pace,
+    onDemand: rhythm.onDemand,
+    brief: draft.brief.trim(),
+    // 「跟随 DSH 默认」显式提交 null：省略会继承中心设置里的默认模型，并不跟随 DSH。
+    model: modelValue(draft.model),
   }
-  // D07 第 8 条：「跟随 DSH 默认」显式提交 model:null（不是省略——省略会继承中心
-  // 设置里的默认模型，并不跟随 DSH）；选了具体模型则提交 {provider, model}。
-  input.model = draft.model === '' || draft.model === 'null' ? null : JSON.parse(draft.model) as unknown
-  // P40：不勾选就不提交这个字段，保持与接入前完全一致的 createBot 入参。
   if (draft.presetSkillIds.length > 0) input.presetSkillIds = [...draft.presetSkillIds]
-  if (draft.goal && draft.goal.title.trim() !== '') {
-    input.goals = [{
-      aspirationIndex: 0,
-      title: draft.goal.title.trim(),
-      doneWhen: draft.goal.doneWhen.trim() || '主人验收通过',
-      period: draft.goal.period,
-    }]
-  }
-  if (draft.watch && draft.watch.target.trim() !== '') {
-    input.watches = [{
-      kind: draft.watch.kind,
-      target: draft.watch.target.trim(),
-      why: draft.watch.note.trim() === '' ? '起步关注：主人建队时指定' : draft.watch.note.trim(),
-    }]
-  }
+  if (draft.dshSkillNames.length > 0) input.dshSkillNames = [...draft.dshSkillNames]
   return input
+}
+
+/** 从详情生成编辑用的表单，字段只取这里用得到的。 */
+export function draftFromProfile(card: { name: string; role: Role }, profile: {
+  persona: string; mbti: MbtiType | null; autonomy: AutonomyValue; pace: PaceValue; onDemand: boolean
+  temperament: Temperament | null; speechStyle: SpeechStyle | null; brief: string
+  model: unknown; presetSkillIds: readonly string[]; dshSkillNames: readonly string[]
+}): BotConfigDraft {
+  // 老队友的性格是一段自由文字，选择题表达不了。先放进员工说明，主人改选择题时这段话才不会丢。
+  const legacyPersona = profile.temperament === null && profile.speechStyle === null && profile.brief === '' ? profile.persona : ''
+  return {
+    name: card.name, role: card.role,
+    temperament: profile.temperament ?? '', speechStyle: profile.speechStyle ?? '',
+    mbti: profile.mbti ?? '', rhythm: rhythmOf(profile),
+    model: profile.model === null ? '' : JSON.stringify(profile.model),
+    presetSkillIds: [...profile.presetSkillIds], dshSkillNames: [...profile.dshSkillNames],
+    brief: profile.brief === '' ? legacyPersona : profile.brief,
+  }
+}
+
+/** 两份字符串列表内容是否相同（顺序也算）。 */
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index])
+}
+
+/**
+ * 只提交主人真正改过的字段：
+ * - 没动节奏时不提交等级，老队友的 L0、L3 不会被悄悄改掉；
+ * - 没动模型时不重交，已下架的旧模型不会挡住单独改别的；
+ * - 改了选择题时带上员工说明，老队友写在性格里的长文字才不会随 persona 重算而丢失。
+ */
+export function buildProfilePatch(draft: BotConfigDraft, initial: BotConfigDraft): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  if (draft.name.trim() !== initial.name) patch.name = draft.name.trim()
+  if (draft.role !== initial.role) patch.role = draft.role
+  const temperamentChanged = draft.temperament !== initial.temperament
+  const speechChanged = draft.speechStyle !== initial.speechStyle
+  if (temperamentChanged) patch.temperament = draft.temperament === '' ? null : draft.temperament
+  if (speechChanged) patch.speechStyle = draft.speechStyle === '' ? null : draft.speechStyle
+  if (draft.brief !== initial.brief || temperamentChanged || speechChanged) patch.brief = draft.brief.trim()
+  if (draft.mbti !== initial.mbti) patch.mbti = draft.mbti === '' ? null : draft.mbti
+  if (draft.rhythm !== initial.rhythm) {
+    const rhythm = rhythmOption(draft.rhythm)
+    Object.assign(patch, { autonomy: rhythm.autonomy, pace: rhythm.pace, onDemand: rhythm.onDemand })
+  }
+  if (draft.model !== initial.model) patch.model = modelValue(draft.model)
+  if (!sameList(draft.presetSkillIds, initial.presetSkillIds)) patch.presetSkillIds = [...draft.presetSkillIds]
+  if (!sameList(draft.dshSkillNames, initial.dshSkillNames)) patch.dshSkillNames = [...draft.dshSkillNames]
+  return patch
+}
+
+/** 选项表查标签；旧数据里找不到时返回兜底文字，不显示内部 id。 */
+export function choiceLabel<T extends string>(options: ReadonlyArray<ChoiceOption<T>>, value: T | '' | null, fallback: string): string {
+  return options.find(option => option.value === value)?.label ?? fallback
 }

@@ -21,6 +21,7 @@ import { createDispatcher } from './dispatch.js';
 import { runTick } from './tick.js';
 import { createEntryWaits } from './entry-waits.js';
 import { migrateBotMbti } from '../personality/profile.js';
+import { syncPresetSkills } from '../memory/preset-skills.js';
 import { recordToolAction, runLedgerBackfill } from '../ledger/service.js';
 import { markOfficeRecordFailure, recordOfficeFrame } from '../office/replay.js';
 
@@ -45,6 +46,8 @@ export interface Hub {
   onOwnerActivity(at: number): Promise<void>;
   /** 返回当前绑定机器人；普通会话返回 null。 */
   botIdForSession(sessionId: string): string | null;
+  /** P55：这位队友被允许使用的技能名（自带 + DSH）；队友不存在时返回 null。 */
+  allowedSkillNames(botId: string): string[] | null;
   /** 返回可直接注册到宿主的工具定义。 */
   tools(): RegisteredHubTool[];
   /** 同步消费票据和保存审批，异步通知由中心跟踪。 */
@@ -200,6 +203,10 @@ export function createHub(deps: HubDeps): Hub {
         await ctx.store.load();
         // 早期版本把 MBTI 写进过 Bot 本体；启动时迁到独立档案表并剥掉，保证 bots.json 旧版本可读。
         migrateBotMbti(ctx);
+        // P55：老队友的技能文件没有 DSH 要求的 YAML 头，启动时按新格式重写；内容相同就不会动。
+        for (const bot of ctx.store.table('bots').list(row => row.lifecycle !== 'retired')) {
+          try { await syncPresetSkills(ctx, bot); } catch (error) { ctx.logger.warn('技能文件刷新失败', { botId: bot.id, error: String(error) }); }
+        }
         if (!live()) return;
         const persisted = ctx.store.table('settings').get('settings') ?? ctx.store.table('settings').list()[0];
         ctx.settings = resolveStartupSettings(persisted, deps.settings);
@@ -287,6 +294,10 @@ export function createHub(deps: HubDeps): Hub {
     onExternalSessionEvent: e => event('外部会话事件', () => { recordSessionEvent(ctx, e); }),
     onOwnerActivity: at => event('主人活动', () => { ctx.runtime.ownerActiveAt = parseInput(timestamp, at, '主人活动时间'); }),
     botIdForSession: sessionId => ctx.store.table('bots').list(b => b.sessionId !== null && b.sessionId === sessionId)[0]?.id ?? null,
+    allowedSkillNames: botId => {
+      const bot = ctx.store.table('bots').get(botId);
+      return bot ? [...bot.presetSkillIds, ...bot.dshSkillNames] : null;
+    },
     tools: () => registered,
     guardToolCall: (sessionId, tool, args) => {
       const decision = guardToolCallSync(ctx, sessionId, tool, args, defer);

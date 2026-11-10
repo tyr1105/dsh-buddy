@@ -18,6 +18,7 @@ import { writeOutreachAudit } from '../outreach/audit.js';
 import { createDeliveryWaits } from './delivery-wait.js';
 import { consumeRelatedPercepts } from '../scheduler/percept-consumption.js';
 import { openLedgerForWake, sealLedgerForWake } from '../ledger/service.js';
+import { settleFailedTopicDelivery } from '../project/topics.js';
 
 /** pump 由 Hub 串行入口调用；探针身份仅绑定实际投递的唤醒单。 */
 export function createDispatcher(ctx: HubContext) {
@@ -31,7 +32,8 @@ export function createDispatcher(ctx: HubContext) {
       const key = `${entry.id}:${entry.reason.evidence.join(',')}`;
       if (redNotified.get(entry.id) === key) continue;
       redNotified.set(entry.id, key);
-      postThread(ctx, { thread: entry.botId, from: 'hub', kind: 'system',
+      // P63：主题里的消息被额度挡住时，说明也要落在主题里，主人是在那里等回复的。
+      postThread(ctx, { thread: entry.topicId ?? entry.botId, from: 'hub', kind: 'system',
         text: '当前额度不足，消息已保留；窗口恢复并通过探针后继续处理。', refId: entry.id });
     }
   }
@@ -170,7 +172,13 @@ export function createDispatcher(ctx: HubContext) {
           try { ctx.logger.warn('投递超时后的旧会话取消未完成', error); } catch { /* 不阻塞故障收尾。 */ }
         });
       }
-      onDispatchOrTurnError(ctx, bot.id, text, now);
+      const failure = onDispatchOrTurnError(ctx, bot.id, text, now);
+      // P63：主题回合投递失败就跳过这一棒，讨论不能卡在这个队友身上。
+      // 额度或鉴权问题除外：全队都在暂停，候选留着，恢复后接着说。
+      if (entry.topicId && failure.action !== 'quota' && failure.action !== 'auth') {
+        removeEntry(ctx, entry.id);
+        settleFailedTopicDelivery(ctx, entry.topicId, bot.id);
+      }
       finishProbe();
       ctx.emit(HUB_EVENT_SCOPES.activity, bot.id);
       ctx.emit(HUB_EVENT_SCOPES.bot, bot.id);

@@ -8,8 +8,14 @@ import { api, type ChangedEvent } from './api.js'
 import { createStore, type Store } from './store.js'
 import { newUrgentInbox } from './logic/feeds.js'
 import { refreshPlan } from './logic/scopes.js'
+import {
+  canRequestById, exitMissingSelection, isMissingFromRoster, isMissingTopic, nextGoneIds, nextGoneTopicIds,
+  shouldExitSelection, shouldExitTopicSelection, TEAM_THREAD_ID,
+} from './logic/missing-teammate.js'
+import { isTopicThreadId } from './logic/topics.js'
+import type { TopicDraft } from './logic/topic-draft.js'
 import type { CommandResult } from '../shared/views.js'
-import type { ActivityView, ArtifactListView, BotView, InboxItemView, InboxView, OfficeView, OverviewView, ProjectView, RecentSessionView, ResourceView, SettingsView, ThreadView, WakeLedgerRow, WakeLedgerView } from '../shared/views.js'
+import type { ActivityView, BotView, InboxItemView, InboxView, OfficeView, OverviewView, ProjectView, RecentSessionView, ResourceView, SettingsView, ThreadView, WakeLedgerRow, WakeLedgerView } from '../shared/views.js'
 
 /** 应用内提示（shell.overlay 上的一条，4 秒自动消失）。 */
 export interface HubToast { id: string; text: string; inboxItemId: string }
@@ -31,8 +37,9 @@ export interface HubState {
   bots: Record<string, BotView>
   threads: Record<string, ThreadView>
   /**
-   * 按唤醒单 id 缓存的账本详情（F02 最小读法）：只在右栏展开某一项时才拉，
-   * 不参与全局刷新。null 表示这次唤醒确实没有账本，和「还没拉」严格区分。
+   * 按唤醒单 id 缓存的账本详情（F02 最小读法）：按需拉取，不参与全局刷新。
+   * null 表示这次唤醒确实没有账本，和「还没拉」严格区分。
+   * P64 拿掉右栏账本后暂时没有页面读它，数据通道先留着，动态页要展开账本时直接接。
    */
   ledgers: Record<string, WakeLedgerView | null>
   /** 单个账本拉取失败的原因（不影响整页连接状态，界面上给「重试」）。 */
@@ -56,13 +63,13 @@ export interface HubState {
   activityError: string | null
   /** 当前页面视图（主视图 / 收件箱 / 活动流 / 设置）。 */
   view: PageView
-  /**
-   * 主视图里显示哪一面（P33）：thread=对话线程，home=队友主页。
-   * 放进仓库而不是页面局部状态，左栏（含宿主侧栏）点谁都能一致地切换。
-   */
-  mainFace: 'thread' | 'home'
-  /** 当前选中的线程（'team' 或机器人 id）。 */
+  /** 当前选中的线程：'team'、队友 id 或项目主题 id（ptp_ 开头，P63）。 */
   selectedThread: string
+  /**
+   * 选中的队友已不存在、被自动退回团队全景的次数（P58）。
+   * 页面看到数字变化，就把跟这位队友绑定的局部状态（返回按钮、右栏、提示条等）一起归位。
+   */
+  selectionExitSeq: number
   /**
    * 新建队友请求计数（P37）：左栏「队友」分组标题右侧的加号写这里。
    * 用计数而不是布尔：每次点击都是新请求，中心页看到数字变化就打开向导，
@@ -76,24 +83,17 @@ export interface HubState {
    */
   newProjectRequest: number
   /**
-   * 左栏工作区当前选中的项目（P44-R2）：点项目行、新建成功后写这里，
-   * 项目行据此显示选中态；离开项目页时清空。
+   * 项目页显示哪个项目（P60）：点左栏项目行、新建成功后写这里，
+   * 项目行据此显示选中态；离开项目页时清空，再从跳转面板进来就是项目名列表。
    */
   activeProjectId: string | null
-  /** 项目定位信号（P44-R2）：每次点项目行/新建成功 +1，项目页据此滚动并高亮目标项目。 */
-  projectOpenSeq: number
   /**
-   * 当前线程对应的左栏工作会话 id（P44-R2 选中态）：侧栏据此高亮那条子行。
-   * 只有在主视图的线程面才成立；切到主页、别的页面或普通线程时清空。
+   * 草稿主题（P60，2026-11-10）：项目里「新开会话」先进一个空聊天，第一句发出去才真正建主题。
+   * 非 null 且 view 为 'main' 时，中栏摆的是这张草稿，不是 selectedThread。
+   * 单独放一个字段、不塞进 selectedThread：选中值会记进本地、会拿去请求楼层和标已读，
+   * 草稿不该有这些副作用。切线程、换页面都会把它清掉，所以「没发就离开」什么都不留下。
    */
-  activeTaskId: string | null
-  /**
-   * 左栏点开一条工作会话（P44）：侧栏在宿主里、页面在另一处，
-   * 中间靠这个信号交接——页面消费一次后清空，和 inboxFocus 同一模式。
-   * taskId 让同一队友、同一项目下的多条会话各有落点，不会都落到同一个线程。
-   * serial 让「连续点同一条会话」也能触发一次新的定位。
-   */
-  sessionOpen: { botId: string; projectId: string; taskId: string; wakeId: string | null; serial: number } | null
+  topicDraft: TopicDraft | null
   /** 应用内提示列表（顶部 4 秒提示）。 */
   toasts: HubToast[]
 }
@@ -111,16 +111,11 @@ export type HubStore = Store<HubState> & {
   refreshRecentSessions(): Promise<void>
   refreshBot(botId: string): Promise<void>
   refreshThread(threadId: string, before?: string): Promise<void>
-  /** 拉一次唤醒的账本详情（右栏展开时按需调用）。 */
+  /** 拉一次唤醒的账本详情（按需调用）。 */
   refreshLedgerDetail(wakeId: string): Promise<void>
   /**
-   * 某个队友当前可读的产物索引（F08 尾巴「关联产物」弹窗用）。
-   * 按需直读 api，不写进全局状态：只有弹窗打开时才需要，没必要参与整页刷新。
-   */
-  botArtifacts(botId: string): Promise<ArtifactListView | null>
-  /**
-   * 某个队友最近的唤醒账本行（P36 轨迹面板用）。和 botArtifacts 一样按需直读，
-   * 不进全局状态：轨迹只在打开面板时读一次，没必要参与整页刷新。
+   * 某个队友最近的唤醒账本行（P36 轨迹面板用）。按需直读，不进全局状态：
+   * 轨迹只在打开面板时读一次，没必要参与整页刷新。
    */
   wakeRows(botId: string): Promise<WakeLedgerRow[]>
   refreshAll(): Promise<void>
@@ -131,8 +126,6 @@ export type HubStore = Store<HubState> & {
   send(threadId: string, text: string): Promise<void>
   command(name: string, input: Record<string, unknown>): Promise<CommandResult>
   selectThread(threadId: string): void
-  /** 打开某个队友的主页（P33）：不标记线程已读，只有真正进线程才算读过。 */
-  selectTeammate(botId: string): void
   /** 请求打开「新建队友」向导（P37）：宿主侧栏加号与中心页之间的唯一信号。 */
   requestNewBot(): void
   /** HubPage 接住新建队友请求后清零（P53）：重挂载不会再弹一次。 */
@@ -141,19 +134,12 @@ export type HubStore = Store<HubState> & {
   requestNewProject(): void
   /** HubPage 接住新建项目请求后清零（P53）：重挂载不会再弹一次。 */
   clearNewProjectRequest(): void
-  /** 点左栏项目行（P44-R2）：切到项目页、记下选中的项目并发出定位信号。 */
+  /** 点左栏项目行（P44-R2）：切到项目页、记下选中的项目。 */
   requestProject(projectId: string): void
-  /** 新建项目成功后选中它（P44-R2）：只改选中态，不再触发一次额外滚动。 */
+  /** 新建项目成功后选中它（P44-R2）。 */
   setActiveProject(projectId: string | null): void
-  /** 记录当前线程对应的左栏会话（P44-R2 选中态）；传 null 清空。 */
-  setActiveTask(taskId: string | null): void
-  /**
-   * 从左栏打开一条工作会话（P44）：切到该队友的线程并记下项目、任务与唤醒，
-   * 页面消费 sessionOpen 后负责展开右栏、标记「返回队友主页」并显示这条任务的上下文。
-   */
-  requestWorkSession(botId: string, projectId: string, taskId: string, wakeId: string | null): void
-  /** 页面消费完一次会话定位后清空，避免重挂载又被旧目标拽回去。 */
-  clearWorkSession(): void
+  /** 在项目里开一张草稿主题（P60）：中栏切到空聊天，不发任何命令。 */
+  openTopicDraft(projectId: string): void
   setView(view: PageView): void
   dismissToast(id: string): void
 }
@@ -186,9 +172,8 @@ function emptyState(): HubState {
     overview: null, office: null, resource: null, project: null, inbox: null, activity: null, settings: null, recentSessions: [], bots: {}, threads: {},
     ledgers: {}, ledgerErrors: {},
     connectionDown: false, downReason: null, downMessage: null, settingsError: null, activityError: null,
-    view: 'main', mainFace: 'thread', selectedThread: 'team', newBotRequest: 0, newProjectRequest: 0,
-    activeProjectId: null, projectOpenSeq: 0, activeTaskId: null,
-    sessionOpen: null, toasts: [],
+    view: 'main', selectedThread: 'team', selectionExitSeq: 0, newBotRequest: 0, newProjectRequest: 0,
+    activeProjectId: null, topicDraft: null, toasts: [],
   }
 }
 
@@ -208,6 +193,9 @@ function isNetworkError(message: string): boolean {
   return message.includes('网络错误')
 }
 
+/** 一次名册或项目视图请求的凭据（P58、P63）：order 是发出顺序，selectionSerial 是发出时主人选中过几次线程。 */
+interface RosterTicket { order: number; selectionSerial: number }
+
 /** 建仓库（整个插件唯一一份；index.tsx 在 apply 里创建并传给组件）。 */
 export function createHubStore(): HubStore {
   const store = createStore<HubState>(emptyState())
@@ -223,6 +211,84 @@ export function createHubStore(): HubStore {
       console.error('[agent-hub] 拉取数据失败:', error)
       patch({ connectionDown: true, downReason: reasonOfError(message), downMessage: reasonOfError(message) === 'failed' ? message : null })
     }
+  }
+
+  // ---------- P58：选中的队友已不存在（判断规则在 logic/missing-teammate，这里只接线） ----------
+
+  /** 主人主动选中线程的次数：用来判断手里的名册是不是比这次选中旧。 */
+  let selectionSerial = 0
+  /** 名册请求的发出序号和已落地的最新序号：后发的请求先回来时，先发的旧名册直接丢弃。 */
+  let rosterIssued = 0
+  let rosterLanded = 0
+  /** 名册已确认不存在的队友 id：这些 id 不再请求详情和对话。 */
+  let goneIds: ReadonlySet<string> = new Set()
+  /** 项目视图请求的发出序号和已落地的最新序号（P63）：道理和名册一样，晚到的旧视图直接丢弃。 */
+  let projectIssued = 0
+  let projectLanded = 0
+  /** 项目视图已确认不存在的主题 id：这些 id 不再请求楼层。 */
+  let goneTopicIds: ReadonlySet<string> = new Set()
+
+  /** 发名册请求前领一张票：记下发出顺序和当时的选中次数。 */
+  const rosterTicket = (): RosterTicket => ({ order: ++rosterIssued, selectionSerial })
+
+  /** 现在能不能按 id 请求详情和对话：refreshBot、refreshThread 的统一闸门。 */
+  const mayRequestById = (id: string): boolean => {
+    const { overview, selectedThread } = store.getSnapshot()
+    return canRequestById({
+      id, goneIds: isTopicThreadId(id) ? goneTopicIds : goneIds,
+      selectedThread, rosterLoaded: overview !== null, selectedThisSession: selectionSerial > 0,
+    })
+  }
+
+  /**
+   * 一份新名册落地：写进仓库，并核对当前选中。
+   * 写名册和退出选中放在同一次更新里，页面不会渲染出「名册没有它、选中还是它」的中间状态，
+   * 也就不会在这个间隙里再用旧 id 发请求。
+   */
+  const landRoster = (overview: OverviewView, ticket: RosterTicket): void => {
+    if (ticket.order < rosterLanded) return
+    rosterLanded = ticket.order
+    const { overview: previous, selectedThread } = store.getSnapshot()
+    goneIds = nextGoneIds(goneIds, previous, overview)
+    const exit = shouldExitSelection({
+      selectedThread, roster: overview, goneIds, selectedAfterRequest: ticket.selectionSerial !== selectionSerial,
+    })
+    if (exit) goneIds = new Set(goneIds).add(selectedThread)
+    store.update(prev => (exit ? exitMissingSelection({ ...prev, overview }) : { ...prev, overview }))
+  }
+
+  /**
+   * 一份新的项目视图落地（P63）：写进仓库，并核对当前选中的主题还在不在。
+   * 和名册一样放在同一次更新里，页面不会渲染出「项目里没有它、选中还是它」的中间状态。
+   */
+  const landProject = (project: ProjectView, ticket: RosterTicket): void => {
+    if (ticket.order < projectLanded) return
+    projectLanded = ticket.order
+    const { project: previous, selectedThread } = store.getSnapshot()
+    goneTopicIds = nextGoneTopicIds(goneTopicIds, previous, project)
+    const exit = shouldExitTopicSelection({
+      selectedThread, project, goneIds: goneTopicIds, selectedAfterRequest: ticket.selectionSerial !== selectionSerial,
+    })
+    if (exit) goneTopicIds = new Set(goneTopicIds).add(selectedThread)
+    store.update(prev => (exit ? exitMissingSelection({ ...prev, project }) : { ...prev, project }))
+  }
+
+  /**
+   * 按 id 的请求失败后，重新拉一次名册，核实是不是这位队友没了。
+   * 只看名册、不看错误文案；名册也拉不到（断网、引擎没起来）就返回 false，按原来的「连不上」处理。
+   * 这里直接调接口、不走 guard：核实本身不能改「连不上」状态，
+   * 否则状态一翻转，页面又会重拉线程，形成新的循环。
+   */
+  const confirmGone = async (id: string): Promise<boolean> => {
+    // 主题不在名册里，拿名册核对只会得出错误结论；它的存亡由项目视图判断。
+    if (id === TEAM_THREAD_ID || isTopicThreadId(id)) return false
+    const ticket = rosterTicket()
+    let overview: OverviewView
+    try { overview = await api.overview() } catch { return false }
+    landRoster(overview, ticket)
+    if (!isMissingFromRoster(id, overview)) return false
+    goneIds = new Set(goneIds).add(id)
+    return true
   }
 
   /** 收件箱刷新后：新到的 P0/P1 项弹 4 秒应用内提示（SSE 驱动，不轮询）。 */
@@ -245,13 +311,26 @@ export function createHubStore(): HubStore {
 
   const hub: HubStore = {
     ...store,
-    async refreshOverview() { await guard(async () => ({ overview: await api.overview() })) },
+    /** 总览同时也是名册：拉到后由 landRoster 写入并核对选中（P58），失败走通用 guard，选中不动。 */
+    async refreshOverview() {
+      const ticket = rosterTicket()
+      await guard(async () => {
+        landRoster(await api.overview(), ticket)
+        return {}
+      })
+    },
     /** 办公室投影（F03）：一次拉一屏，失败走通用 guard（整页提示与重试）。 */
     async refreshOffice() { await guard(async () => ({ office: await api.office() })) },
     /** 资料授权矩阵：失败走通用 guard，页面显示中文错误与「重试」。 */
     async refreshResource() { await guard(async () => ({ resource: await api.resource() })) },
-    /** 项目容器：失败同样走通用 guard（整页提示与重试），不做局部容错。 */
-    async refreshProject() { await guard(async () => ({ project: await api.project() })) },
+    /** 项目容器：拉到后由 landProject 写入并核对选中的主题（P63）；失败走通用 guard，选中不动。 */
+    async refreshProject() {
+      const ticket: RosterTicket = { order: ++projectIssued, selectionSerial }
+      await guard(async () => {
+        landProject(await api.project(), ticket)
+        return {}
+      })
+    },
     async refreshInbox() {
       const prevItems = store.getSnapshot().inbox?.items ?? null
       await guard(async () => applyInbox(await api.inbox(), prevItems))
@@ -307,11 +386,15 @@ export function createHubStore(): HubStore {
      * 两条 bot 推送挨着到时，后返回的请求不能把另一台刚拉到的新详情改回旧值。
      */
     async refreshBot(botId) {
+      // 主题 id 不是队友，绝不能拿去拉 /bot：断线重连时「当前选中」可能就是主题。
+      if (isTopicThreadId(botId) || !mayRequestById(botId)) return
       try {
         const view = await api.bot(botId)
         store.update(prev => ({ ...prev, bots: { ...prev.bots, [botId]: view } }))
         if (store.getSnapshot().connectionDown) patch({ connectionDown: false, downReason: null, downMessage: null })
       } catch (error) {
+        // P58：先核实是不是队友没了。是的话中心本身是好的，不标「连不上」，也不喊错。
+        if (await confirmGone(botId)) return
         const message = error instanceof Error ? error.message : String(error)
         console.error('[agent-hub] 拉取机器人详情失败:', error)
         patch({ connectionDown: true, downReason: reasonOfError(message), downMessage: reasonOfError(message) === 'failed' ? message : null })
@@ -324,6 +407,7 @@ export function createHubStore(): HubStore {
      * 见 selectThread）。合并一律在 updater 里做，避免并发覆盖。
      */
     async refreshThread(threadId, before?) {
+      if (!mayRequestById(threadId)) return
       try {
         const thread = await api.thread(threadId, before ? { before } : undefined)
         store.update(prev => {
@@ -339,13 +423,15 @@ export function createHubStore(): HubStore {
         })
         if (store.getSnapshot().connectionDown) patch({ connectionDown: false, downReason: null, downMessage: null })
       } catch (error) {
+        // P58：和详情同一口径。现在的线程接口查不到队友也返回 200，这里防的是它以后改成报错。
+        if (await confirmGone(threadId)) return
         const message = error instanceof Error ? error.message : String(error)
         console.error('[agent-hub] 拉取线程失败:', error)
         patch({ connectionDown: true, downReason: reasonOfError(message), downMessage: reasonOfError(message) === 'failed' ? message : null })
       }
     },
     /**
-     * 账本详情（F02 最小读法）：只在右栏展开一次唤醒时按需拉，不进全局刷新。
+     * 账本详情（F02 最小读法）：按需拉，不进全局刷新。
      * 失败不标整页断开——账本读不到只影响这一块，原因记在该唤醒单上供「重试」。
      */
     async refreshLedgerDetail(wakeId) {
@@ -366,17 +452,12 @@ export function createHubStore(): HubStore {
     async refreshAll() {
       await Promise.all([hub.refreshOverview(), hub.refreshOffice(), hub.refreshResource(), hub.refreshProject(), hub.refreshInbox(), hub.refreshActivity()])
     },
-    /** 关联产物弹窗：一次拉该队友的产物索引；读不到就返回 null，由弹窗显示原因。 */
-    async botArtifacts(botId) {
-      const view = await api.bot(botId)
-      return view.artifacts ?? null
-    },
     /**
-     * 轨迹面板的数据口：一次拉该队友的唤醒账本行，页面拿去做本地自然日分组。
+     * 轨迹面板的数据口：一次拉该队友最近 100 次唤醒的账本行（接口上限），按天往前翻才有东西看。
      * 失败原样抛给面板，由面板在自己的范围里显示「读不到」并给重试，不标整页断开。
      */
     wakeRows(botId) {
-      return api.wakeLedger(botId)
+      return api.wakeLedger(botId, { limit: 100 })
     },
     onChanged(event) {
       void (async () => {
@@ -385,13 +466,16 @@ export function createHubStore(): HubStore {
           // 不再匹配内部表名；映射规则集中在 refreshPlan（可单测）。
           const plan = refreshPlan(event.scope, event.botId)
           const jobs: Array<Promise<void>> = []
-          if (plan.overview) jobs.push(hub.refreshOverview())
+          const rosterDone = plan.overview ? hub.refreshOverview() : Promise.resolve()
+          jobs.push(rosterDone)
           if (plan.office) jobs.push(hub.refreshOffice())
           // 资料变化在 core 里发的是 overview scope：计划里 resource 与 overview 同口径。
           if (plan.resource) jobs.push(hub.refreshResource())
           // 项目/任务变化发 project scope：定向刷项目页（计划里同时带总览）。
           if (plan.project) jobs.push(hub.refreshProject())
-          for (const botId of plan.bots) jobs.push(hub.refreshBot(botId))
+          // P58：详情排在名册之后。删除队友的事件里带着它的 id，先看到新名册才知道它已经没了，
+          // 同时发出去就会白打一次报错请求。
+          for (const botId of plan.bots) jobs.push(rosterDone.then(() => hub.refreshBot(botId)))
           for (const threadId of plan.threads) jobs.push(hub.refreshThread(threadId))
           if (plan.inbox) jobs.push(hub.refreshInbox())
           if (plan.activity) jobs.push(hub.refreshActivity())
@@ -411,13 +495,22 @@ export function createHubStore(): HubStore {
       if (store.getSnapshot().connectionDown) patch({ connectionDown: false, downReason: null, downMessage: null })
       // 断线期间漏掉的变化补拉一遍：全部基础视图 + 设置 + 当前线程 + 当前机器人的
       // 详情；其他已缓存的机器人详情与已展开的账本标为过期（清掉，界面按需重拉），
-      // 否则右栏的生命周期按钮会一直停在断线前的旧状态（D07 第 13 条）。
-      const selected = store.getSnapshot().selectedThread
-      store.update(prev => ({ ...prev, bots: {}, ledgers: {}, ledgerErrors: {} }))
-      void hub.refreshAll()
+      // 否则编辑队友里的生命周期按钮会一直停在断线前的旧状态（D07 第 13 条）。
+      const { selectedThread: selected, overview: rosterBefore } = store.getSnapshot()
+      const viewsDone = hub.refreshAll()
       void hub.refreshSettings()
-      void hub.refreshThread(selected)
-      if (selected !== 'team') void hub.refreshBot(selected)
+      const reloadDetails = (): void => {
+        store.update(prev => ({ ...prev, bots: {}, ledgers: {}, ledgerErrors: {} }))
+        // 重新读选中：名册核对后，它可能已经退回了团队全景。
+        const current = store.getSnapshot().selectedThread
+        void hub.refreshThread(current)
+        if (current !== 'team') void hub.refreshBot(current)
+      }
+      // P58：断线期间队友可能被删、数据可能被清空，手里有旧名册时要等新名册回来，确认它还在再补拉。
+      // 清缓存也要等：页面看到详情缓存空了会立刻按旧名册拉详情，那样又是一次报错请求。
+      // 团队线程不依赖名册；手里还没有名册时等也等不出什么，从本地恢复的选中由统一闸门拦住。
+      if (selected === 'team' || rosterBefore === null) reloadDetails()
+      else void viewsDone.then(reloadDetails)
     },
     async send(threadId, text) {
       const result = await api.command('sendMessage', { threadId, text })
@@ -426,23 +519,26 @@ export function createHubStore(): HubStore {
     },
     command(name, input) { return api.command(name, input) },
     selectThread(threadId) {
-      // 进线程就是「对话」面（P33）；主页只由 selectTeammate 进入。
-      // 普通线程不对应左栏某条工作会话，顺手清掉子行选中态（P44-R2）。
+      selectionSerial += 1
+      // 点队友或主题都直接进对话（P64、P63）。切换时清掉目标线程的旧缓存，进去拉最新一页。
+      // P60：选了任何线程都离开草稿（包括草稿发出第一句后切进新主题），草稿不留痕迹。
       store.update(prev => {
-        if (prev.selectedThread === threadId) return { ...prev, view: 'main', mainFace: 'thread', activeTaskId: null }
+        if (prev.selectedThread === threadId) return { ...prev, view: 'main', topicDraft: null }
         const threads = { ...prev.threads }
         delete threads[threadId]
-        return { ...prev, selectedThread: threadId, view: 'main', mainFace: 'thread', threads, activeTaskId: null }
+        return { ...prev, selectedThread: threadId, view: 'main', threads, topicDraft: null }
       })
+      // P63：主题的「已读」由中心页负责，页面真的把这条主题摆出来才算读过。
+      // 这里只管核对：手头的项目视图里没有它（刚建好的，或已被删的）就重拉一次，确认没了退回团队全景。
+      if (isTopicThreadId(threadId)) {
+        if (isMissingTopic(threadId, store.getSnapshot().project)) void hub.refreshProject()
+        return
+      }
+      // P58：手头名册里查不到这个 id（刚建好的，或已被删的）：马上重拉名册核对，确认没了就退回团队全景。
+      // 这种情况不发标已读：对一个可能不存在的队友标已读没有意义，失败了还会吞掉这次核对。
+      if (isMissingFromRoster(threadId, store.getSnapshot().overview)) { void hub.refreshOverview(); return }
       // 选中即已读：顺手把未读清掉（失败不影响展示）。
       void api.command('markThreadRead', { threadId }).then(() => hub.refreshOverview()).catch(() => undefined)
-    },
-    /**
-     * 打开队友主页（P33）：只切表面，不标记线程已读——主页没有展示消息内容，
-     * 把未读清掉会让主人漏掉它说过的话。线程缓存也保留，真正进线程时再按需刷新。
-     */
-    selectTeammate(botId) {
-      store.update(prev => ({ ...prev, selectedThread: botId, view: 'main', mainFace: 'home', activeTaskId: null }))
     },
     /** 加号请求开向导：只加计数，开不开由中心页决定（侧栏收起时也不丢请求）。 */
     requestNewBot() {
@@ -458,55 +554,25 @@ export function createHubStore(): HubStore {
     clearNewProjectRequest() {
       store.update(prev => (prev.newProjectRequest === 0 ? prev : { ...prev, newProjectRequest: 0 }))
     },
-    /** 点项目行：进项目页并记下目标项目，项目页按 projectOpenSeq 滚动定位。 */
+    /** 点项目行：进项目页并记下目标项目。 */
     requestProject(projectId) {
-      store.update(prev => ({
-        ...prev,
-        view: 'project',
-        activeProjectId: projectId,
-        projectOpenSeq: prev.projectOpenSeq + 1,
-        activeTaskId: null,
-      }))
+      store.update(prev => ({ ...prev, view: 'project', activeProjectId: projectId, topicDraft: null }))
     },
     setActiveProject(projectId) { patch({ activeProjectId: projectId }) },
-    setActiveTask(taskId) { patch({ activeTaskId: taskId }) },
     /**
-     * 左栏点工作会话（P44）：一次切到目标线程并写定位信号。
-     * 线程缓存要清掉——和 selectThread 一样，进入线程时重新拉最新一页；
-     * 但这里不顺手标已读，交给页面消费后再按真实进入行为处理。
+     * 开草稿主题（P60）：只改前端状态，不建主题、不发命令。
+     * seq 每次加一，同一个项目再点一次也是一张全新的空白聊天。
+     * 收掉项目页选中态：中栏已经是聊天了，左栏不该还亮着项目行。
      */
-    requestWorkSession(botId, projectId, taskId, wakeId) {
-      store.update(prev => {
-        const threads = { ...prev.threads }
-        delete threads[botId]
-        const serial = (prev.sessionOpen?.serial ?? 0) + 1
-        return {
-          ...prev,
-          selectedThread: botId,
-          view: 'main',
-          mainFace: 'thread',
-          // 左栏子行选中态（P44-R2）：点开哪条会话就选中哪条，刷新后仍能看出当前线程。
-          activeTaskId: taskId,
-          activeProjectId: projectId,
-          sessionOpen: { botId, projectId, taskId, wakeId, serial },
-          threads,
-        }
-      })
-    },
-    clearWorkSession() {
-      store.update(prev => (prev.sessionOpen === null ? prev : { ...prev, sessionOpen: null }))
-    },
-    /**
-     * 换页时收掉左栏选中态（P44-R2）：项目选中只在项目页成立，
-     * 会话选中只在主视图成立；不这样做，从项目页或线程页离开后左栏还会亮着旧行。
-     */
-    setView(view) {
+    openTopicDraft(projectId) {
       store.update(prev => ({
-        ...prev,
-        view,
-        activeProjectId: null,
-        activeTaskId: view === 'main' ? prev.activeTaskId : null,
+        ...prev, view: 'main', activeProjectId: null,
+        topicDraft: { projectId, seq: (prev.topicDraft?.seq ?? 0) + 1 },
       }))
+    },
+    /** 换页时收掉项目选中态（P44-R2）：不这样做，离开项目页后左栏还会亮着旧行。换页也离开草稿（P60）。 */
+    setView(view) {
+      store.update(prev => ({ ...prev, view, activeProjectId: null, topicDraft: null }))
     },
     dismissToast(id) { store.update(prev => ({ ...prev, toasts: prev.toasts.filter(t => t.id !== id) })) },
   }

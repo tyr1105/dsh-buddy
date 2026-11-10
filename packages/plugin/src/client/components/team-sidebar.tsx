@@ -14,6 +14,8 @@ import { useStore, type Store } from '../store.js'
 import type { HostSpaceState } from '../logic/host-mount.js'
 import type { SpaceMode } from '../logic/space-capability.js'
 import { openHubPanel } from '../logic/host-sidebar.js'
+import { openNewTopic } from '../logic/topics.js'
+import { sidebarSelectedThread } from '../logic/topic-draft.js'
 import { watchHostNavigation } from '../logic/host-navigation.js'
 import { TeamSidebarNav, type NewSessionInput } from './team-sidebar-nav.js'
 import type { ArchiveCheckInfo } from './bot-archive-dialog.js'
@@ -48,31 +50,13 @@ export function TeamSidebar(props: {
   }
 
   /**
-   * 新建工作会话：只发一条 saveTask（core 统一校验项目/成员/名额），
-   * 成功后有指派就打开该队友的线程，没有就停在项目页看待领。
-   * P1-2：新建后也要带上新任务 id 再打开，页面才能显示这条会话而不是只切队友。
+   * 新建会话（P63）：先确保中心面板被选中，再开主题并进去。
    * 返回中文错误给内联表单显示，不把异常抛给侧栏。
    */
   const createSession = async (input: NewSessionInput): Promise<string | null> => {
-    try {
-      const selected = openHubPanel(props.clientCtx, () => undefined)
-      if (!selected) return '团队空间暂时打不开。点击上方「团队空间」重试；仍失败请检查 DSH 运行状态。'
-      const result = await props.hub.command('saveTask', {
-        projectId: input.projectId,
-        title: input.title,
-        assigneeBotId: input.assigneeBotId,
-      })
-      if (!result.ok) return result.error
-      const created = result.data as { id?: unknown } | undefined
-      const taskId = typeof created?.id === 'string' ? created.id : ''
-      await Promise.all([props.hub.refreshProject(), props.hub.refreshOverview()])
-      if (input.assigneeBotId !== null && taskId !== '') {
-        props.hub.requestWorkSession(input.assigneeBotId, input.projectId, taskId, null)
-      }
-      return null
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e)
-    }
+    const selected = openHubPanel(props.clientCtx, () => undefined)
+    if (!selected) return '团队空间暂时打不开。点击上方「团队空间」重试；仍失败请检查 DSH 运行状态。'
+    return openNewTopic(props.hub, input.projectId, input.text)
   }
 
   /** P48：归档前置校验；命令失败转成中文错误字符串，左栏据此弹拦截框。 */
@@ -103,14 +87,13 @@ export function TeamSidebar(props: {
         overview={state.overview}
         project={state.project}
         view={state.view}
-        mainFace={state.mainFace}
-        selectedThread={state.selectedThread}
-        activeTaskId={state.activeTaskId}
+        // P60：草稿主题摆在中栏时左栏哪一行都不亮，免得像是在上一位队友那里说话。
+        selectedThread={sidebarSelectedThread(state)}
         activeProjectId={state.view === 'project' ? state.activeProjectId : null}
         compact={space.kind === 'slot' ? space.compact : false}
         notice={error}
         onOpenOffice={() => navigate(() => { props.hub.setView('office'); void props.hub.refreshOffice() })}
-        onSelectBot={id => navigate(() => (id === 'team' ? props.hub.selectThread(id) : props.hub.selectTeammate(id)))}
+        onSelectBot={id => navigate(() => props.hub.selectThread(id))}
         onOpenInbox={() => navigate(() => { props.hub.setView('inbox'); void props.hub.refreshInbox() })}
         onOpenSettings={() => navigate(() => { props.hub.setView('settings'); void props.hub.refreshSettings() })}
         onNewBot={() => navigate(() => props.hub.requestNewBot())}
@@ -125,8 +108,10 @@ export function TeamSidebar(props: {
           props.hub.requestProject(projectId)
           void props.hub.refreshProject()
         })}
-        onOpenSession={session => navigate(() => props.hub.requestWorkSession(session.assigneeBotId, session.projectId, session.id, session.latestWakeId))}
+        onOpenTopic={topicId => navigate(() => props.hub.selectThread(topicId))}
         onCreateSession={createSession}
+        // P60：项目行加号先确保中心面板被选中，再进这个项目的草稿主题（空聊天，不发命令）。
+        onOpenTopicDraft={projectId => navigate(() => props.hub.openTopicDraft(projectId))}
         onCheckArchive={checkArchive}
         onArchiveBot={botId => runBotArchiveCommand('archiveBot', botId)}
         onRestoreArchivedBot={botId => runBotArchiveCommand('restoreArchivedBot', botId)}

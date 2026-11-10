@@ -1,15 +1,16 @@
 /**
  * 收件箱页（左栏底部入口）：所有要主人动手的事只有这一个入口。
  * 一列平铺（优先级高的在前，同级按时间新到旧），顶部可按请求类型筛选；
- * 每项显示队友头像名字、标题、正文、剩余有效期；
+ * 每项显示队友头像名字、标题、正文、剩余有效期；来自项目主题的事项再写一句「来自主题：主题名」（P65）；
  * 操作：提问选选项或填自由文本、审批批准/拒绝（可附一句话）、提议接受/拒绝、告警「知道了」。
- * 处理后从列表消失（服务端把 open 项作答），结果出现在对应线程里。
+ * 处理后从列表消失（服务端把 open 项作答），结果出现在对应线程里：
+ * 来自主题的事项，队友回到主题里接着做，所以「查看对话」「查看会话」都直接进那个主题。
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { InboxItemView, InboxView } from '../../shared/views.js'
 import { Avatar, EmptyHint, RetryBox, Skeleton } from './Ui.js'
 import { InboxCard, type CardActions, type CardPayload } from './Cards.js'
-import { sortInbox, focusInboxTarget } from '../logic/feeds.js'
+import { sortInbox, focusInboxTarget, inboxThreadId } from '../logic/feeds.js'
 
 /**
  * 筛选记忆（模块级）：收件箱页离开（去看某条对话）再回来时，InboxPane 会重挂载，
@@ -27,10 +28,10 @@ let inboxScrollMemory = 0
 /** 处理成功提示的显示时长（毫秒）：带「查看会话」入口，留足点击时间。 */
 const HANDLED_MS = 6000
 
-/** 处理成功提示：一句话结论 + 这条请求来自哪个队友（用于一键回到它的线程）。 */
+/** 处理成功提示：一句话结论 + 队友接着做的那条线程（主题或私聊，用于一键过去看）。 */
 interface HandledNotice {
   text: string
-  botId: string | null
+  threadId: string | null
 }
 
 /** 把 InboxItemView 适配成 InboxCard 需要的卡片形状（复用同一张卡的交互）。 */
@@ -50,7 +51,8 @@ export function InboxPane(props: {
   onRetry: () => void
   actions: CardActions
   busyId: string | null
-  onOpenThread?: (botId: string) => void
+  /** 打开一条线程：队友 id 或主题 id（两者都是线程 id）。 */
+  onOpenThread?: (threadId: string) => void
   /** 从办公室门口点进来时要聚焦的那张卡（F04）；普通进入为 null。 */
   focusInboxId?: string | null
 }): ReactNode {
@@ -121,12 +123,12 @@ export function InboxPane(props: {
     >
       <header className="ah-pane-heading"><h2>待你处理</h2><p>你处理完，队友接着做。</p></header>
       {/* 处理结果反馈（role=status）：卡片从列表消失后，主人仍能确认「刚才那一下生效了」，
-          并能一键回到该队友的线程看它接下来怎么做。 */}
+          并能一键去队友接着做的那条线程（来自主题的去主题，其余去私聊）看它接下来怎么做。 */}
       {handled ? (
         <div className="ah-inbox-done" role="status">
           <span>{handled.text}</span>
-          {handled.botId !== null && props.onOpenThread ? (
-            <button type="button" className="ah-btn ah-btn-ghost" onClick={() => props.onOpenThread?.(handled.botId!)}>查看会话</button>
+          {handled.threadId !== null && props.onOpenThread ? (
+            <button type="button" className="ah-btn ah-btn-ghost" onClick={() => props.onOpenThread?.(handled.threadId!)}>查看会话</button>
           ) : null}
         </div>
       ) : null}
@@ -164,35 +166,41 @@ export function InboxPane(props: {
         })()}
       </nav>
       {items.length === 0 ? <EmptyHint text={filter === 'all' ? '现在没有要你处理的事。它们都在忙，有事会来找你。' : '暂无此类请求。切换「全部」查看其他类型。'} /> : null}
-      {items.map(item => (
-        <article key={item.id} data-inbox-id={item.id} className={`ah-inbox-row ah-inbox-${item.priority.toLowerCase()}${focusedId === item.id ? ' is-focused' : ''}`}>
-          {/* U01 第 37 轮（1.3.1）：这一行只是卡片内部的元信息布局槽，没有标题文本，
-              用 header 会变成未命名地标；article 本身已经承担整条请求的分组语义，这里改回普通 div。 */}
-          <div className="ah-inbox-row-head">
-            {item.botName ? <Avatar color={item.botColor} initials={item.botName.slice(0, 1)} size={24} /> : null}
-            <span className="ah-inbox-bot">{item.botName ?? '中心'}</span>
-            {item.botId && props.onOpenThread ? <button type="button" className="ah-btn ah-btn-ghost" onClick={() => props.onOpenThread?.(item.botId!)}>查看对话</button> : null}
-            {/* 这里只放创建时间；有效期的含义由卡片正文统一说明，避免同一句话出现两遍。 */}
-            <span className="ah-inbox-time">{item.createdText}</span>
-          </div>
-          <InboxCard card={itemToCard(item)} priority={item.priority} actions={{
-            ...props.actions,
-            // 本卡处理中禁用；处理完由 SSE 刷新把项移出列表。这里 force 触发本行重渲染，
-            // 并在成功后给一句全局反馈（该项随即消失，没有别的地方能确认结果）。
-            onPick: async (card, option, note) => {
-              force(n => n + 1)
-              const failure = await props.actions.onPick(card, option, note)
-              if (failure === null) setHandled({
-                text: item.botName
-                  ? `已提交。下一步：继续执行，负责人 ${item.botName}。`
-                  : '已提交。下一步：待安排。',
-                botId: item.botId ?? null,
-              })
-              return failure
-            },
-          }} busy={props.busyId === item.id} />
-        </article>
-      ))}
+      {items.map(item => {
+        // P65：来自主题的事，「查看对话」进主题；其余进队友私聊；全队事项没有入口。
+        const threadId = inboxThreadId(item)
+        return (
+          <article key={item.id} data-inbox-id={item.id} className={`ah-inbox-row ah-inbox-${item.priority.toLowerCase()}${focusedId === item.id ? ' is-focused' : ''}`}>
+            {/* U01 第 37 轮（1.3.1）：这一行只是卡片内部的元信息布局槽，没有标题文本，
+                用 header 会变成未命名地标；article 本身已经承担整条请求的分组语义，这里改回普通 div。 */}
+            <div className="ah-inbox-row-head">
+              {item.botName ? <Avatar color={item.botColor} initials={item.botName.slice(0, 1)} size={24} /> : null}
+              <span className="ah-inbox-bot">{item.botName ?? '中心'}</span>
+              {/* P65：主题名可能很长，一行放不下时省略，鼠标悬停看全名。 */}
+              {item.topicTitle ? <span className="ah-inbox-topic" title={item.topicTitle}>来自主题：{item.topicTitle}</span> : null}
+              {threadId !== null && props.onOpenThread ? <button type="button" className="ah-btn ah-btn-ghost" onClick={() => props.onOpenThread?.(threadId)}>查看对话</button> : null}
+              {/* 这里只放创建时间；有效期的含义由卡片正文统一说明，避免同一句话出现两遍。 */}
+              <span className="ah-inbox-time">{item.createdText}</span>
+            </div>
+            <InboxCard card={itemToCard(item)} priority={item.priority} actions={{
+              ...props.actions,
+              // 本卡处理中禁用；处理完由 SSE 刷新把项移出列表。这里 force 触发本行重渲染，
+              // 并在成功后给一句全局反馈（该项随即消失，没有别的地方能确认结果）。
+              onPick: async (card, option, note) => {
+                force(n => n + 1)
+                const failure = await props.actions.onPick(card, option, note)
+                if (failure === null) setHandled({
+                  text: item.botName
+                    ? `已提交。下一步：继续执行，负责人 ${item.botName}。`
+                    : '已提交。下一步：待安排。',
+                  threadId,
+                })
+                return failure
+              },
+            }} busy={props.busyId === item.id} />
+          </article>
+        )
+      })}
     </section>
   )
 }

@@ -23,15 +23,23 @@ export interface OfficeSeatLayout {
   deskY: number
   deskWidth: number
   deskHeight: number
-  /** 椅子中心与小人站立点（脚底中心）。 */
+  /**
+   * seatX 是人和椅子的水平中心。
+   * standY 是头顶气泡和点击热区的基准线：人坐在桌子后面、下半身被桌子挡住，
+   * 所以它落在桌面中段，不再是脚底。气泡固定画在它上方 54 像素处。
+   */
   seatX: number
   standY: number
 }
 
-/** 两排桌子的基线：第一排靠里、第二排靠外，中间留过道。 */
-const ROW_BASES = [194, 248] as const
-/** 三列桌子的左边距。 */
-const DESK_XS = [16, 78, 140] as const
+/**
+ * 两排桌子的基线（桌子最下沿的 y）。
+ * 排距 74 是算出来的：一个人从气泡到桌沿要占 64 像素，再留 10 像素过道，
+ * 后排的气泡才不会压到前排的桌子。
+ */
+const ROW_BASES = [172, 246] as const
+/** 三列桌子的左边距：三张桌子间距相同，右边留出放饮水机和绿植的空档。 */
+const DESK_XS = [14, 82, 150] as const
 const DESK_WIDTH = 50
 const DESK_HEIGHT = 28
 
@@ -47,12 +55,12 @@ export const OFFICE_SEATS: readonly OfficeSeatLayout[] = ROW_BASES.flatMap((base
     deskWidth: DESK_WIDTH,
     deskHeight: DESK_HEIGHT,
     seatX: deskX + 34,
-    standY: base + 15,
+    standY: base - 10,
   })),
 )
 
 /** 过道：两排工位之间横向留空，小人走动不会被桌子挡住。 */
-export const OFFICE_AISLE = { x: 12, y: 196, width: 200, height: 18 } as const
+export const OFFICE_AISLE = { x: 12, y: 176, width: 200, height: 16 } as const
 
 export type OfficeSharedKind = 'board' | 'printer' | 'cooler' | 'cabinet' | 'meeting' | 'plant'
 
@@ -68,15 +76,16 @@ export interface OfficeSharedSpot {
   walkY: number
 }
 
-/** 共享区固定摆位：白板、打印机、饮水机、文件柜、会议角与两盆绿植。 */
+/** 固定摆位：白板、打印机、饮水机、文件柜、会议角与三盆绿植。 */
 export const OFFICE_SHARED_SPOTS: readonly OfficeSharedSpot[] = [
-  { id: 'board', kind: 'board', x: 258, y: 96, width: 92, height: 36, walkX: 304, walkY: 158 },
-  { id: 'printer', kind: 'printer', x: 356, y: 148, width: 40, height: 30, walkX: 340, walkY: 196 },
-  { id: 'cooler', kind: 'cooler', x: 424, y: 146, width: 24, height: 42, walkX: 416, walkY: 196 },
-  { id: 'cabinet', kind: 'cabinet', x: 400, y: 214, width: 40, height: 44, walkX: 390, walkY: 262 },
-  { id: 'meeting', kind: 'meeting', x: 312, y: 226, width: 66, height: 30, walkX: 345, walkY: 218 },
-  { id: 'plant-a', kind: 'plant', x: 246, y: 132, width: 20, height: 22, walkX: 256, walkY: 160 },
-  { id: 'plant-b', kind: 'plant', x: 268, y: 240, width: 20, height: 22, walkX: 278, walkY: 266 },
+  { id: 'board', kind: 'board', x: 248, y: 56, width: 86, height: 38, walkX: 291, walkY: 116 },
+  { id: 'printer', kind: 'printer', x: 430, y: 100, width: 44, height: 26, walkX: 420, walkY: 176 },
+  { id: 'cooler', kind: 'cooler', x: 203, y: 56, width: 20, height: 44, walkX: 213, walkY: 104 },
+  { id: 'cabinet', kind: 'cabinet', x: 430, y: 126, width: 44, height: 44, walkX: 420, walkY: 176 },
+  { id: 'meeting', kind: 'meeting', x: 288, y: 186, width: 114, height: 34, walkX: 345, walkY: 262 },
+  { id: 'plant-a', kind: 'plant', x: 237, y: 122, width: 24, height: 36, walkX: 249, walkY: 162 },
+  { id: 'plant-b', kind: 'plant', x: 440, y: 233, width: 24, height: 36, walkX: 452, walkY: 268 },
+  { id: 'plant-c', kind: 'plant', x: 205, y: 226, width: 24, height: 36, walkX: 217, walkY: 266 },
 ]
 
 /** 按座位序号取工位；越界返回 null，调用方据此报警而不是瞎画。 */

@@ -46,7 +46,6 @@ function navProps(compact: boolean): TeamSidebarNavProps {
     overview: fixtureOverview,
     project: null,
     view: 'main',
-    mainFace: 'thread',
     selectedThread: 'team',
     compact,
     onOpenOffice: () => undefined,
@@ -55,7 +54,7 @@ function navProps(compact: boolean): TeamSidebarNavProps {
     onOpenSettings: () => undefined,
     onNewBot: () => undefined,
     onOpenProject: () => undefined,
-    onOpenSession: () => undefined,
+    onOpenTopic: () => undefined,
   }
 }
 

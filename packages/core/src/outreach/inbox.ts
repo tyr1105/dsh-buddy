@@ -1,4 +1,7 @@
-/** 收件箱只收需要主人决策的事项；回答和默认处理共用同一路径，并落实被接受的结构化提议。 */
+/**
+ * 收件箱只收需要主人决策的事项；回答和默认处理共用同一路径，并落实被接受的结构化提议。
+ * P65：来自项目主题的事项，主人亲手处理后，接着做的那一回合回到原主题（规则见 project/topic-followup.ts）。
+ */
 import { z } from 'zod';
 import { posix } from 'node:path';
 import type { HubContext } from '../engine/context.js';
@@ -17,9 +20,13 @@ import { postThread } from './thread.js';
 import { inboxDefaultOption, inboxOptions, proposalAnswer } from './inbox-options.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { checkGoalAnswer } from '../commit/result-check.js';
+import type { ProjectTopic } from '../model/project.js';
+import { followUpNoteText, followUpTopic, startTopicFollowUp, topicReplyFields } from '../project/topic-followup.js';
 const InboxInputSchema = InboxItemSchema.pick({ botId: true, type: true, title: true, body: true, subjectKey: true }).extend({
     options: z.array(nonempty).optional(), defaultOption: nonempty.nullable().optional(), priority: InboxItemSchema.shape.priority.optional(),
     refId: nonempty.nullable().optional(), expiresAt: timestamp.nullable().optional(), status: InboxItemSchema.shape.status.optional(), answer: InboxItemSchema.shape.answer.optional(),
+    // P65：在哪个项目主题的回合里提出的；不在主题里提的事项不传。
+    topicId: InboxItemSchema.shape.topicId,
 });
 export type InboxInput = z.infer<typeof InboxInputSchema>;
 const answerLocks = new WeakMap<HubContext, Map<string, Promise<unknown>>>();
@@ -57,26 +64,36 @@ export function createInboxItem(ctx: HubContext, input: InboxInput): InboxItem {
         throw new Error('defaultOption：须属于 2 到 4 个选项之一');
     const now = ctx.clock.now();
     const ttl = value.type === 'question' ? ctx.settings.questionExpiryMs : value.type === 'approval' ? ctx.settings.approvalExpiryMs : value.type === 'proposal' ? ctx.settings.proposalExpiryMs : null;
-    const row: InboxItem = { ...value, id: newId('i', ctx.rng),
+    // P65：只有真的来自主题才写 topicId，其余事项保持旧记录的样子，不多出一个空字段。
+    const { topicId, ...fields } = value;
+    const row: InboxItem = { ...fields, id: newId('i', ctx.rng),
         options: inboxOptions({ type: value.type, options: value.options ?? [] }),
         defaultOption: inboxDefaultOption({ type: value.type, defaultOption: value.defaultOption ?? null }),
         priority: value.priority ?? (value.type === 'proposal' ? 'P2' : 'P1'), refId: value.refId ?? null, status: value.status ?? 'open',
-        answer: value.answer ?? null, pushed: false, createdAt: now, expiresAt: value.expiresAt === undefined ? (ttl === null ? null : now + ttl) : value.expiresAt, answeredAt: null };
+        answer: value.answer ?? null, pushed: false, createdAt: now, expiresAt: value.expiresAt === undefined ? (ttl === null ? null : now + ttl) : value.expiresAt, answeredAt: null,
+        ...(topicId ? { topicId } : {}) };
     ctx.store.table('inbox').put(row);
     emitInboxChange(ctx, row);
     return row;
 }
-/** 把主人答案转换为感知和唤醒候选，让等待中的机器人知道同一事项已有回复。 */
-function replyCandidate(ctx: HubContext, item: InboxItem, answer: string, at: number, ownerInitiated: boolean): void {
+/**
+ * 把主人答案转换为感知和唤醒候选，让等待中的机器人知道同一事项已有回复。
+ * P65：topic 不为空时（主人亲手处理了来自主题、主题还能接着聊的事项），同一条候选带上主题，
+ * 接着做的那一回合回到主题，主题里落一句旁白；否则照旧排一条私聊的后续回合。
+ */
+function replyCandidate(ctx: HubContext, item: InboxItem, answer: string, at: number, ownerInitiated: boolean, topic: ProjectTopic | null = null): void {
     if (!item.botId)
         return;
     const percept = recordInboxReply(ctx, { botId: item.botId, id: item.id, summary: `主人回复「${item.title}」：${answer}`, at });
-    if (percept) {
-        const candidate = buildCandidate(ctx, { botId: item.botId, kind: 'inbox_reply', score: ctx.settings.c02.replySalience,
-            ownerInitiated, summary: ownerInitiated ? '主人已回答收件箱事项' : '收件箱事项已按默认选项处理', evidence: [percept.id, item.id], inboxId: item.id, subjectKey: item.subjectKey, now: at });
+    const candidate = percept ? buildCandidate(ctx, { botId: item.botId, kind: 'inbox_reply', score: ctx.settings.c02.replySalience,
+        ownerInitiated, summary: ownerInitiated ? '主人已回答收件箱事项' : '收件箱事项已按默认选项处理', evidence: [percept.id, item.id], inboxId: item.id, subjectKey: item.subjectKey, now: at,
+        ...(topic ? topicReplyFields(topic) : {}) }) : null;
+    if (candidate)
         candidate.priority = ctx.settings.c02.priorities.reply;
+    if (topic)
+        startTopicFollowUp(ctx, { topic, candidate, perceptId: percept?.id ?? null, note: followUpNoteText(item, answer), refId: item.id });
+    else if (candidate)
         enqueue(ctx, candidate);
-    }
 }
 /** proposed 实体不能靠自然语言“同意”生效，只在此主人的明确接受命令中激活。 */
 async function acceptProposal(ctx: HubContext, item: InboxItem): Promise<void> {
@@ -151,6 +168,9 @@ export async function retireProposalRecord(ctx: HubContext, item: InboxItem): Pr
 }
 /** 使用内部模式保留 expired 状态，同时仍执行默认回答和唤醒，保证过期与人工回答语义一致。 */
 async function applyAnswer(ctx: HubContext, item: InboxItem, answer: string, expired: boolean, at = ctx.clock.now()): Promise<InboxItem> {
+    // P65：这件事来自主题、主人亲手处理、主题还能接着聊时，接着做的那一回合回到主题。
+    // 到期按默认处理不是主人的回答，照旧落私聊；审批的去向由 decideApproval 按审批单自己判断。
+    let topic: ProjectTopic | null = null;
     if (item.type === 'approval') {
         if (!item.refId)
             throw new Error('审批事项缺少 refId');
@@ -189,10 +209,14 @@ async function applyAnswer(ctx: HubContext, item: InboxItem, answer: string, exp
                 await refreshBotFiles(ctx, goal.botId);
             }
         }
-        replyCandidate(ctx, item, answer, at, !expired);
+        topic = expired ? null : followUpTopic(ctx, item.botId, item.topicId);
+        replyCandidate(ctx, item, answer, at, !expired, topic);
     }
     const result = ctx.store.table('inbox').patch(item.id, { status: expired ? 'expired' : 'answered', answer, answeredAt: at });
-    postThread(ctx, { thread: item.botId ?? 'team', from: expired ? 'hub' : 'owner', kind: 'reply', text: expired ? `「${item.title}」已按默认回答处理：${answer}` : `「${item.title}」：${answer}`, refId: item.id });
+    // 答案记在卡片所在的线程：主题里的提问卡在主题里，答案已由主题旁白记下，私聊不再多一条没头没尾的回答；
+    // 建议卡、审批卡在私聊里，私聊照旧记一笔（来自主题的建议另有主题旁白）。
+    if (!(topic && item.type === 'question'))
+        postThread(ctx, { thread: item.botId ?? 'team', from: expired ? 'hub' : 'owner', kind: 'reply', text: expired ? `「${item.title}」已按默认回答处理：${answer}` : `「${item.title}」：${answer}`, refId: item.id });
     writeOutreachAudit(ctx, 'inbox_answer', { id: item.id, answer, expired }, expired ? 'hub' : 'owner');
     emitInboxChange(ctx, item);
     return result;

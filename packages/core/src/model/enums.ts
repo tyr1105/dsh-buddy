@@ -2,10 +2,20 @@
 import { z } from 'zod';
 
 // 机器人在团队中的职责分工，决定默认节奏及总管协作能力。
-export const ROLES = ['chief', 'researcher', 'executor', 'sentinel'] as const;
+export const ROLES = ['chief', 'researcher', 'executor', 'sentinel', 'advisor'] as const;
 export const RoleSchema = z.enum(ROLES, { error: '请选择有效的Role值' });
 export type Role = z.infer<typeof RoleSchema>;
-export const ROLE_LABELS: Record<Role, string> = { 'chief': '总管', 'researcher': '调研', 'executor': '执行', 'sentinel': '盯守' };
+export const ROLE_LABELS: Record<Role, string> = { 'chief': '总管', 'researcher': '调研', 'executor': '执行', 'sentinel': '盯守', 'advisor': '建议' };
+
+// P55：性格和说话风格改成选择题，具体写进身份文件的话在 config/persona-choices.ts。
+export const TEMPERAMENTS = ['steady', 'rigorous', 'cheerful', 'inventive', 'calm', 'gentle'] as const;
+export const TemperamentSchema = z.enum(TEMPERAMENTS, { error: '请选择有效的性格' });
+export type Temperament = z.infer<typeof TemperamentSchema>;
+export const TEMPERAMENT_LABELS: Record<Temperament, string> = { 'steady': '稳重靠谱', 'rigorous': '严谨较真', 'cheerful': '开朗热情', 'inventive': '点子很多', 'calm': '冷静寡言', 'gentle': '温和细心' };
+export const SPEECH_STYLES = ['conclusion_first', 'brief', 'detailed', 'gentle', 'blunt', 'playful'] as const;
+export const SpeechStyleSchema = z.enum(SPEECH_STYLES, { error: '请选择有效的说话风格' });
+export type SpeechStyle = z.infer<typeof SpeechStyleSchema>;
+export const SPEECH_STYLE_LABELS: Record<SpeechStyle, string> = { 'conclusion_first': '结论先行', 'brief': '简短干脆', 'detailed': '详细周到', 'gentle': '温和客气', 'blunt': '直来直去', 'playful': '轻松幽默' };
 
 // 办公室座位灯：只表达「这个队友此刻在跑、在等、在休息或不知道」，不参与任何调度判断。
 export const OFFICE_LIGHTS = ['working', 'queued', 'waiting', 'blocked', 'resting', 'watching', 'offline', 'vacant', 'unknown'] as const;

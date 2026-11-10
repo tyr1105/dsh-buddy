@@ -50,6 +50,15 @@ export function filterActivity(
   )
 }
 
+/**
+ * P65：收件箱里一件事「查看对话」该去哪条线程。
+ * 来自项目主题的事，主人处理后队友回到主题里接着做，所以去主题（主题 id 就是线程 id）；
+ * 其余的去这位队友的私聊；全队事项没有队友，返回 null，不显示入口。
+ */
+export function inboxThreadId(item: Pick<InboxItemView, 'botId' | 'topicId'>): string | null {
+  return item.topicId ?? item.botId ?? null
+}
+
 /** 新到的 P0/P1 收件箱项（应用内提示只提示这两级；P2 不打扰）。 */
 export function newUrgentInbox(prev: readonly InboxItemView[], next: readonly InboxItemView[]): InboxItemView[] {
   const seen = new Set(prev.map(item => item.id))

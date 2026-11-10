@@ -24,7 +24,7 @@
  *   面板，面板级监听接不住；捕获阶段能在浏览器默认跳焦点之前拦下。面板之上再开
  *   模态弹窗（如「教它技能」）时主动让位，弹窗自己的 useDialogFocus 才是那一层
  *   的键盘主人，两个困守不能同时生效。
- * - 关闭后把焦点还给触发按钮（通常是线程头「详情」）。该按钮在右栏打开期间条件
+ * - 关闭后把焦点还给触发按钮（通常是线程头的「查看状态」）。该按钮在右栏打开期间条件
  *   卸载、关闭后重挂成新节点，渲染期缓存的旧引用必然失联，因此旧引用不可用时
  *   按稳定锚点 [data-testid="ah-detail-open"] 找重挂后的新按钮；锚点也不存在
  *   则交给浏览器默认，绝不硬焦点。
@@ -41,6 +41,12 @@ import { useEffect, useRef, type RefObject } from 'react'
  */
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"], summary'
 
+/** 右栏现在是不是抽屉：遮罩显示就是抽屉，宽屏 CSS 把它设成 display:none。每次实时读，天然响应拖拽变宽变窄。 */
+export function isDrawerMode(): boolean {
+  const scrim = document.querySelector<HTMLElement>('.ah-right-scrim')
+  return !!scrim && getComputedStyle(scrim).display !== 'none'
+}
+
 export function useDrawerFocus(): { panelRef: RefObject<HTMLElement> } {
   // 与 useDialogFocus 同口径：React 18 类型下 useRef<T>(null) 得到可挂到 JSX 的 RefObject<T>。
   const panelRef = useRef<HTMLElement>(null)
@@ -56,11 +62,7 @@ export function useDrawerFocus(): { panelRef: RefObject<HTMLElement> } {
   useEffect(() => {
     const panel = panelRef.current
     if (!panel) return
-    /** 遮罩显示=抽屉模式；宽屏 CSS 把它设成 display:none。每次按键实时读，天然响应拖拽变宽变窄。 */
-    const drawerMode = (): boolean => {
-      const scrim = document.querySelector<HTMLElement>('.ah-right-scrim')
-      return !!scrim && getComputedStyle(scrim).display !== 'none'
-    }
+    const drawerMode = isDrawerMode
     /** 当前真正可 Tab 到的控件：排除折叠 details 内部与无布局盒的节点（summary 除外）。 */
     const controls = (): HTMLElement[] => Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
       .filter(el => el.getClientRects().length > 0

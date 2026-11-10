@@ -23,6 +23,8 @@ const InputSchema = z.strictObject({
   agendaId: nonempty.optional(), driveName: nonempty.optional(), goalId: nonempty.nullable().optional(), messageId: nonempty.optional(), inboxId: nonempty.optional(),
   variant: VariantSchema.optional(), urgent: bool.optional(), ownerInitiated: bool.optional(), anomaly: bool.optional(), toOwner: bool.optional(),
   notBefore: timestamp.optional(), now: timestamp.optional(),
+  // P63：这次唤醒属于哪个项目主题；不属于主题的候选不带这一项。
+  topicId: nonempty.optional(),
 });
 export type CandidateInput = z.infer<typeof InputSchema>;
 
@@ -95,5 +97,6 @@ export function buildCandidate(ctx: HubContext, input: CandidateInput): Candidat
     // urgent 只表示感知显著性；到期承诺和内驱的高分不能冒充紧急感知。
     subjectKey, urgent: ['percept', 'pile', 'peer_message', 'owner_message', 'inbox_reply', 'approval_decided'].includes(value.kind)
       && roundScore(value.score) >= ctx.settings.salienceUrgent && value.urgent !== false, ownerInitiated,
-    priority: priorityFor({ ...value, anomaly, ownerInitiated }, ctx.settings), notBefore: value.notBefore ?? now };
+    priority: priorityFor({ ...value, anomaly, ownerInitiated }, ctx.settings), notBefore: value.notBefore ?? now,
+    ...(value.topicId ? { topicId: value.topicId } : {}) };
 }

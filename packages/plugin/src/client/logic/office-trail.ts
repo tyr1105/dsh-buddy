@@ -122,8 +122,8 @@ function dayLabelOf(ms: number, now: number, offsetMinutes: number): string {
   return parts.year === today.year ? base : `${parts.year} 年 ${base}`
 }
 
-/** 本地 HH:mm。 */
-function timeTextOf(ms: number, offsetMinutes: number): string {
+/** 本地 HH:mm（24 小时制）。P62 的动线时间段也用它，两处的时区口径才不会分叉。 */
+export function timeTextOf(ms: number, offsetMinutes: number): string {
   const parts = localParts(ms, offsetMinutes)
   const pad = (value: number): string => String(value).padStart(2, '0')
   return `${pad(parts.hour)}:${pad(parts.minute)}`

@@ -13,6 +13,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import css from './styles.css'
 import workspaceCss from './workspace.css'
 import settingsCss from './settings.css'
+import { installNewSessionBridge } from './new-session-bridge.js'
 import { createHubStore, connectEvents, type HubStore } from './hub-state.js'
 import { createStore, useStore, type Store } from './store.js'
 import { HubPage } from './pages/HubPage.js'
@@ -23,10 +24,20 @@ import { HubToastOverlay } from './components/HubToastOverlay.js'
 import { applySpaceMode, fallbackSpace, watchHostSpace, type HostSpaceState } from './logic/host-mount.js'
 import { readSpaceMode, readSurface, saveSpaceMode, saveSurface, targetPanel, type StorageAccess } from './logic/mode-nav.js'
 import { focusAfterSwitch } from './logic/space-focus.js'
+import { createTeamPanelRestore } from './logic/restore-team-panel.js'
 import type { SpaceMode } from './logic/space-capability.js'
 import type { SpaceSwitchSource } from './components/space-switch.js'
 
 export const inject = ['slots', 'locale']
+
+/**
+ * 这里用到的宿主布局服务（P56）。
+ * panelInfo 不在宿主公开的接口说明里，所以全部按可选读取；读不到时当作中栏没有选中功能页。
+ */
+interface HostLayout {
+  selectPanel?: (key: string | null) => void
+  panelInfo?: { getSnapshot?: () => { activePanelId?: string | null } }
+}
 
 /**
  * 中栏内容：有空间位时就是现有三栏工作区；没有空间位时包一层团队空间页面，
@@ -223,20 +234,45 @@ export function apply(ctx: any): void {
     console.error('[agent-hub] 监听中栏表面失败:', error)
   }
 
+  // 6a) 启动或界面被替换后把中栏选回队友页（P56）：规则和等待方式都在 logic/restore-team-panel，
+  // 这里只负责接上宿主。ctx.get 是不强制的读取，布局服务还没就绪时拿到 undefined。
+  const hostLayout = (): HostLayout | undefined => (ctx as { get?: (name: string) => HostLayout | undefined } | null)?.get?.('layout')
+  const panelRestore = createTeamPanelRestore({
+    getMode: () => mode.getSnapshot(),
+    getActivePanel: () => hostLayout()?.panelInfo?.getSnapshot?.()?.activePanelId,
+    selectTeamPanel: () => {
+      const layout = hostLayout()
+      if (typeof layout?.selectPanel !== 'function') throw new Error('布局服务还没就绪')
+      layout.selectPanel(targetPanel('team'))
+    },
+  })
+  try {
+    ctx.effect(() => () => panelRestore.dispose(), 'dsh-buddy: restore-team-panel')
+    // 布局服务可能比本插件晚就绪：ctx.inject 会等它就绪后才回调。
+    ctx.inject(['layout'], () => panelRestore.attempt())
+  } catch (error) {
+    console.error('[agent-hub] 等待布局服务失败:', error)
+  }
+
   // 6) 中栏页面：有空间位直接渲染工作区，无空间位包一层团队空间页面。
   try {
-    ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'agent-hub' }, () => (
-      <HubSurface
-        hub={hub}
-        clientCtx={ctx}
-        placement={placement}
-        mode={mode}
-        space={space}
-        inboxFocus={inboxFocus}
-        onModeChange={switchSpace}
-        onBackToChat={backToChat}
-      />
-    )))
+    ctx.slots.inject('main', () => {
+      const dispose = ctx.slots.register({ name: 'main', key: 'agent-hub' }, () => (
+        <HubSurface
+          hub={hub}
+          clientCtx={ctx}
+          placement={placement}
+          mode={mode}
+          space={space}
+          inboxFocus={inboxFocus}
+          onModeChange={switchSpace}
+          onBackToChat={backToChat}
+        />
+      ))
+      // 队友页注册好了，可以尝试选回来；布局服务要是还没好，上面的 ctx.inject 会再试一次。
+      panelRestore.attempt()
+      return dispose
+    })
   } catch (error) {
     console.error('[agent-hub] 注册 main 插槽失败:', error)
   }
@@ -285,5 +321,12 @@ export function apply(ctx: any): void {
     ))
   } catch (error) {
     console.error('[agent-hub] 注册一级队友列表失败:', error)
+  }
+
+  // 10) 新会话页 @ 队友（P57）。依赖的宿主服务要等齐才接，缺了也不影响启动。
+  try {
+    installNewSessionBridge(ctx, { hub, mode })
+  } catch (error) {
+    console.error('[agent-hub] 接入新会话页失败:', error)
   }
 }

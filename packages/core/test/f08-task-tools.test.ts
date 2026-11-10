@@ -120,6 +120,8 @@ describe('F08 hub_task_update 正常推进', () => {
 
   it('report_done：进行中→待验收，并提醒还没算完成', async () => {
     const { ctx, tc, task } = taskFixture();
+    // P60：有负责人的项目改由负责人确认；这条用例继续验证没有负责人的老项目仍等主人验收。
+    ctx.store.table('projects').patch('prj_0000000001', { ownerBotId: null });
     const result = await runTool(ctx, tc, 'hub_task_update', { taskId: task.id, action: 'report_done' });
     expect(result.ok).toBe(true);
     if (result.ok) {

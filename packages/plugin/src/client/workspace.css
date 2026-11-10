@@ -7,23 +7,17 @@
 .ah-host-botlist *, .ah-host-botlist *::before, .ah-host-botlist *::after { box-sizing: border-box; }
 :is(.ah-page, .ah-host-botlist) :is(button, input, textarea, select, summary):focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
 /* 两侧列等宽，导航始终在内容区正中；整行共用标题区留白和垂直中心。 */
-.ah-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); padding: max(12px, var(--dsh-frame-top-clearance, 0px)) 18px 12px; gap: 16px; flex-shrink: 0; }
+/* P61：顶栏中间的页面切换已删除，只剩左边品牌、右边状态和动作两列。 */
+.ah-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: max(12px, var(--dsh-frame-top-clearance, 0px)) 18px 12px; gap: 16px; flex-shrink: 0; }
 .ah-topbar-title { align-items: center; justify-self: start; padding-top: 0; }
 .ah-topbar-title > div { min-width: 0; }
 .ah-topbar h1 { font-size: 16px; font-weight: 650; letter-spacing: -.3px; }
 .ah-topbar-now { display: block; font-size: 11px; white-space: nowrap; }
 .ah-brand-mark { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent); font-size: 21px; font-weight: 750; }
-.ah-topbar-nav { display: flex; align-items: center; justify-self: center; gap: 4px; padding: 4px; border-radius: 12px; background: var(--dsw-alias-bg-inset); }
-/* 当前位置（P1-1）：顶栏不再放办公室/待你处理，只显示「队友 / 当前页」，
-   让主人知道自己在哪；两项主入口统一留在左栏。 */
-.ah-topbar-here { padding: 0 5px; color: var(--dsw-alias-text-primary); font-size: 12px; font-weight: 650; white-space: nowrap; }
-.ah-topbar-sep { color: var(--dsw-alias-text-secondary); font-size: 11px; }
-.ah-topbar-divider { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--dsw-alias-separator); }
 .ah-topbar-status { gap: 8px; justify-self: end; min-width: 0; }
 .ah-page .ah-btn { font-size: 12px; min-height: 30px; padding: 5px 10px; border-radius: 8px; white-space: nowrap; }
 /* 激活态文字用 accent-text：原始品牌紫在淡紫底上浅色主题实测 4.45:1 不达 AA，混 10% 主文字色后双主题达标。 */
 .ah-page .ah-btn[aria-current='page'], .ah-filter-tabs .ah-btn[aria-pressed='true'] { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); }
-.ah-nav-count { margin-left: 5px; padding: 0 5px; border-radius: 5px; background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent-text); font-size: 11px; }
 .ah-body { position: relative; overflow: hidden; }
 /* 左栏宽度跟随宿主实际宽度（约 248px），不再硬托宿主变宽（P1-3）。
    宿主侧栏里由 .ah-host-botlist 的 100% 接管；页面内降级列用这个基准值。 */
@@ -100,12 +94,6 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-thread-header-main { gap: 4px; }
 .ah-thread-header-actions { gap: 5px; }
 .ah-thread-next { font-size: 11px; }
-/* 工作会话上下文（P1-2）：一行说完标题、项目与状态，
-   同一队友同项目下的多条子行点进来能立刻分辨是哪条。 */
-.ah-thread-task { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 2px 0 0; font-size: 11px; color: var(--dsw-alias-text-secondary); }
-.ah-thread-task-label { flex: none; padding: 0 5px; border-radius: 5px; background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent-text); font-size: 10px; }
-.ah-thread-task-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-text-primary); font-weight: 600; }
-.ah-thread-task-meta { flex: none; font-size: 10px; }
 .ah-thread-messages { min-height: 0; padding: 24px; gap: 18px; overscroll-behavior: contain; overflow-anchor: none; }
 .ah-msg-body { max-width: min(85%, 720px); }
 .ah-msg:not(.ah-msg-mine) .ah-msg-body { margin-left: 36px; }
@@ -136,22 +124,39 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-mention-menu { position: absolute; z-index: 20; left: 0; bottom: calc(100% + 6px); display: flex; flex-direction: column; min-width: 168px; max-width: min(280px, 70vw); max-height: 240px; overflow-y: auto; padding: 5px; border: 1px solid var(--dsw-alias-separator); border-radius: 10px; background: var(--dsw-alias-bg-elevated); box-shadow: var(--dsw-shadow-lv2); }
 .ah-mention-title { padding: 3px 7px 6px; font-size: 10px; color: var(--dsw-alias-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ah-mention-item { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 28px; padding: 4px 7px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+/* 新会话页 @ 菜单里的队友头像（P57）：菜单行图标位固定 14px，字号跟着缩小。 */
+.ah-mention-avatar { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; color: var(--dsw-alias-bg-base); font-size: 9px; font-weight: 600; line-height: 1; }
+/*
+ * 新会话页的工作区下拉（P57）：下拉挂在 body 上，够不到 .ah-page 的颜色别名，
+ * 这里直接用宿主自己的主题 token。背景不透明：宿主菜单材质半透明时能透出下面的输入框文字。
+ */
+.ah-np-menu { position: fixed; z-index: 1200; box-sizing: border-box; display: flex; flex-direction: column; min-width: 260px; max-width: min(380px, calc(100vw - 32px)); overflow-y: auto; padding: 4px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-lg, 12px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent)); font-size: 13px; line-height: 20px; }
+.ah-np-menu *, .ah-np-menu *::before { box-sizing: border-box; }
+.ah-np-group { flex: none; display: flex; flex-direction: column; }
+.ah-np-section { flex: none; margin: 0; padding: 6px 8px 2px; color: var(--dsw-alias-label-tertiary); font-size: 11px; font-weight: 500; line-height: 16px; }
+.ah-np-status { flex: none; margin: 0; padding: 4px 8px 6px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
+.ah-np-error { flex: none; margin: 4px 8px 6px; color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.ah-np-divider { flex: none; height: 0.5px; margin: 4px 8px; background: var(--dsw-alias-border-l2); }
+.ah-np-item { flex: none; display: flex; align-items: center; gap: 6px; width: 100%; min-height: 34px; padding: 6px 8px; border: 0; border-radius: var(--dsw-radius-md, 8px); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ah-np-item > svg { flex: none; width: 14px; height: 14px; color: var(--dsw-alias-menu-icon, currentColor); }
+.ah-np-item:hover:not(:disabled), .ah-np-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }
+.ah-np-item:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: -2px; }
+.ah-np-item:disabled { cursor: default; opacity: 0.6; }
+.ah-np-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ah-np-suffix { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--dsw-alias-label-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.ah-np-item > .ah-np-check { margin-left: auto; color: var(--dsw-alias-state-business-primary); }
 .ah-mention-item:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
 .ah-right { width: 310px; background: var(--dsw-alias-bg-inset); }
 .ah-right-head { padding: 16px; flex-shrink: 0; }
 .ah-right-scroll { padding: 0 14px; overscroll-behavior: contain; }
 .ah-right-section { padding: 14px 0; }
 .ah-right-section summary { cursor: pointer; font-size: 12px; font-weight: 650; }
-.ah-section-content { padding-top: 10px; display: grid; gap: 8px; }
 .ah-right-section ul { padding-left: 0; }
 .ah-right-section .ah-empty { padding: 4px 0; }
-.ah-edit-list > li { border: 1px solid var(--dsw-alias-separator); background: var(--dsw-alias-bg-base); border-radius: 9px; padding: 9px; }
-.ah-edit-row { align-items: flex-start; flex-wrap: wrap; }
-.ah-edit-add input:not([type='checkbox']) { min-width: 0; flex: 1; width: 140px; }
 .ah-edit-box select { padding: 6px 10px; font: inherit; color: inherit; border: 1px solid var(--dsw-alias-separator); border-radius: 8px; background: var(--dsw-alias-bg-base); }
 .ah-right-actions { padding: 12px 14px; gap: 5px; background: var(--dsw-alias-bg-base); }
 .ah-right-notice { overflow-wrap: anywhere; }
-.ah-inbox, .ah-activity, .ah-settings { min-width: 0; padding: 24px; overscroll-behavior: contain; }
+.ah-inbox, .ah-activity { min-width: 0; padding: 24px; overscroll-behavior: contain; }
 .ah-pane-heading h2 { margin: 0; font-size: 20px; }
 .ah-pane-heading p { margin: 4px 0 0; color: var(--dsw-alias-text-secondary); }
 .ah-filter-tabs { display: flex; gap: 5px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--dsw-alias-separator); }
@@ -178,15 +183,9 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-wizard-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ah-wizard-role { padding: 18px 14px; min-height: 94px; gap: 8px; border-radius: 12px; }
 .ah-wizard-role strong { padding-right: 24px; }
-.ah-wizard-steps { gap: 4px; }
-.ah-wizard-steps li { padding: 0; border-radius: 7px; }
-.ah-wizard-steps button { color: inherit; background: transparent; border: 0; font: inherit; cursor: pointer; padding: 5px 7px; }
-.ah-wizard-steps button:disabled { cursor: default; }
 .ah-wizard-field input, .ah-wizard-field textarea, .ah-teach-search, .ah-teach-note { width: 100%; }
-.ah-wizard-confirm { padding: 20px; border: 1px solid var(--dsw-alias-separator); border-radius: 13px; background: var(--dsw-alias-accent-muted); }
 .ah-dialog-actions { border-top: 1px solid var(--dsw-alias-separator); padding-top: 16px; }
 .ah-save-toast { position: absolute; z-index: 45; top: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border: 1px solid var(--dsw-alias-separator); border-radius: 10px; background: var(--dsw-alias-bg-elevated); box-shadow: var(--dsw-shadow-lv2); font-size: 12px; }
-.ah-settings { position: relative; }
 /* 以插件内容宽度判定，而不是浏览器宽度；宿主侧栏展开时也能正确切换。 */
 @container buddy (max-width: 1100px) {
   /* 窄窗按优先级收纳：只收起额度文字，灯点保留（悬停 title 仍有全文，
@@ -205,8 +204,6 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 }
 @container buddy (max-width: 760px) {
   .ah-topbar { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; row-gap: 6px; padding: max(10px, var(--dsh-frame-top-clearance, 0px)) 12px 10px; }
-  /* 720 档导航独占第二行并允许换行：不再挤成一行把标题压没（P2-2）。 */
-  .ah-topbar-nav { grid-row: 2; grid-column: 1 / -1; width: 100%; justify-content: center; flex-wrap: wrap; row-gap: 4px; }
   /* 720 档也保住 224px：项目名与会话标题能读全，主区仍留得下至少 400px；更窄时由 520 档再收。 */
   .ah-botlist { width: 224px; padding: 12px 6px 0; }
   .ah-bot-row { gap: 6px; padding: 9px 6px; }
@@ -217,7 +214,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   .ah-sidebar-nav .ah-nav-bot-archived .ah-bot-row-name .ah-tag { display: none; }
   .ah-thread-header-actions { gap: 3px; }
   .ah-msg-body { max-width: 92%; }
-  .ah-inbox, .ah-activity, .ah-settings { padding: 16px; }
+  .ah-inbox, .ah-activity { padding: 16px; }
   .ah-inbox-time { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -233,31 +230,18 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   .ah-thread { min-width: 0; }
   /* 宽度取「150px 与 44% 中更小者」：264px 时约 116px，72px 时约 32px，都不会把中栏挤成负数。 */
   .ah-botlist { width: min(150px, 44%); padding: 10px 6px 0; }
-  /* 导航按钮允许换行：不横向滚动也能点到全部 7 个入口。 */
-  .ah-topbar-nav { flex-wrap: wrap; justify-content: center; row-gap: 4px; }
   /* 顶栏时间小字不再强制不换行，避免把标题列撑出容器。 */
   .ah-topbar-now { white-space: normal; }
   /* 输入区底部「额度说明 + 发送按钮」换行，发送按钮始终留在可视区内。 */
   .ah-composer-bottom { flex-wrap: wrap; }
-  /* 项目任务行：常规宽度下操作组 flex:none 永不收缩，窄时整行溢出卡片。
-     允许行内换行、操作组可收缩后内部按钮自行换行，宽屏表现不变。 */
-  .ah-prj-task { flex-wrap: wrap; }
-  .ah-prj-task-ops { flex: 0 1 auto; min-width: 0; }
-  /* 卡片头部操作组同款病根：flex:none 让四个按钮死守一行宽 200+，允许收缩后内部换行。 */
-  .ah-prj-ops { flex: 0 1 auto; min-width: 0; }
-  /* 主信息列：auto 弹性基准会按 max-content 抢占宽度，改成零基准参与分配；
-     它本身是 grid，内部轨道同样锁 minmax(0,1fr)，子项 min-width:0，
-     长标题/元信息在列内换行而不是把整行撑破。 */
-  .ah-prj-task-main { flex: 1 1 0; grid-template-columns: minmax(0, 1fr); }
-  .ah-prj-task-main > * { min-width: 0; }
-  /* 项目页整串单列网格用的是隐式 auto 轨道，窄列会按 min-content 把轨道撑宽、
-     层层传播把任务行推出卡片。统一改成 minmax(0,1fr)，轨道先服从容器宽度。 */
-  .ah-prj, .ah-prj-list, .ah-prj-card, .ah-prj-tasks, .ah-prj-task-group ul {
+  /* 项目页整串单列网格用的是隐式 auto 轨道，窄列会按 min-content 把轨道撑宽。
+     统一改成 minmax(0,1fr)，轨道先服从容器宽度。 */
+  .ah-prj {
     grid-template-columns: minmax(0, 1fr);
   }
-  .ah-prj, .ah-org, .ah-res { padding: 12px; }
+  .ah-prj, .ah-res { padding: 12px; }
   .ah-thread-messages { padding: 14px 12px; }
-  .ah-inbox, .ah-activity, .ah-settings { padding: 12px; }
+  .ah-inbox, .ah-activity { padding: 12px; }
   /*
    * 队友行空间预算（U01 r46）：720 窗口宿主侧栏展开时插件容器约 470px，落本档，
    * 侧栏只有 150px。旧规则下行内仍有 32px 头像 + 未读徽标占位，主列被压到 21px，
@@ -289,12 +273,10 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 }
 /*
  * 病理宽度（宿主侧栏展开且窗口只有 320px，插件容器约 71px）：
- * 这个宽度连一个两字按钮都放不下，正常换行方案会变成 7 行高的导航。
- * 兜底策略：导航收成单行横向滚动（可扫到全部入口，起点不裁切），
- * 只留品牌标识、隐藏标题文字。用户折叠宿主侧栏后即恢复正常布局。
+ * 这个宽度连一个两字按钮都放不下。
+ * 兜底策略：只留品牌标识、隐藏标题文字。用户折叠宿主侧栏后即恢复正常布局。
  */
 @container buddy (max-width: 200px) {
-  .ah-topbar-nav { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; }
   .ah-topbar-title h1 { display: none; }
 }
 
@@ -329,15 +311,11 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-page input[type='checkbox'],
 .ah-page input[type='radio'] { width: 16px; height: 16px; flex: none; }
 .ah-prj-check-list label,
-.ah-prj-criteria-met,
-.ah-teach-list label,
-.ah-edit-add label:has(input[type='checkbox']),
-.ah-edit-add label:has(input[type='radio']) { min-height: 24px; }
+.ah-teach-list label { min-height: 24px; }
 /* 右栏折叠分区的 summary 实测只有 18.6px 高，同样补到 24px 并居中文字。 */
 .ah-right-section summary { min-height: 24px; display: flex; align-items: center; }
 /* 复选行原来按文字基线对齐，最小高度后改居中，控件与文字垂直对齐更稳。 */
-.ah-prj-check-list label,
-.ah-prj-criteria-met { align-items: center; }
+.ah-prj-check-list label { align-items: center; }
 
 /*
  * 一级空间切换（P27 定稿 / P32 共享控件）。
@@ -349,7 +327,17 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-space-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; min-width: 0; padding: 3px; border: 1px solid var(--dsw-alias-separator); border-radius: 9px; background: var(--dsw-alias-bg-inset); }
 .ah-space-switch-btn { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 26px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-text-secondary); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .ah-space-switch-btn:hover { color: var(--dsw-alias-text-primary); background: var(--dsw-alias-border-l1); }
-.ah-space-switch-btn[aria-pressed='true'] { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); }
+/*
+ * 选中态（主人走查：看不出当前在对话还是队友）。
+ * 用宿主自己 Tab 选中时的蓝色（state-business-primary），不用 brand-primary：
+ * 宿主的 brand-primary 在深色主题是白色、浅色主题是近黑色，做选中色和普通文字分不开。
+ * 三重区分，不只靠颜色：实底 + 1px 描边（对侧栏底色 ≥4:1）+ 加粗主文字；图标也跟着变色。
+ * 没有蓝色 token 的环境退回品牌色，隔离预览和旧版宿主都能看出选中。
+ */
+.ah-space-switch-btn[aria-pressed='true'] { --ah-space-selected: var(--dsw-alias-state-business-primary, var(--dsw-alias-accent)); color: var(--dsw-alias-text-primary); font-weight: 700; background: color-mix(in srgb, var(--ah-space-selected) 22%, var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base))); box-shadow: inset 0 0 0 1px var(--ah-space-selected); }
+.ah-space-switch-btn[aria-pressed='true'] svg { color: var(--ah-space-selected); }
+/* 切换器不在 .ah-page 里，全站焦点环规则够不到它，这里单独给键盘用户补上。 */
+.ah-space-switch-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-accent)); outline-offset: 1px; }
 .ah-space-switch-btn svg { flex: none; }
 .ah-space-switch-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ah-space-switch-badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--dsw-alias-danger); color: var(--dsw-alias-text-on-accent, var(--dsw-alias-text-primary)); font-size: 10px; font-weight: 700; }
@@ -411,46 +399,6 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 [data-ah-space-hide-entry='true'] { display: none !important; }
 
 /*
- * 队友主页（P33）：中栏的「摘要 + 在做 / 已归档」，按项目套母子结构。
- * 滚动只发生在主页内部；页面骨架（左列表 / 中栏 / 右详情）不跟着长高。
- */
-.ah-home { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base); }
-.ah-home-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 22px 14px; border-bottom: 1px solid var(--dsw-alias-separator); flex-shrink: 0; }
-.ah-home-head-main { min-width: 0; flex: 1; display: grid; gap: 3px; }
-.ah-home-head h2 { margin: 0; font-size: 16px; font-weight: 650; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.ah-home-role { font-size: 11px; font-weight: 400; color: var(--dsw-alias-text-secondary); }
-.ah-home-activity { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
-.ah-home-notice { margin: 2px 0 0; font-size: 12px; color: var(--dsw-alias-accent-text); overflow-wrap: anywhere; }
-/* 头部主操作槽（r46）：按钮与未读数右对齐成一组，窄屏允许整组换到下一行，不挤压标题列。 */
-.ah-home-head-actions { display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
-.ah-home-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 22px 28px; display: grid; gap: 14px; align-content: start; }
-/* 列表 / 看板切换条（P35）：与项目页共用 .ah-seg；右侧补一句「同一份记录」的说明。 */
-.ah-home-viewbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ah-home-summary { display: flex; flex-wrap: wrap; gap: 8px; }
-.ah-home-stat { padding: 8px 12px; border: 1px solid var(--dsw-alias-separator); border-radius: 10px; background: var(--dsw-alias-bg-inset); font-size: 12px; color: var(--dsw-alias-text-secondary); }
-.ah-home-stat strong { margin-right: 4px; font-size: 15px; color: var(--dsw-alias-text-primary); }
-.ah-home-summary-text { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
-.ah-home-section { display: grid; gap: 8px; }
-.ah-home-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.ah-home-section-head h3 { margin: 0; font-size: 13px; font-weight: 650; }
-.ah-home-group { border: 1px solid var(--dsw-alias-separator); border-radius: 12px; overflow: hidden; background: var(--dsw-alias-bg-base); }
-.ah-home-group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 34px; padding: 8px 12px; border: 0; background: var(--dsw-alias-bg-inset); font: inherit; color: inherit; text-align: left; cursor: pointer; }
-.ah-home-group-static { cursor: default; }
-.ah-home-group-name { min-width: 0; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
-.ah-home-group-count { flex: none; font-size: 11px; color: var(--dsw-alias-text-secondary); }
-.ah-home-group-body { display: grid; }
-.ah-work-session { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--dsw-alias-separator); }
-.ah-home-group-body > .ah-work-session:first-child { border-top: 0; }
-.ah-work-session-main { flex: 1; min-width: 0; display: grid; gap: 4px; padding: 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
-.ah-work-session-title { font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
-.ah-work-session-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: var(--dsw-alias-text-secondary); }
-.ah-work-session-actions { flex: none; display: flex; align-items: center; gap: 6px; padding-top: 2px; }
-.ah-work-session-blocked .ah-work-session-title { text-decoration: underline dotted; text-underline-offset: 3px; }
-.ah-home-archived-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 34px; padding: 8px 12px; border: 1px dashed var(--dsw-alias-separator); border-radius: 10px; background: transparent; font: inherit; font-size: 12px; color: var(--dsw-alias-text-secondary); cursor: pointer; }
-.ah-home-empty { margin: 0; padding: 14px; border: 1px dashed var(--dsw-alias-separator); border-radius: 12px; color: var(--dsw-alias-text-secondary); font-size: 12px; display: grid; gap: 8px; justify-items: start; }
-.ah-home-empty p { margin: 0; }
-
-/*
  * P36：像素办公室与当日轨迹。
  * 房间是一张 480x270 的逻辑画布，按容器宽度整体缩放；可点的对象（小人、门口、
  * 角标）用透明按钮浮在逻辑坐标上，气泡文案是真实 DOM 文本而不是画进像素里，
@@ -458,15 +406,15 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
  */
 .ah-office-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 /*
- * 房间始终按卡片宽度铺满（16:9，高度由宽高比决定），引导与轨迹面板都排在
- * 画布下方，不再占右侧一列。窄屏只是同一条单列自然变窄，不需要换布局。
+ * 房间始终按可用宽度铺满（16:9，高度由宽高比决定），引导排在画布下方。
+ * 动线面板虽然写在这个容器里，但由下方 .ah-trail 段定位到页面右侧（P62），不占这里的格子。
  */
 .ah-office-pixel-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 
 .ah-office-pixel { display: grid; gap: 10px; min-width: 0; }
 .ah-office-pixel-room {
   position: relative;
-  /* 气泡字号按房间宽度缩放：2cqw 正好容得下两个汉字，不遮挡小人也读得清。 */
+  /* 气泡字号按房间宽度缩放：1.75cqw 让文字在气泡里留出边距，不遮挡小人也读得清。 */
   container-type: inline-size;
   border: 1px solid var(--dsw-alias-separator);
   border-radius: var(--dsw-radius-lg, 10px);
@@ -500,7 +448,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   align-items: center;
   justify-content: center;
   font-size: 8px;
-  font-size: 2cqw;
+  font-size: 1.75cqw;
   line-height: 1;
   white-space: nowrap;
   color: #20242c;
@@ -530,35 +478,56 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 }
 .ah-office-pixel-badge:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
 
-/* 房间门口：团队级收件箱的短入口，细节列表仍由页面底部那段承担。 */
+/*
+ * 房间门口：团队级收件箱的短入口，细节列表仍由页面底部那段承担。
+ * 门牌贴在画里的玻璃门上。房间不分深浅主题，一直是亮的，所以牌子也固定用亮底深字，
+ * 跟随主题令牌的话，深色主题下会变成亮房间里一块黑牌子。
+ */
 .ah-office-pixel-door {
   position: absolute;
-  left: 10px;
-  top: 10px;
+  left: 1.9%;
+  top: 13%;
   padding: 2px 8px;
   min-height: 24px;
-  border: 1px solid var(--dsw-alias-separator);
-  border-radius: 7px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-text-primary);
+  border: 1px solid #4d5569;
+  border-radius: 4px;
+  background: #fffdf4;
+  box-shadow: 0 2px 0 rgba(77, 85, 105, 0.35);
+  color: #2f3646;
   font: inherit;
   font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
 }
-.ah-office-pixel-door:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-text); }
+.ah-office-pixel-door:hover { background: #fff1bd; }
 .ah-office-pixel-door:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
 
+/*
+ * 空办公室的提示牌：放在工作区上方那片空地上，不挡家具。
+ * 宽度最多占房间的 44%，窄窗口里自动折行，左右都不会越出房间。
+ */
 .ah-office-pixel-empty {
   position: absolute;
-  left: 50%;
-  top: 42%;
+  left: 23%;
+  top: 38%;
   transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  max-width: 44%;
   margin: 0;
-  padding: 6px 12px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--dsw-alias-bg-base) 86%, transparent);
-  color: var(--dsw-alias-text-secondary);
+  padding: 5px 10px;
+  border: 1px solid #4d5569;
+  border-radius: 4px;
+  background: #fffdf4;
+  box-shadow: 0 2px 0 rgba(77, 85, 105, 0.35);
+  color: #2f3646;
   font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+/* 房间很窄时，提示牌会折成几行：门牌挪到顶上，提示牌往下放，两块牌子不互相压。 */
+@container (max-width: 520px) {
+  .ah-office-pixel-door { top: 3%; }
+  .ah-office-pixel-empty { top: 54%; }
 }
 
 /* 图例兼键盘入口：色块与小人衣服同色，名字与气泡短文案来自同一份渲染帧。 */
@@ -599,74 +568,58 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-office-pixel-guide p { margin: 0; }
 .ah-office-pixel-warn { color: var(--dsw-alias-text-primary); }
 
-/* 轨迹面板：一列事件，不截断正文；高度超出时自己滚动，不把整页顶长。 */
+/*
+ * P62 员工动线：一行一段时间。默认写成盖在内容上的抽屉（窄窗用），容器宽于 760 时
+ * 由本段最后的容器查询改成页面右侧的侧栏，视觉对齐对话页右栏（.ah-right）。
+ * 默认写抽屉是为了定位只写一遍：页面内降级左栏占掉宽度时也走抽屉，不用把规则抄两份。
+ * 用 fixed 的理由同 .ah-right：整页缩放下文档流容器会被撑高，absolute 会让抽屉底部掉到视口外。
+ */
+.ah-trail-scrim { position: fixed; inset: 0; z-index: 29; background: var(--dsw-alias-scrim); }
 .ah-trail {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--dsw-alias-separator);
-  border-radius: var(--dsw-radius-lg, 10px);
-  background: var(--dsw-alias-bg-elevated, var(--dsw-alias-bg-base));
-  max-height: calc(100dvh - 200px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.ah-trail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-/* U01 第 37 轮：div 改 h3 后归零 UA 标题样式，保持原来的网格排版。 */
-.ah-trail-title { display: grid; gap: 1px; min-width: 0; margin: 0; font-size: inherit; font-weight: inherit; }
-.ah-trail-title strong { font-size: 13px; }
-.ah-trail-title span { font-size: 11px; color: var(--dsw-alias-text-secondary); }
-
-/* 桌上产出与门口：两块都是真实投影，点开沿用办公室既有的下钻。 */
-.ah-trail-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.ah-trail-fact {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 7px 9px;
-  border: 1px solid var(--dsw-alias-separator);
-  border-radius: 8px;
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(340px, 85%);
+  min-height: 0;
+  border-left: 1px solid var(--dsw-alias-separator);
   background: var(--dsw-alias-bg-inset);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  box-shadow: var(--dsw-shadow-lv2);
 }
-.ah-trail-fact:hover:not(:disabled) { border-color: color-mix(in srgb, var(--dsw-alias-accent) 40%, transparent); }
-.ah-trail-fact:disabled { cursor: default; opacity: .75; }
-.ah-trail-fact:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
-.ah-trail-fact-label { font-size: 10px; color: var(--dsw-alias-text-secondary); }
-.ah-trail-fact-text { font-size: 12px; overflow-wrap: anywhere; }
-
-/* 日期条：只往前翻；两端到达时按钮禁用，不循环也不越界。 */
-.ah-trail-days { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.ah-trail-day-label { font-size: 12px; color: var(--dsw-alias-text-primary); }
-
-.ah-trail-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.ah-trail-event {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 7px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+/* 面板自身只接收程序焦点（不在 Tab 序列里），不画焦点框。 */
+.ah-trail:focus { outline: none; }
+/* 抽屉贴着窗口顶部，标题要让开宿主窗口的顶部操作区（和顶栏用同一个变量）。 */
+.ah-trail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: max(16px, var(--dsh-frame-top-clearance, 0px)) 16px 12px;
+  border-bottom: 1px solid var(--dsw-alias-separator);
 }
-.ah-trail-event:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
-.ah-trail-event:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
-.ah-trail-time { font-size: 11px; color: var(--dsw-alias-text-secondary); font-variant-numeric: tabular-nums; }
-.ah-trail-kind { font-size: 10px; color: var(--dsw-alias-text-secondary); }
-.ah-trail-text { font-size: 12px; overflow-wrap: anywhere; }
+/* U01 第 37 轮：标题是真 h3，归零 UA 标题样式；字重字号交给里面的 strong。 */
+.ah-trail-title { min-width: 0; margin: 0; font-size: inherit; font-weight: inherit; overflow-wrap: anywhere; }
+.ah-trail-title strong { font-size: 15px; font-weight: 500; }
 
-.ah-trail-foot { display: grid; gap: 6px; justify-items: start; }
-.ah-trail-note { margin: 0; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+/* 日期条：两端到达时按钮禁用，不循环也不越界。 */
+.ah-trail-days { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-shrink: 0; padding: 6px 10px; }
+.ah-trail-day-label { min-width: 0; font-size: 12px; color: var(--dsw-alias-text-primary); text-align: center; }
+
+/* 只有列表这一块滚动，标题和「打开对话」始终看得到；滚到底也不带动后面的页面。 */
+.ah-trail-scroll { flex: 1; min-height: 0; display: grid; align-content: start; gap: 10px; padding: 6px 16px 14px; overflow-y: auto; overscroll-behavior: contain; }
+.ah-trail-scroll:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.ah-trail-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.ah-trail-row { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.ah-trail-time { color: var(--dsw-alias-text-secondary); font-variant-numeric: tabular-nums; }
+/* 空闲退到次要文字色，做事的行更显眼；等验收用强调文字色提醒主人。 */
+.ah-trail-row-idle .ah-trail-text { color: var(--dsw-alias-text-secondary); }
+.ah-trail-row-pending .ah-trail-text { color: var(--dsw-alias-accent-text); }
+
+.ah-trail-foot { flex-shrink: 0; display: flex; padding: 12px 14px; border-top: 1px solid var(--dsw-alias-separator); background: var(--dsw-alias-bg-base); }
+.ah-trail-note { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-trail-note .ah-btn { margin-left: 8px; }
 .ah-trail-error {
   margin: 0;
   display: flex;
@@ -678,6 +631,30 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   color: var(--dsw-alias-text-primary);
   box-shadow: inset 0 0 0 1px var(--dsw-alias-warning, var(--dsw-alias-separator));
   font-size: 12px;
+}
+/*
+ * 宽屏改成页面右侧的侧栏。以 .ah-body 做定位基准，房间往下滚时侧栏不跟着走，
+ * 高度也和对话页右栏一样从顶栏下方到底；.ah-office-replay 让出同样宽度，房间不被盖住，
+ * 面板卸载后这条 :has 自动失效，办公室恢复全宽。
+ * 宽度下限 240：容器刚过 760 时房间还有约 480 宽，正好是画布的原始像素宽，再窄气泡字就看不清了。
+ * 页面内降级左栏（.ah-botlist）在时它要占掉约 236，容器过 1040 房间才放得下，所以分两档。
+ */
+.ah-body { --ah-trail-rail: clamp(240px, 28%, 310px); }
+@container buddy (width > 760px) {
+  .ah-body:not(:has(> .ah-botlist)) > .ah-office-replay:has(.ah-trail) { margin-right: var(--ah-trail-rail); }
+  .ah-body:not(:has(> .ah-botlist)) .ah-trail { position: absolute; z-index: auto; width: var(--ah-trail-rail); box-shadow: none; }
+  .ah-body:not(:has(> .ah-botlist)) .ah-trail-head { padding-top: 16px; }
+  .ah-body:not(:has(> .ah-botlist)) .ah-trail-scrim { display: none; }
+}
+@container buddy (width > 1040px) {
+  .ah-body:has(> .ah-botlist) > .ah-office-replay:has(.ah-trail) { margin-right: var(--ah-trail-rail); }
+  .ah-body:has(> .ah-botlist) .ah-trail { position: absolute; z-index: auto; width: var(--ah-trail-rail); box-shadow: none; }
+  .ah-body:has(> .ah-botlist) .ah-trail-head { padding-top: 16px; }
+  .ah-body:has(> .ah-botlist) .ah-trail-scrim { display: none; }
+}
+/* Windows 高对比度下，遮罩沿用右栏抽屉的压暗做法，层级仍看得出来。 */
+@media (forced-colors: active) {
+  .ah-trail-scrim { forced-color-adjust: none; background: color-mix(in srgb, CanvasText 38%, transparent); }
 }
 
 /*
@@ -695,6 +672,16 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
      底部「待你处理」作为固定块常驻首屏，任何视口下都不用滚到底才看得到。 */
   overflow: hidden;
   overscroll-behavior: contain;
+  /*
+   * P59：左栏只有两档字号，新增行直接用这两个变量，不要再写死数字。
+   * 以前每种行各写一个数（9/10/11/12/13px），字重也在 400、500、600、650 之间乱跳，
+   * 结果分组标题比下面的条目还小，「队友」「工作区」看起来就被压下去了。
+   * 数值取自 DSH 自带左栏（dsh-client-ui-sidebar、dsh-client-ui-workspace 的样式）：
+   * 分组标题「工作区」、项目行、会话行都是 14px/400，副信息是 12px/400。
+   * 这样「对话 / 队友」切换时左栏字号不跳；层级靠颜色和缩进区分，不靠把标题做小。
+   */
+  --ah-nav-font-main: 14px;
+  --ah-nav-font-minor: 12px;
 }
 /* 三组滚动区：只有它滚动，footer 不参与，所以最后一组滚到底时不会被 footer 遮住。 */
 .ah-nav-scroll {
@@ -756,15 +743,18 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   color: var(--dsw-alias-text-secondary);
   font: inherit;
-  font-size: 11px;
-  font-weight: 650;
+  /* P59：三组标题的字号字重只在这里定一次，标题文字本身不写字号、只继承，
+     所以「办公室」「队友」「工作区」不可能不一致。和 DSH 的分组标题一样用常规字重，
+     靠灰色和条目区分；颜色保留比 DSH 三级灰更深的次要色，亮色主题才够得上 AA 对比度。 */
+  font-size: var(--ah-nav-font-main);
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
 }
 .ah-nav-group-toggle:hover { color: var(--dsw-alias-text-primary); background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
 .ah-nav-group-title { flex: none; white-space: nowrap; }
 /* 计数先缩略，仍过长时只收缩计数并显示省略号，动作列始终不变。 */
-.ah-nav-group-count { margin-left: auto; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 400; color: var(--dsw-alias-text-secondary); white-space: nowrap; }
+.ah-nav-group-count { margin-left: auto; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--ah-nav-font-minor); font-weight: 400; color: var(--dsw-alias-text-secondary); white-space: nowrap; }
 /* 折叠箭头：收起朝右、展开朝下，纯位移不改变行高。 */
 .ah-nav-chevron { flex: none; transition: transform .14s ease; }
 .ah-nav-chevron-open { transform: rotate(90deg); }
@@ -782,7 +772,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--ah-nav-font-main);
   text-align: left;
   cursor: pointer;
 }
@@ -799,7 +789,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
    不再把底部「待你处理」一路顶出视口；项目少时高度自然收缩，不预留空白。 */
 .ah-nav-group-workspaces .ah-nav-rows { max-height: min(46dvh, 360px); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 /* 提示在组头之下、滚动列表之外（U01 第 43 轮 P2-L1）：列表滚动时它不跟着滚没。 */
-.ah-nav-scroll-hint { margin: 2px 6px 4px; font-size: 10px; color: var(--dsw-alias-text-secondary); }
+.ah-nav-scroll-hint { margin: 2px 6px 4px; font-size: var(--ah-nav-font-minor); color: var(--dsw-alias-text-secondary); }
 
 /* 队友行：主按钮吃满宽度，行尾加号是独立按钮，不抢点击。 */
 .ah-nav-bot { position: relative; display: flex; align-items: center; gap: 1px; min-width: 0; }
@@ -808,6 +798,14 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-nav-bot .ah-bot-row { flex: 1 1 auto; min-width: 0; }
 .ah-sidebar-nav .ah-bot-row { display: flex; align-items: center; gap: 8px; padding: 6px 7px; border-radius: 9px; }
 .ah-sidebar-nav .ah-bot-row-main { display: grid; flex: 1 1 auto; min-width: 0; }
+/* P59：名字、角色、动态这几个类还被别的页面用（老队友列表、右栏等），所以这里只在
+   左栏内收口：名字和其他条目同档同字重；第二、三行归次要文字，和 DSH 的副信息同为 12px。
+   这条必须排在 .ah-host-botlist 的同名规则之后，两者优先级相同，靠先后顺序生效。 */
+.ah-sidebar-nav .ah-bot-row-name { font-size: var(--ah-nav-font-main); font-weight: 400; }
+.ah-sidebar-nav .ah-bot-row-role,
+.ah-sidebar-nav .ah-bot-row-activity { font-size: var(--ah-nav-font-minor); }
+/* P59：搜索框和 DSH 左栏的搜索输入同为 13px，比条目略小，读起来仍是输入控件。 */
+.ah-sidebar-nav .ah-bot-search { font-size: 13px; }
 /* 行尾加号：默认半透明常驻（键盘可聚焦），悬停或聚焦时提亮，保持 24px 触控目标。 */
 .ah-nav-row-add {
   display: inline-grid;
@@ -860,15 +858,16 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  /* P59：项目行和 DSH 的工作区项目行同档，不再单独加粗。 */
+  font-size: var(--ah-nav-font-main);
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
 }
 .ah-nav-project-name:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
 .ah-nav-project-name.ah-selected { border-color: color-mix(in srgb, var(--dsw-alias-accent) 30%, transparent); background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent-text); }
 .ah-nav-project-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ah-nav-project-count { flex: none; min-width: 18px; padding: 0 5px; border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-text-secondary); font-size: 10px; font-weight: 500; text-align: center; }
+.ah-nav-project-count { flex: none; min-width: 18px; padding: 0 5px; border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-text-secondary); font-size: var(--ah-nav-font-minor); font-weight: 400; text-align: center; }
 /* 子会话：左侧细竖线表示归属，缩进量固定 18px，项目多时也不吃掉标题宽度。 */
 .ah-nav-sessions { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 4px 18px; padding-left: 6px; border-left: 1px solid var(--dsw-alias-separator); }
 .ah-nav-session {
@@ -883,7 +882,8 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   color: var(--dsw-alias-text-secondary);
   font: inherit;
-  font-size: 11px;
+  /* P59：会话子行和 DSH 的会话行同档；母子层级靠左侧竖线、缩进和灰色区分。 */
+  font-size: var(--ah-nav-font-main);
   text-align: left;
   cursor: pointer;
 }
@@ -897,17 +897,13 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 }
 .ah-nav-session-current .ah-nav-session-title { color: var(--dsw-alias-accent-text); }
 .ah-nav-session-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ah-nav-session-blocked .ah-nav-session-title { text-decoration: underline dotted; text-underline-offset: 3px; }
-.ah-nav-session-flag { flex: none; padding: 0 4px; border-radius: 5px; background: var(--dsw-alias-warning, var(--dsw-alias-accent)); color: #20242c; font-size: 9px; line-height: 15px; }
+.ah-nav-session-flag { flex: none; padding: 0 4px; border-radius: 5px; background: var(--dsw-alias-warning, var(--dsw-alias-accent)); color: #20242c; font-size: 11px; line-height: 16px; }
 /* 状态点：颜色只是辅助，完整状态在 title 与右侧「待验收」标签里。
-   todo/rejected/accepted 不进左栏（P1-2），所以只保留在办、待验收、卡住三种。 */
-.ah-nav-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-text-secondary); }
-.ah-nav-dot-doing { background: var(--dsw-alias-accent); }
+   左栏的在办、卡住两种状态点已删除，这里只剩待验收一种。 */
 /* U10：裸 warning 琥珀在亮色侧栏底上只有 2.9:1，不过 WCAG 1.4.11 非文字 3:1；
    向主文字色压两成，提到约 3.5:1；暗色下主文字色变浅，琥珀被提亮，对深底仍达标。 */
 .ah-nav-dot-check { background: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 80%, var(--dsw-alias-label-primary)); }
-.ah-nav-dot-blocked { background: var(--dsw-alias-danger); }
-.ah-nav-empty { margin: 2px 6px 4px; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+.ah-nav-empty { margin: 2px 6px 4px; font-size: var(--ah-nav-font-minor); color: var(--dsw-alias-text-secondary); }
 
 /* 内联新建会话表单：只占一列，不弹窗；错误就地显示，不打断其他操作。 */
 .ah-nav-form { display: grid; gap: 6px; margin: 4px 0 6px; padding: 8px; border: 1px solid var(--dsw-alias-separator); border-radius: 9px; background: var(--dsw-alias-bg-base); }
@@ -932,6 +928,9 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 }
 /* 宿主侧栏底色透明：footer 跟随宿主，不刷一块与宿主不一致的底色。 */
 .ah-host-botlist .ah-botlist-footer { background: transparent; }
+/* P59：「待你处理」的名字以前是 11px 灰字，比它自己的第二行（12px）还小。
+   现在按条目处理：和「设置」同档同色，第二行沿用 12px 灰字，上下关系才对。 */
+.ah-sidebar-nav .ah-inbox-entry-name { font-size: var(--ah-nav-font-main); font-weight: 400; color: var(--dsw-alias-text-primary); }
 
 /*
  * 收起态（图标列，36px 宽）：与宿主原生收起侧栏同宽。
@@ -980,7 +979,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   color: var(--dsw-alias-text-secondary);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--ah-nav-font-minor);
   line-height: 1;
   cursor: pointer;
   opacity: .8;
@@ -1017,7 +1016,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   color: var(--dsw-alias-text-secondary);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--ah-nav-font-minor);
   text-align: left;
   cursor: pointer;
 }
@@ -1073,3 +1072,103 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-template-actions { justify-content: space-between; margin-top: 10px; }
 .ah-skill-role summary { cursor: pointer; }
 .ah-skill-role .ah-skill-group { margin-top: 6px; }
+
+/* P55 队友配置精简：新建队友和编辑队友共用这一组样式。 */
+.ah-config-form { display: grid; gap: 16px; min-width: 0; }
+.ah-config-form .ah-wizard-field { display: grid; gap: 6px; min-width: 0; }
+.ah-wizard-roles.ah-config-roles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.ah-wizard-roles.ah-config-rhythm { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ah-config-form .ah-wizard-role { min-height: 72px; padding: 10px; gap: 4px; align-content: start; font-size: 12px; line-height: 1.4; border-radius: 10px; }
+.ah-config-form .ah-wizard-role strong { padding-right: 0; font-size: 13px; }
+.ah-choice-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ah-choice { min-height: 28px; padding: 3px 11px; border: 1px solid var(--dsw-alias-separator); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.ah-choice:hover:not(:disabled) { border-color: var(--dsw-alias-accent); }
+.ah-choice[aria-pressed="true"] { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent-text); }
+.ah-choice:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
+.ah-config-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ah-config-select { display: grid; gap: 4px; font-size: 13px; min-width: 0; }
+.ah-config-select select { width: 100%; height: 34px; }
+.ah-skill-search { width: 100%; }
+.ah-skill-scroll { display: grid; gap: 4px; max-height: 200px; overflow-y: auto; padding-right: 4px; }
+/* 表单比模板库长，中间滚动，头部和底部的按钮一直看得到。 */
+.ah-wizard-picking > .ah-wizard-body { min-height: 0; overflow-y: auto; padding-right: 4px; }
+@media (max-width: 640px) {
+  .ah-wizard-roles.ah-config-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ah-wizard-roles.ah-config-rhythm { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ah-config-pair { grid-template-columns: minmax(0, 1fr); }
+}
+
+/*
+ * P64 队友右侧边栏：只放忙碌状态、额度、在办的事三块，常驻展开不折叠；
+ * 编辑队友弹窗沿用新建队友的做法，中间滚动，头部和底部的按钮一直看得到。
+ */
+.ah-right-section > h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-weight: 650; }
+.ah-right-section > p + p { margin-top: 4px; }
+.ah-right-section:last-child { border-bottom: 0; }
+.ah-right-busy .ah-dot { font-size: 13px; font-weight: 650; }
+.ah-right-count { font-weight: 400; }
+.ah-work-group + .ah-work-group { margin-top: 12px; }
+.ah-right-section .ah-work-group-name { margin-bottom: 2px; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 整行可点：左右各外扩 8px，悬停底色比文字宽一点，文字仍和上下内容对齐。 */
+.ah-work-session { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; width: calc(100% + 16px); margin: 0 -8px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.ah-work-session:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-base)); }
+.ah-work-session-title { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-work-session .ah-tag { flex: none; }
+.ah-work-session-blocked .ah-work-session-title { text-decoration: underline dotted; text-underline-offset: 3px; }
+.ah-teammate-edit { display: flex; flex-direction: column; overflow: hidden; height: min(800px, 100%); }
+/* padding 留 2px，滚动容器才不会裁掉按钮的焦点框。 */
+.ah-teammate-edit > .ah-prj-form { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 4px 2px 2px; }
+.ah-teammate-edit > .ah-dialog-actions { flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.ah-teammate-life, .ah-teammate-save { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ah-teammate-life-note { font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 点队友现在直接落在对话上：最窄档中栏只剩两百多像素，消息和卡片不能再靠内容撑出横向滚动条。 */
+@container buddy (max-width: 520px) {
+  .ah-msg-body, .ah-card { grid-template-columns: minmax(0, 1fr); }
+  .ah-thread-header .ah-btn, .ah-card .ah-btn { white-space: normal; }
+}
+
+/*
+ * P60、P63 项目主题聊天和项目页四块。
+ * 主题聊天是飞书话题那样的盖楼：所有人同一列，头像、名字、时间、正文，中心提示弱化成一行小字。
+ * 项目页只有四张卡，宽屏两列，窄屏自动变一列（minmax 里的 min 保证比 320 还窄时不撑破）。
+ */
+.ah-nav-topic-unread { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-danger); }
+.ah-topic { display: grid; gap: 14px; min-width: 0; }
+.ah-topic-card { display: grid; gap: 6px; min-width: 0; padding: 14px 16px; border: 1px solid var(--dsw-alias-separator); border-radius: 12px; background: var(--dsw-alias-bg-inset); }
+.ah-topic-card-text, .ah-topic-floor-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; }
+.ah-topic-count { margin: 0; padding-bottom: 6px; border-bottom: 1px solid var(--dsw-alias-separator); font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-topic-floor { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.ah-topic-floor-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.ah-topic-floor-meta { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-topic-floor-meta strong { font-size: 13px; font-weight: 650; color: var(--dsw-alias-text-primary); }
+.ah-topic-note { margin: 0; text-align: center; font-size: 11px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 讨论到上限要看得清：文字用主色，语义色放描边，和待确认标签同一策略。 */
+.ah-topic-note-strong { padding: 7px 12px; border: 1px solid var(--dsw-alias-warning, var(--dsw-alias-accent)); border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-text-primary); }
+.ah-topic-replying { margin: 0; font-size: 12px; color: var(--dsw-alias-accent-text); }
+.ah-topic-readonly { margin: 0; padding: 14px 24px; border-top: 1px solid var(--dsw-alias-separator); font-size: 13px; text-align: center; color: var(--dsw-alias-text-secondary); }
+.ah-prj-head-main { align-items: center; }
+.ah-prj-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ah-prj-compose { max-width: 520px; min-width: 0; }
+.ah-prj-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 14px; align-items: start; }
+.ah-prj-block { display: grid; gap: 10px; align-content: start; min-width: 0; padding: 14px 16px; border: 1px solid var(--dsw-alias-separator); border-radius: 12px; }
+.ah-prj-block h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.ah-prj-note { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-prj-members-list, .ah-prj-items, .ah-prj-pick { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.ah-prj-members-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 28px; }
+.ah-prj-member-name { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-prj-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; min-width: 0; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: inherit; text-align: left; }
+.ah-prj-item-link { cursor: pointer; }
+.ah-prj-item-link:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
+.ah-prj-item-title { flex: 1 1 120px; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-prj-item .ah-prj-note, .ah-prj-item .ah-tag { flex: none; }
+.ah-prj-background { margin: 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ah-prj-path { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ah-prj-path-label { flex: none; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-prj-path-value { flex: 1 1 200px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+
+/* P60：编辑弹窗是定高的，表单是网格，字段少的时候不能被均匀拉开，都从顶部排。 */
+.ah-teammate-edit > .ah-prj-form { align-content: start; }
+/* P60：失效成员只是一行说明。旧的通用样式是红框，放在成员名单里太重，这里压回普通文字。 */
+.ah-prj-members-list .ah-prj-member-gone { box-shadow: none; background: transparent; color: var(--dsw-alias-text-secondary); }
+/* P60：项目表单字段少，弹窗按内容撑高，太高时才在里面滚动；沿用队友弹窗的固定高度会在中间留一大片空白。 */
+.ah-teammate-edit.ah-prj-edit { height: auto; max-height: min(800px, 100%); }

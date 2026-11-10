@@ -4,7 +4,7 @@ export const HUB_EVENT_SCOPES = {
   overview: 'overview',
   /** 机器人详情和对应总览卡片变化：交账、感知、议程、目标、关注、规矩、套路、生命周期、队列或回合；botId 必带。 */
   bot: 'bot',
-  /** 线程消息、已读状态或内嵌卡片变化；机器人线程必带 botId，只有团队线程用 null。 */
+  /** 线程消息、已读状态或内嵌卡片变化；机器人线程必带 botId，项目主题线程的 botId 放主题 id，只有团队线程用 null。 */
   thread: 'thread',
   /** 收件箱新建、作答、审批决定、到期或关闭；机器人项必带 botId，中心级项目用 null。 */
   inbox: 'inbox',
@@ -14,7 +14,7 @@ export const HUB_EVENT_SCOPES = {
   settings: 'settings',
   /** 唤醒账本新增、追加动作或封存；机器人项必带 botId，集中回填用 null。 */
   ledger: 'ledger',
-  /** 项目容器变化：项目与任务、验收结论；全队结构，botId 固定 null。 */
+  /** 项目容器变化：项目与任务、验收结论、背景，以及主题的新消息和未读（主题列表靠它刷新）；全队结构，botId 固定 null。 */
   project: 'project',
   /** 办公室投影变化：队友状态、账本、收件箱或资料变动都可能改变房间；botId 按来源带。 */
   office: 'office',

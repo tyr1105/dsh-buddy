@@ -7,6 +7,8 @@
  * - 气泡：主人靠右主色淡底；机器人靠左中性底带头像名字（连续同一发送者合并头像）；
  *   中心/日报/系统消息居中小字无气泡；汇报气泡左侧细色条（任务卡问题第 3 条）。
  * - 卡片内嵌（提问/审批/提议/告警）；底部输入框回车发送；向上「加载更早」。
+ * - 项目主题（P63）复用这个页面：头部换成主题名和项目名，楼层换成 TopicThreadBody 的群聊样式，
+ *   输入框可以 @ 项目成员，不显示右侧边栏，「更多」里只留主题用得上的。
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { ThreadMessageView, ThreadView } from '../../shared/views.js'
@@ -14,7 +16,9 @@ import { Avatar, EmptyHint, Skeleton } from './Ui.js'
 import { InboxCard, type CardActions } from './Cards.js'
 import { groupMessages, isCenterMessage, isSendEnter, threadScrollTop } from '../logic/thread.js'
 import { pauseResumeAction } from '../logic/lifecycle.js'
-import { insertMention, type MentionMember } from '../logic/mentions.js'
+import { insertMention } from '../logic/mentions.js'
+import { buildTopicThread, type TopicPaneInfo } from '../logic/topics.js'
+import { TopicThreadBody } from './TopicThreadBody.js'
 
 /** 头部信息由上层从 BotCard 组装（团队线程没有这些，就不显示）。 */
 export interface ThreadHeaderInfo {
@@ -99,26 +103,19 @@ export function ThreadPane(props: {
   onTogglePause: () => void
   /** 打断当前回合（二次确认在组件内做；D04 3b）。 */
   onInterrupt: () => void
-  /** 详情右栏收起时，线程头部显示「详情」按钮把它重新展开（交互审查第 1 条）。 */
+  /** 右侧边栏收起时（默认就是收起，P64），线程头部显示「查看状态」按钮把它展开。 */
   rightCollapsed?: boolean
   onExpandRight?: () => void
   /** 从「待处理」跳转而来：头部显示回程钮，处理完能一键回到原处。 */
   fromInbox?: boolean
   onBackToInbox?: () => void
-  /** 从队友主页的工作会话跳转而来（P33）：头部显示「返回队友主页」。 */
-  fromHome?: boolean
-  onBackHome?: () => void
   /**
-   * 项目会话的 @ 上下文（P37）：只有从项目工作会话进来的线程才传，
-   * 普通会话不传就不显示 @ 入口——避免在私聊里 @ 一个不在场的人。
+   * 当前线程是项目主题时传（P63），私聊和团队线程不传。
+   * @ 入口也只在这里出现：私聊里 @ 一个不在场的人没有意义。
    */
-  mention?: { projectName: string; members: readonly MentionMember[] } | null
-  /**
-   * 当前打开的是哪条工作会话（P1-2）：侧栏子行和队友主页都带着任务 id 进来，
-   * 线程头显示它的标题、项目与状态——同一队友同项目下的多条子行才分得清，
-   * 点哪条进来就看见哪条，不会看起来都像同一个线程。
-   */
-  openedTask?: { title: string; projectName: string; statusLabel: string } | null
+  topic?: TopicPaneInfo | null
+  /** 挂载时把光标放进输入框（P60 草稿主题：点了「新开会话」就该直接打字）。 */
+  autoFocus?: boolean
 }): ReactNode {
   const [draft, setDraft] = useState(() => readDraft(props.threadId))
   const [sending, setSending] = useState(false)
@@ -126,7 +123,7 @@ export function ThreadPane(props: {
   const [confirmInterrupt, setConfirmInterrupt] = useState(false)
   /** 「更多」菜单的开合：把 6 个等权按钮收起来，头部只留一个主操作。 */
   const [menuOpen, setMenuOpen] = useState(false)
-  /** @ 菜单的开合：只在项目会话里有入口（P37）。 */
+  /** @ 菜单的开合：只在项目主题里有入口（P37、P63）。 */
   const [mentionOpen, setMentionOpen] = useState(false)
   const menuWrapRef = useRef<HTMLDivElement | null>(null)
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null)
@@ -275,19 +272,8 @@ export function ThreadPane(props: {
           {props.fromInbox && props.onBackToInbox ? (
             <button type="button" className="ah-back-link" onClick={props.onBackToInbox}>← 返回待你处理</button>
           ) : null}
-          {/* 从队友主页的工作会话来的：回程目标是原队友主页，不是收件箱（P33）。 */}
-          {props.fromHome && props.onBackHome ? (
-            <button type="button" className="ah-back-link" onClick={props.onBackHome}>← 返回队友主页</button>
-          ) : null}
           <h2>{h?.name ?? '团队全景'}{h?.roleLabel ? <span className="ah-bot-row-role">{h.roleLabel}</span> : null}</h2>
-          {/* 工作会话的上下文（P1-2）：标题 + 项目 + 状态一行说完，同项目的多条子行不会看起来一样。 */}
-          {props.openedTask ? (
-            <p className="ah-thread-task" title={`${props.openedTask.title} · ${props.openedTask.projectName} · ${props.openedTask.statusLabel}`}>
-              <span className="ah-thread-task-label">工作会话</span>
-              <span className="ah-thread-task-title">{props.openedTask.title}</span>
-              <span className="ah-thread-task-meta">{props.openedTask.projectName} · {props.openedTask.statusLabel}</span>
-            </p>
-          ) : null}
+          {props.topic?.projectName ? <p className="ah-thread-status">{props.topic.projectName}</p> : null}
           {!h ? <p className="ah-thread-status">汇报、提问与团队消息，都留在这条会话里。</p> : null}
           {h?.activityText ? <p className="ah-thread-status" title={h.activityText}>{h.activityText}</p> : null}
           {/* 活动句（core 原文用「下次自查」）里已经带过这句时不再单独重复一行；
@@ -295,11 +281,11 @@ export function ThreadPane(props: {
           {h?.nextThinkText && !h.activityText?.includes('下次自查') ? <p className="ah-thread-next">下次叫醒：{h.nextThinkText}</p> : null}
         </div>
         <div className="ah-thread-header-actions">
-          {/* 主操作唯一：头部只留「详情」，其余动作都收进「更多」。
-              右栏收起后这是唯一入口，不能藏进菜单里。 */}
+          {/* 主操作唯一：头部只留「查看状态」，其余动作都收进「更多」。
+              右侧边栏默认收起，这是唯一的展开入口，不能藏进菜单里。 */}
           {props.rightCollapsed && props.onExpandRight ? (
             // data-testid 是右栏抽屉关闭后归还键盘焦点的稳定锚点（该按钮在右栏打开期间卸载、关闭后重挂）。
-            <button type="button" className="ah-btn ah-btn-primary" data-testid="ah-detail-open" onClick={props.onExpandRight}>详情</button>
+            <button type="button" className="ah-btn ah-btn-primary" data-testid="ah-detail-open" onClick={props.onExpandRight}>查看状态</button>
           ) : null}
           {hasMenuItems ? (
             <div className="ah-thread-menu-wrap" ref={menuWrapRef}>
@@ -351,42 +337,49 @@ export function ThreadPane(props: {
         </div>
       ) : null}
       <div className="ah-thread-messages" ref={listRef} onScroll={() => { if (listRef.current) prevTopRef.current = listRef.current.scrollTop }}>
-        {props.intro ?? (props.thread.messages.length === 0 ? <div className="ah-thread-welcome"><span className="ah-brand-mark" aria-hidden="true">B</span><h3>{h ? `跟 ${h.name} 说下一步做什么。` : '从左边选一位队友。'}</h3><p>{h ? '说清目标，给点线索，或者教它一个技能。它做完会在这儿汇报。' : '它的汇报和提问，都会留在这条会话里。'}</p></div> : null)}
-        {groupMessages(props.thread.messages).map(slot => (
+        {props.intro ?? ((props.topic === null || props.topic === undefined) && props.thread.messages.length === 0 ? <div className="ah-thread-welcome"><span className="ah-brand-mark" aria-hidden="true">B</span><h3>{h ? `跟 ${h.name} 说下一步做什么。` : '从左边选一位队友。'}</h3><p>{h ? '说清目标，给点线索，或者教它一个技能。它做完会在这儿汇报。' : '它的汇报和提问，都会留在这条会话里。'}</p></div> : null)}
+        {/* 还没有楼层的主题只可能是草稿（P60）：不画「0 条回复」，由 intro 说明怎么开始。 */}
+        {props.topic !== null && props.topic !== undefined && props.thread.messages.length > 0 ? (
+          <TopicThreadBody model={buildTopicThread(props.thread.messages, props.thread.hasMore)}
+            replying={props.topic.replying} actions={props.actions} busyInboxId={props.busyInboxId} />
+        ) : groupMessages(props.thread.messages).map(slot => (
           <Message key={slot.message.id} m={slot.message} showHeader={slot.showHeader}
             actions={props.actions} busyInboxId={props.busyInboxId} />
         ))}
       </div>
-      {/* U01 第 37 轮（1.3.1）：输入区是线程里的独立功能区，显式命名，读屏可按地标直达。 */}
+      {/* 项目不在进行中时主题只能看：引擎也会拒收，这里直接说清楚，不让主人打完字才知道。 */}
+      {props.topic?.readOnlyText ? <p className="ah-topic-readonly" role="status">{props.topic.readOnlyText}</p> : (
+      /* U01 第 37 轮（1.3.1）：输入区是线程里的独立功能区，显式命名，读屏可按地标直达。 */
       <footer className="ah-thread-input" aria-label="消息输入区">
         <div className="ah-composer">
         <textarea
           ref={textareaRef}
-          aria-label={`向 ${props.inputPlaceholderName} 发送消息`}
+          aria-label={props.topic ? '在这条会话里发言' : `向 ${props.inputPlaceholderName} 发送消息`}
           rows={3}
+          autoFocus={props.autoFocus}
           value={draft}
-          placeholder={`向 ${props.inputPlaceholderName} 发送消息…`}
+          placeholder={props.topic?.placeholder ?? `向 ${props.inputPlaceholderName} 发送消息…`}
           disabled={sending}
           onChange={(e) => { setDraft(e.target.value); saveDraft(props.threadId, e.target.value) }}
           onKeyDown={(e) => { if (isSendEnter(e.nativeEvent)) { e.preventDefault(); void send() } }}
         />
         <div className="ah-composer-bottom">
           <span className="ah-composer-tools">
-          {/* @ 入口只在项目会话出现（P37）：members 为空时也不显示，避免点开一个空菜单。 */}
-          {props.mention !== null && props.mention !== undefined && props.mention.members.length > 0 ? (
+          {/* @ 入口只在主题里出现（P37、P63）：members 为空时也不显示，避免点开一个空菜单。 */}
+          {props.topic !== null && props.topic !== undefined && props.topic.members.length > 0 ? (
             <span className="ah-mention-wrap" ref={mentionWrapRef}>
               <button
                 type="button"
                 className="ah-btn ah-btn-ghost ah-mention-trigger"
                 aria-expanded={mentionOpen}
                 aria-haspopup="listbox"
-                title={`@ ${props.mention.projectName} 的成员`}
+                title={`@ ${props.topic.projectName} 的成员`}
                 onClick={() => setMentionOpen(open => !open)}
               >@ 队友</button>
               {mentionOpen ? (
-                <div className="ah-mention-menu" role="listbox" aria-label={`@ ${props.mention.projectName} 的成员`}>
-                  <span className="ah-mention-title">@ 项目成员 · {props.mention.projectName}</span>
-                  {props.mention.members.map(member => (
+                <div className="ah-mention-menu" role="listbox" aria-label={`@ ${props.topic.projectName} 的成员`}>
+                  <span className="ah-mention-title">@ 项目成员 · {props.topic.projectName}</span>
+                  {props.topic.members.map(member => (
                     <button key={member.botId} type="button" role="option" aria-selected={false}
                       className="ah-mention-item" onClick={() => pickMention(member.name)}>
                       <Avatar color={member.color} initials={member.initials} size={20} />
@@ -404,6 +397,7 @@ export function ThreadPane(props: {
         </button>
         </div></div>
       </footer>
+      )}
       {sendError ? (
         <div className="ah-thread-senderror" role="alert">
           <span>没发出去：{sendError}。点重试。还不行，看看 DSH 是不是关了。</span>

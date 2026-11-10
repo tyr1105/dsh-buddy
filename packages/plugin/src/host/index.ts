@@ -32,6 +32,7 @@ import { registerBotToolsLifecycle, type BotToolsInstaller } from './bot-tools.j
 import { registerGuardHooks } from './hooks.js'
 import { createTickScheduler } from './tick.js'
 import { loadSessionRoster, rosterFilePath, inMemoryRoster, type SessionRoster } from './session-roster.js'
+import { createHostListSkills } from './list-skills.js'
 import { engineIncompatibleReason, hasCapability, probeHarness, shellIncompatibleReason } from './harness-compat.js'
 
 export const name = 'agent-hub'
@@ -90,7 +91,8 @@ export interface EngineParts {
  * 测试传 core 的 FakeHost 验证装配（D04 1b：ownerHome 必须传入，动作闸才能展开
  * ~ / $HOME 并判断主人目录）。
  */
-export function createEngineHub(rootDir: string, host: HostPort, listModels?: ListModels): EngineParts {
+export function createEngineHub(rootDir: string, host: HostPort, listModels?: ListModels,
+  listSkills?: () => Promise<Array<{ name: string; description: string }>>): EngineParts {
   const logger = new ConsoleLogger()
   const clock = new SystemClock()
   const rng = new SystemRng()
@@ -104,6 +106,8 @@ export function createEngineHub(rootDir: string, host: HostPort, listModels?: Li
     ownerHome: homedir(),
     // M07/D06 第 6 条：注入宿主模型目录；未注入时 core 保留旧的选项来源。
     ...(listModels === undefined ? {} : { listModels }),
+    // P55：注入 DSH 技能目录，岗位技能的选择界面要用。
+    ...(listSkills === undefined ? {} : { listSkills }),
   })
   return { hub, clock, rng, store, logger }
 }
@@ -259,7 +263,7 @@ async function startEngine(ctx: any, rootDir: string, facade: LazyHubFacade, eng
     // resolveAgent 之后在这里补装 hub_* 工具与 restrict（幂等）。
     wireIfBot: agent => { try { installerRef?.install(agent) } catch (error) { console.error('[agent-hub] 补装机器人工具失败:', error) } },
   })
-  const { hub, clock, store } = createEngineHub(rootDir, host, createHostListModels(ctx))
+  const { hub, clock, store } = createEngineHub(rootDir, host, createHostListModels(ctx), createHostListSkills(ctx, rootDir))
   hubRef = hub
   // 引擎一创建就登记停止入口：启动途中被卸载时清理函数也拿得到（D05 第 4 条）。
   engineState.handle = {
@@ -295,7 +299,7 @@ async function startEngine(ctx: any, rootDir: string, facade: LazyHubFacade, eng
     translator?.handle(session, event)
   }))
 
-  const tools = registerBotToolsLifecycle(ctx, { hub, isBotSession })
+  const tools = registerBotToolsLifecycle(ctx, { hub, isBotSession, botIdFor })
   installerRef = tools.installer
   const disposeHooks = registerGuardHooks(ctx, { hub, isBotSession })
   const scheduler = createTickScheduler(hub, TICK_INTERVAL_MS)

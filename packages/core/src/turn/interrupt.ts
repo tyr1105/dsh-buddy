@@ -8,6 +8,7 @@ import { postThread } from '../outreach/thread.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { sealLedgerForWake } from '../ledger/service.js';
+import { settleInterruptedTopicWake } from '../project/topics.js';
 
 /** 此函数无 await：标记、恢复感知、解绑旧会话与释放投递等待必须先于宿主 cancel。 */
 export function interruptWake(ctx: HubContext, wakeId: string, at: number): WakeTicket | null {
@@ -28,6 +29,7 @@ export function interruptWake(ctx: HubContext, wakeId: string, at: number): Wake
     }
   }
   for (const entry of ctx.store.table('queue').list(q => q.botId === wake.botId && q.enqueuedAt <= wake.startedAt
+    && (q.topicId ?? null) === (wake.topicId ?? null)
     && q.reason.kind === wake.reason.kind && q.reason.evidence.every(id => wake.reason.evidence.includes(id)))) removeEntry(ctx, entry.id);
   const bot = ctx.store.table('bots').get(wake.botId)!;
   // TurnEvent 没有 wakeId。下一回合用新工作会话隔离旧 ended/error；界面线程仍是同一个 botId。
@@ -40,8 +42,10 @@ export function interruptWake(ctx: HubContext, wakeId: string, at: number): Wake
   if (wake.status === 'running' || wake.dispatchedAt != null) recordUsage(ctx, { botId: wake.botId, wakeId: wake.id,
     tokens: wake.tokensKnown ? wake.tokens : null, steps: wake.steps, packetBytes: wake.packetBytes });
   refreshExpectedBy(ctx, wake.botId);
-  postThread(ctx, { thread: wake.botId, from: 'hub', kind: 'system',
-    text: '你打断了它；它会在下次醒来时接着处理', refId: wake.id });
+  // P63：主题回合的说明落回主题；主题里不会自动续上，要主人再点它一次。
+  postThread(ctx, { thread: wake.topicId ?? wake.botId, from: 'hub', kind: 'system',
+    text: wake.topicId ? '你打断了它。想让它接着说，再 @ 它一次就行。' : '你打断了它；它会在下次醒来时接着处理', refId: wake.id });
+  settleInterruptedTopicWake(ctx, canceled);
   writeOutreachAudit(ctx, 'owner_interrupted', { botId: wake.botId, wakeId: wake.id }, 'owner', at);
   // 打断是明确的终态，账本必须同步收口；投递中还没有开账的唤醒没有账本行，直接跳过。
   try { sealLedgerForWake(ctx, wake.id); }

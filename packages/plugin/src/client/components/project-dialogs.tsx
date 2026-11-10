@@ -1,177 +1,137 @@
 /**
- * 项目页的四个表单弹窗（V2-PH4-02 / F12 / F08 尾巴）：项目新建/编辑表单、任务新建/编辑表单、
- * 驳回任务表单、关联产物表单。五模式派活对话框在同目录 dispatch-task-dialog.tsx（V2-PH4-04 拆出）。
+ * 项目的新建 / 编辑弹窗（P60）：项目名、负责人、成员、文件路径、背景，底部放项目状态动作。
  *
- * 为什么集中在一个文件：它们都是遮住项目页的模态表单，共用同一套焦点圈定
- * （useDialogFocus：打开聚焦、Tab 不外逃、Esc 关闭、提交中不关闭）与同一套字段
- * 样式；busy/error 由页面统一持有（core 回的中文错误原样显示在弹窗内，不关窗、
- * 不丢输入——驳回理由尤其如此，失败时主人刚写的理由必须留在框里）。所有提交入参
- * 在这里按 core zod 的形状拼好（strictObject，多余键会被拒）。前端只做「空、超长、
- * 负责人没勾进成员、成员超上限」这类不用查数据就能发现的错，成员/队友是否存在、
- * 状态机是否合法都由 core 兜底，不复制 core 的规则。
+ * 为什么只有这五项：主人要的是「开会话说诉求，负责人自己安排」，派活、验收项这些都拿掉了。
+ * 外壳复用 DialogShell（遮罩、Tab 圈定、Esc 关闭）；命令错误由页面持有，失败时弹窗不关、输入不丢。
+ * 暂停 / 恢复 / 完成 / 归档放在底部靠左，和保存分开，免得误点；归档的二次确认由页面弹出。
  */
 import { useRef, useState, type ReactNode } from 'react'
-import type { ProjectTaskView, ProjectViewRow } from '../../shared/views.js'
+import type { ProjectViewRow } from '../../shared/views.js'
 import {
-  PROJECT_CHARTER_MAX, PROJECT_CONVENTIONS_MAX, PROJECT_CRITERION_MAX, PROJECT_CRITERION_TEXT_MAX,
-  PROJECT_CRITERION_VERIFY_MAX, PROJECT_MEMBER_MAX, PROJECT_NAME_MAX, PROJECT_SHARED_DIR_MAX, PROJECT_VISION_MAX,
-  TASK_DETAIL_MAX, TASK_REJECT_REASON_MAX, TASK_TITLE_MAX,
-  buildAttachTaskArtifactInput, buildRejectTaskInput, buildSaveProjectInput, buildSaveTaskInput,
-  initialProjectForm, initialTaskForm, validateArtifactChoice, validateProjectForm, validateRejectReason, validateTaskForm,
-  type CriterionFormValues, type ProjectFormError, type ProjectFormValues, type TaskFormValues,
+  PROJECT_BACKGROUND_MAX, PROJECT_MEMBER_MAX, PROJECT_NAME_MAX, PROJECT_SHARED_DIR_MAX,
+  initialProjectForm, ownerChoices, validateProjectForm, withMembers,
+  type ProjectFormError, type ProjectFormValues,
 } from '../logic/project-form.js'
-import type { BotOption } from '../logic/project-page.js'
+import { canManageProject, projectStatusActions, type BotOption, type ProjectStatusAction } from '../logic/project-page.js'
 import { DialogShell, FieldError, botText } from './prj-dialog-shell.js'
 
-/**
- * 项目新建 / 编辑对话框：名称、一句话目标、项目目录、成员队友（多选）、负责人（单选）、
- * 验收项（可增删改、可勾「已满足」）。成员上限 20：到上限后未勾的队友禁用并说明；
- * 负责人只能从已勾成员里选，取消勾选负责人时负责人自动回到「未指定」。
- * 状态不在这里改（只许走暂停/恢复/完成/归档）。前置校验失败时聚焦第一个出错字段
- * （一次只报一项）。
- */
 export function ProjectFormDialog(props: {
+  /** null 表示新建项目。 */
   editing: ProjectViewRow | null
-  /** 可选队友（总览里未退役的队友 + 视图里防御性补齐的项目成员），失效队友不在此列。 */
   options: BotOption[]
   /** 总览是否已加载：候选为空时区分「还没加载」与「真的没有可用队友」。 */
   botsLoaded?: boolean
   busy: boolean
-  /** 命令失败时 core 的中文错误（页面持有，弹窗不关、输入不丢）。 */
+  /** 命令失败时 core 的中文错误。 */
   error: string | null
+  /** 状态动作成功后的一句话；弹窗不关，提示留在这里。 */
+  note: string | null
   onClose: () => void
-  onSubmit: (raw: Record<string, unknown>) => void
+  onSubmit: (values: ProjectFormValues) => void
+  onStatusAction: (action: ProjectStatusAction) => void
+  onArchive: () => void
 }): ReactNode {
-  const [values, setValues] = useState<ProjectFormValues>(() => initialProjectForm(props.editing))
+  const [values, setValues] = useState<ProjectFormValues>(() => initialProjectForm(props.editing, props.options))
+  // 现任负责人的快照：旧项目的负责人如果是建议风格，不换人时不算违规。
+  const [initialOwnerId] = useState(values.ownerBotId)
   const [fieldError, setFieldError] = useState<ProjectFormError | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
-  const charterRef = useRef<HTMLTextAreaElement>(null)
-  const visionRef = useRef<HTMLTextAreaElement>(null)
-  const conventionsRef = useRef<HTMLTextAreaElement>(null)
+  const ownerRef = useRef<HTMLSelectElement>(null)
   const membersRef = useRef<HTMLFieldSetElement>(null)
-  const ownerRef = useRef<HTMLFieldSetElement>(null)
-  const criteriaRef = useRef<HTMLFieldSetElement>(null)
   const dirRef = useRef<HTMLInputElement>(null)
+  const backgroundRef = useRef<HTMLTextAreaElement>(null)
 
-  const editing = props.editing !== null
+  const editing = props.editing
   const atCap = values.memberBotIds.length >= PROJECT_MEMBER_MAX
+  const choices = ownerChoices(values, props.options, initialOwnerId)
+  // 命令错误显示在外壳底部，没有命令错误时才显示字段错误，同一句话不出现两遍。
+  const localError = props.error === null ? fieldError : null
 
-  /** 勾选/取消一个成员队友；取消的若是当前负责人，负责人一并回到「未指定」。 */
-  const toggleMember = (id: string): void => {
-    setValues(prev => {
-      const picked = prev.memberBotIds.includes(id)
-        ? prev.memberBotIds.filter(m => m !== id)
-        : [...prev.memberBotIds, id]
-      const ownerBotId = prev.ownerBotId === id ? '' : prev.ownerBotId
-      return { ...prev, memberBotIds: picked, ownerBotId }
-    })
+  const update = (partial: Partial<ProjectFormValues>): void => {
+    setValues(prev => ({ ...prev, ...partial }))
     setFieldError(null)
   }
 
-  /** 验收项增删改：全部只改本地表单，保存时才整表提交给 core 校验。 */
-  const addCriterion = (): void => {
-    setValues(prev => prev.acceptanceCriteria.length >= PROJECT_CRITERION_MAX
-      ? prev
-      : { ...prev, acceptanceCriteria: [...prev.acceptanceCriteria, { id: null, text: '', verify: '', status: 'open' }] })
-    setFieldError(null)
-  }
-  const updateCriterion = (index: number, patch: Partial<CriterionFormValues>): void => {
-    setValues(prev => ({
-      ...prev,
-      acceptanceCriteria: prev.acceptanceCriteria.map((item, i) => i === index ? { ...item, ...patch } : item),
-    }))
-    setFieldError(null)
-  }
-  const removeCriterion = (index: number): void => {
-    setValues(prev => ({ ...prev, acceptanceCriteria: prev.acceptanceCriteria.filter((_, i) => i !== index) }))
+  /** 勾选成员时顺带维护负责人：规则在 withMembers，默认选总管。 */
+  const toggleMember = (botId: string): void => {
+    setValues(prev => withMembers(
+      prev,
+      prev.memberBotIds.includes(botId) ? prev.memberBotIds.filter(id => id !== botId) : [...prev.memberBotIds, botId],
+      props.options,
+    ))
     setFieldError(null)
   }
 
   const submit = (): void => {
-    const error = validateProjectForm(values)
-    if (error) {
-      setFieldError(error)
-      // 把焦点送到出错字段：主人不用自己找是哪一项。
-      if (error.field === 'name') nameRef.current?.focus()
-      else if (error.field === 'charter') charterRef.current?.focus()
-      else if (error.field === 'vision') visionRef.current?.focus()
-      else if (error.field === 'conventions') conventionsRef.current?.focus()
-      else if (error.field === 'members') membersRef.current?.focus()
-      else if (error.field === 'owner') ownerRef.current?.focus()
-      else if (error.field === 'criteria') criteriaRef.current?.focus()
-      else dirRef.current?.focus()
+    const problem = validateProjectForm(values, props.options, initialOwnerId)
+    if (problem !== null) {
+      setFieldError(problem)
+      // 焦点跟着错误走，主人不用自己找是哪一项。
+      if (problem.field === 'name') nameRef.current?.focus()
+      else if (problem.field === 'owner') ownerRef.current?.focus()
+      else if (problem.field === 'members') membersRef.current?.focus()
+      else if (problem.field === 'sharedDir') dirRef.current?.focus()
+      else backgroundRef.current?.focus()
       return
     }
-    props.onSubmit(buildSaveProjectInput(values, props.editing?.project.id))
+    props.onSubmit(values)
   }
 
-  // 命令错误优先显示在外壳底部；没有命令错误时才显示本地字段错误。
-  const localError = props.error === null ? fieldError : null
-  // 已勾成员对应的选项（负责人单选只列这些，且保持队友目录顺序）。
-  const memberOptions = props.options.filter(o => values.memberBotIds.includes(o.botId))
-
-  // 本地字段错误只显示在对应字段下方，外壳底部只放 core 回的命令错误，避免同一句话出现两遍。
   return (
-    <DialogShell title={editing ? `编辑项目：${props.editing?.project.name ?? ''}` : '新项目'} busy={props.busy}
-      error={props.error} onClose={props.onClose}
+    <DialogShell
+      title={editing !== null ? `编辑项目：${editing.project.name}` : '新项目'}
+      className="ah-teammate-edit ah-prj-edit"
+      busy={props.busy}
+      error={props.error}
+      onClose={props.onClose}
       footer={<>
-        <button type="button" className="ah-btn" disabled={props.busy} onClick={props.onClose}>取消</button>
-        <button type="button" className="ah-btn ah-btn-primary" disabled={props.busy} onClick={submit}>
-          {props.busy ? '保存中…' : '保存项目'}
-        </button>
-      </>}>
+        {/* 项目状态动作靠左、保存靠右，两类动作分开放；新建时没有状态可改。 */}
+        <div className="ah-teammate-life" role="group" aria-label="项目状态">
+          {editing !== null ? projectStatusActions(editing.project.status).map(action => (
+            <button key={action.command} type="button" className="ah-btn" disabled={props.busy}
+              onClick={() => props.onStatusAction(action)}>{action.label}</button>
+          )) : null}
+          {editing !== null && canManageProject(editing.project.status) ? (
+            <button type="button" className="ah-btn ah-btn-ghost" disabled={props.busy} onClick={props.onArchive}>归档</button>
+          ) : null}
+          {props.note !== null ? <span className="ah-teammate-life-note" role="status">{props.note}</span> : null}
+        </div>
+        <div className="ah-teammate-save">
+          <button type="button" className="ah-btn" disabled={props.busy} onClick={props.onClose}>取消</button>
+          <button type="button" className="ah-btn ah-btn-primary" disabled={props.busy} onClick={submit}>保存</button>
+        </div>
+      </>}
+    >
       <div className="ah-wizard-field">
-        <label>项目名称（1–{PROJECT_NAME_MAX} 字）
+        <label>项目名称
           <input ref={nameRef} value={values.name} disabled={props.busy} autoFocus maxLength={PROJECT_NAME_MAX}
             aria-invalid={localError?.field === 'name' || undefined}
             aria-describedby={localError?.field === 'name' ? 'ah-prj-form-err-name' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, name: e.target.value }))}
-            onInput={() => setFieldError(null)} placeholder="例如：竞品周报自动化" />
+            onChange={e => update({ name: e.target.value })} placeholder="例如：竞品周报自动化" />
         </label>
         <FieldError id="ah-prj-form-err-name" show={localError?.field === 'name'} message={localError?.message} />
       </div>
+
       <div className="ah-wizard-field">
-        <label>一句话目标（可不填，≤{PROJECT_CHARTER_MAX} 字）：做成什么样算完
-          <textarea ref={charterRef} rows={2} value={values.charter} disabled={props.busy} maxLength={PROJECT_CHARTER_MAX}
-            aria-invalid={localError?.field === 'charter' || undefined}
-            aria-describedby={localError?.field === 'charter' ? 'ah-prj-form-err-charter' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, charter: e.target.value }))}
-            onInput={() => setFieldError(null)} />
+        <label>负责人（诉求默认发给 TA，由 TA 安排大家）
+          <select ref={ownerRef} value={values.ownerBotId} disabled={props.busy}
+            aria-invalid={localError?.field === 'owner' || undefined}
+            aria-describedby={localError?.field === 'owner' ? 'ah-prj-form-err-owner' : undefined}
+            onChange={e => update({ ownerBotId: e.target.value })}>
+            {values.ownerBotId === '' ? <option value="">{choices.length === 0 ? '先在下面勾选成员' : '请选择'}</option> : null}
+            {choices.map(choice => <option key={choice.botId} value={choice.botId} disabled={choice.disabled}>{choice.name}</option>)}
+          </select>
         </label>
-        <FieldError id="ah-prj-form-err-charter" show={localError?.field === 'charter'} message={localError?.message} />
+        <FieldError id="ah-prj-form-err-owner" show={localError?.field === 'owner'} message={localError?.message} />
       </div>
-      {/* P34 两层：愿景与约定是「队友项目版本」里的两段说明，允许为空，旧项目保存后可按需补写。 */}
-      <div className="ah-wizard-field">
-        <label>愿景（可不填，≤{PROJECT_VISION_MAX} 字）：这个项目为什么存在、最终要去哪
-          <textarea ref={visionRef} rows={2} value={values.vision} disabled={props.busy} maxLength={PROJECT_VISION_MAX}
-            aria-invalid={localError?.field === 'vision' || undefined}
-            aria-describedby={localError?.field === 'vision' ? 'ah-prj-form-err-vision' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, vision: e.target.value }))}
-            onInput={() => setFieldError(null)} />
-        </label>
-        <FieldError id="ah-prj-form-err-vision" show={localError?.field === 'vision'} message={localError?.message} />
-      </div>
-      <div className="ah-wizard-field">
-        <label>约定（可不填，≤{PROJECT_CONVENTIONS_MAX} 字）：队友之间怎么配合、什么必须先问主人
-          <textarea ref={conventionsRef} rows={2} value={values.conventions} disabled={props.busy} maxLength={PROJECT_CONVENTIONS_MAX}
-            aria-invalid={localError?.field === 'conventions' || undefined}
-            aria-describedby={localError?.field === 'conventions' ? 'ah-prj-form-err-conventions' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, conventions: e.target.value }))}
-            onInput={() => setFieldError(null)} />
-        </label>
-        <FieldError id="ah-prj-form-err-conventions" show={localError?.field === 'conventions'} message={localError?.message} />
-      </div>
+
       <fieldset className="ah-prj-field ah-prj-members" ref={membersRef} tabIndex={-1}
         aria-invalid={localError?.field === 'members' || undefined}
         aria-describedby={localError?.field === 'members' ? 'ah-prj-form-err-members' : undefined}>
-        <legend>成员队友（{values.memberBotIds.length}/{PROJECT_MEMBER_MAX}）：任务只能派给成员队友</legend>
+        <legend>成员（{values.memberBotIds.length}/{PROJECT_MEMBER_MAX}）</legend>
         {props.options.length === 0 ? (
-          // 空候选给明确下一步（P44-R2）：总览未加载与真的没有可用队友是两种不同的处境，
-          // 不能都用「先新建队友，或等总览加载出来」让主人猜。
           <p className="ah-right-kv">
-            {props.botsLoaded === false
-              ? '队友列表加载中，请稍候；也可先保存项目，之后在项目页「编辑」中补充成员。'
-              : '暂无可选队友（已退役不计入）。请先在左侧「队友」组点击「＋」新建，再返回勾选为成员。'}
+            {props.botsLoaded === false ? '队友列表加载中，请稍候。' : '暂无可选队友（已退役不计入）。请先在左侧「队友」组点击「＋」新建，再回来勾选。'}
           </p>
         ) : (
           <div className="ah-prj-check-list">
@@ -189,221 +149,25 @@ export function ProjectFormDialog(props: {
         )}
         <FieldError id="ah-prj-form-err-members" show={localError?.field === 'members'} message={localError?.message} />
       </fieldset>
-      <fieldset className="ah-prj-field" ref={ownerRef} tabIndex={-1}
-        aria-invalid={localError?.field === 'owner' || undefined}
-        aria-describedby={localError?.field === 'owner' ? 'ah-prj-form-err-owner' : undefined}>
-        <legend>负责人（可不填；只能从成员里选）</legend>
-        <div className="ah-prj-check-list">
-          <label>
-            <input type="radio" name="prj-owner" checked={values.ownerBotId === ''} disabled={props.busy}
-              onChange={() => setValues(prev => ({ ...prev, ownerBotId: '' }))} />
-            未指定
-          </label>
-          {memberOptions.map(option => (
-            <label key={option.botId}>
-              <input type="radio" name="prj-owner" checked={values.ownerBotId === option.botId} disabled={props.busy}
-                onChange={() => setValues(prev => ({ ...prev, ownerBotId: option.botId }))} />
-              {botText(option)}
-            </label>
-          ))}
-        </div>
-        <FieldError id="ah-prj-form-err-owner" show={localError?.field === 'owner'} message={localError?.message} />
-      </fieldset>
-      <fieldset className="ah-prj-field ah-prj-criteria-edit" ref={criteriaRef} tabIndex={-1}
-        aria-invalid={localError?.field === 'criteria' || undefined}
-        aria-describedby={localError?.field === 'criteria' ? 'ah-prj-form-err-criteria' : undefined}>
-        <legend>验收项（{values.acceptanceCriteria.length}/{PROJECT_CRITERION_MAX}）：写清怎么算满足，验收任务时对照检查</legend>
-        {values.acceptanceCriteria.length === 0 ? (
-          <p className="ah-right-kv">暂无验收项。点击「添加」新建；验收时以此为对照标准。</p>
-        ) : (
-          <div className="ah-prj-criteria-rows">
-            {values.acceptanceCriteria.map((criterion, index) => (
-              <div key={criterion.id ?? `new-${index}`} className="ah-prj-criteria-row">
-                <div className="ah-prj-criteria-row-head">
-                  <span className="ah-prj-block-label">第 {index + 1} 条</span>
-                  <label className="ah-prj-criteria-met"
-                    title={criterion.id === null ? '新验收项保存后才能标记为已满足' : undefined}>
-                    <input type="checkbox" checked={criterion.status === 'met'}
-                      disabled={props.busy || criterion.id === null}
-                      onChange={e => updateCriterion(index, { status: e.target.checked ? 'met' : 'open' })} />
-                    已满足
-                  </label>
-                  <button type="button" className="ah-btn ah-btn-ghost" disabled={props.busy}
-                    onClick={() => removeCriterion(index)}>删除</button>
-                </div>
-                <input value={criterion.text} disabled={props.busy} maxLength={PROJECT_CRITERION_TEXT_MAX}
-                  aria-label={`第 ${index + 1} 条验收标准`}
-                  onChange={e => updateCriterion(index, { text: e.target.value })}
-                  placeholder="验收标准，例如：周报每周一 09:00 前出现在项目目录" />
-                <input value={criterion.verify} disabled={props.busy} maxLength={PROJECT_CRITERION_VERIFY_MAX}
-                  aria-label={`第 ${index + 1} 条验证方式`}
-                  onChange={e => updateCriterion(index, { verify: e.target.value })}
-                  placeholder="怎么验证（可不填），例如：打开产出文件看发布时间" />
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="ah-prj-criteria-foot">
-          <button type="button" className="ah-btn ah-btn-ghost"
-            disabled={props.busy || values.acceptanceCriteria.length >= PROJECT_CRITERION_MAX}
-            onClick={addCriterion}>＋ 添加验收项</button>
-          {values.acceptanceCriteria.length >= PROJECT_CRITERION_MAX
-            ? <span className="ah-right-kv">已达 {PROJECT_CRITERION_MAX} 条上限</span> : null}
-        </div>
-        <FieldError id="ah-prj-form-err-criteria" show={localError?.field === 'criteria'} message={localError?.message} />
-      </fieldset>
+
       <div className="ah-wizard-field">
-        <label>项目目录（可不填，≤{PROJECT_SHARED_DIR_MAX} 字）：保存时中心会在 projects 子树下创建这个文件夹
+        <label>文件路径（可不填，留空由中心给默认路径）
           <input ref={dirRef} value={values.sharedDir} disabled={props.busy} maxLength={PROJECT_SHARED_DIR_MAX}
             aria-invalid={localError?.field === 'sharedDir' || undefined}
             aria-describedby={localError?.field === 'sharedDir' ? 'ah-prj-form-err-dir' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, sharedDir: e.target.value }))}
-            onInput={() => setFieldError(null)} placeholder="留空由中心给默认路径" />
+            onChange={e => update({ sharedDir: e.target.value })} />
         </label>
         <FieldError id="ah-prj-form-err-dir" show={localError?.field === 'sharedDir'} message={localError?.message} />
       </div>
-      {editing ? (
-        <p className="ah-right-kv">成员名单保存后立即生效：取消勾选的队友将移出成员，其名下任务会在问题区提示并需重新指派。项目状态请用卡片上的暂停 / 完成 / 归档按钮修改。</p>
-      ) : null}
-    </DialogShell>
-  )
-}
 
-/**
- * 任务新建 / 编辑对话框：标题、说明、指派队友。
- * 选项只含项目当前的有效成员队友（空=待认领）；状态不在这里改，只许走
- * 标记受阻 / 恢复 / 交账 / 验收 / 驳回这些流转命令。
- */
-export function TaskFormDialog(props: {
-  /** 所属项目行：取 projectId 与成员队友选项。 */
-  row: ProjectViewRow
-  /** null=新建任务；非 null=编辑这条任务。 */
-  editing: ProjectTaskView | null
-  assigneeOptions: BotOption[]
-  busy: boolean
-  error: string | null
-  onClose: () => void
-  onSubmit: (raw: Record<string, unknown>) => void
-}): ReactNode {
-  const [values, setValues] = useState<TaskFormValues>(() => initialTaskForm(props.editing))
-  const [fieldError, setFieldError] = useState<{ field: 'title' | 'detail'; message: string } | null>(null)
-  const titleRef = useRef<HTMLInputElement>(null)
-  const detailRef = useRef<HTMLTextAreaElement>(null)
-
-  const editing = props.editing !== null
-
-  const submit = (): void => {
-    const error = validateTaskForm(values)
-    if (error) {
-      setFieldError(error)
-      if (error.field === 'title') titleRef.current?.focus()
-      else detailRef.current?.focus()
-      return
-    }
-    props.onSubmit(buildSaveTaskInput(props.row.project.id, values, props.editing?.task.id))
-  }
-
-  // 本地字段错误就地渲染（FieldError），外壳底部只放命令错误：同一句不双渲染、读屏不念两遍。
-  const localError = props.error === null ? fieldError : null
-
-  return (
-    <DialogShell title={editing ? `编辑任务：${props.editing?.task.title ?? ''}` : `新任务（${props.row.project.name}）`}
-      busy={props.busy} error={props.error} onClose={props.onClose}
-      footer={<>
-        <button type="button" className="ah-btn" disabled={props.busy} onClick={props.onClose}>取消</button>
-        <button type="button" className="ah-btn ah-btn-primary" disabled={props.busy} onClick={submit}>
-          {props.busy ? '保存中…' : '保存任务'}
-        </button>
-      </>}>
       <div className="ah-wizard-field">
-        <label>任务标题（1–{TASK_TITLE_MAX} 字）
-          <input ref={titleRef} value={values.title} disabled={props.busy} autoFocus maxLength={TASK_TITLE_MAX}
-            aria-invalid={localError?.field === 'title' || undefined}
-            aria-describedby={localError?.field === 'title' ? 'ah-task-form-err-title' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, title: e.target.value }))}
-            onInput={() => setFieldError(null)} placeholder="例如：产出第 45 周周报初稿" />
+        <label>项目背景（可不填，负责人会随项目推进更新）
+          <textarea ref={backgroundRef} rows={4} value={values.background} disabled={props.busy} maxLength={PROJECT_BACKGROUND_MAX}
+            aria-invalid={localError?.field === 'background' || undefined}
+            aria-describedby={localError?.field === 'background' ? 'ah-prj-form-err-background' : undefined}
+            onChange={e => update({ background: e.target.value })} />
         </label>
-        <FieldError id="ah-task-form-err-title" show={localError?.field === 'title'} message={localError?.message} />
-      </div>
-      <div className="ah-wizard-field">
-        <label>任务说明（可不填，≤{TASK_DETAIL_MAX} 字）：要交什么、注意什么
-          <textarea ref={detailRef} rows={4} value={values.detail} disabled={props.busy} maxLength={TASK_DETAIL_MAX}
-            aria-invalid={localError?.field === 'detail' || undefined}
-            aria-describedby={localError?.field === 'detail' ? 'ah-task-form-err-detail' : undefined}
-            onChange={e => setValues(prev => ({ ...prev, detail: e.target.value }))}
-            onInput={() => setFieldError(null)} />
-        </label>
-        <FieldError id="ah-task-form-err-detail" show={localError?.field === 'detail'} message={localError?.message} />
-      </div>
-      <div className="ah-wizard-field">
-        <label>指派给谁（只能派给项目成员队友；不选就是待认领）
-          <select value={values.assigneeBotId} disabled={props.busy}
-            onChange={e => setValues(prev => ({ ...prev, assigneeBotId: e.target.value }))}>
-            <option value="">待认领</option>
-            {props.assigneeOptions.map(option => <option key={option.botId} value={option.botId}>{botText(option)}</option>)}
-          </select>
-        </label>
-        {props.assigneeOptions.length === 0 ? (
-          <p className="ah-right-kv">项目暂无在岗成员队友。请先编辑项目勾选成员；否则任务将标记为「待认领」。</p>
-        ) : null}
-      </div>
-      {editing && props.editing ? (
-        <p className="ah-right-kv">当前状态：{props.editing.statusLabel}。状态只能用任务行上的按钮推进，编辑保存不会改状态。</p>
-      ) : null}
-    </DialogShell>
-  )
-}
-
-/**
- * 驳回任务对话框：理由必填（trim 后 1–500 字），提交后 core 把任务退回「进行中」。
- * 失败时弹窗不关、理由不丢（页面持有 error，本组件持有输入）。字数在右下角实时提示。
- */
-export function RejectTaskDialog(props: {
-  task: ProjectTaskView
-  busy: boolean
-  error: string | null
-  onClose: () => void
-  onSubmit: (raw: Record<string, unknown>) => void
-}): ReactNode {
-  const [reason, setReason] = useState('')
-  const [fieldError, setFieldError] = useState<string | null>(null)
-  const reasonRef = useRef<HTMLTextAreaElement>(null)
-
-  const submit = (): void => {
-    const error = validateRejectReason(reason)
-    if (error) {
-      setFieldError(error)
-      reasonRef.current?.focus()
-      return
-    }
-    props.onSubmit(buildRejectTaskInput(props.task.task.id, reason))
-  }
-
-  const trimmedLength = reason.trim().length
-  const over = trimmedLength > TASK_REJECT_REASON_MAX
-  // 命令错误才放外壳底部；本地校验错误就地显示在输入框下方，便于 aria-describedby 关联。
-  const localError = props.error === null ? fieldError : null
-
-  return (
-    <DialogShell title={`驳回任务：${props.task.task.title}`} busy={props.busy}
-      error={props.error} onClose={props.onClose}
-      footer={<>
-        <button type="button" className="ah-btn" disabled={props.busy} onClick={props.onClose}>取消</button>
-        <button type="button" className="ah-btn ah-btn-danger" disabled={props.busy} onClick={submit}>
-          {props.busy ? '提交中…' : '确认驳回'}
-        </button>
-      </>}>
-      <p className="ah-right-kv">驳回后任务退回「进行中」，执行者按驳回理由返工。请说明问题与修改要求（1–{TASK_REJECT_REASON_MAX} 字）。</p>
-      <div className="ah-wizard-field">
-        <textarea ref={reasonRef} rows={5} value={reason} disabled={props.busy} autoFocus maxLength={TASK_REJECT_REASON_MAX + 20}
-          aria-label="驳回理由" placeholder="例如：信源只覆盖了三家，缺的两家补上；结论里补上原文链接。"
-          aria-invalid={localError !== null || undefined}
-          aria-describedby={localError !== null ? 'ah-task-reject-err' : undefined}
-          onChange={e => { setReason(e.target.value); setFieldError(null) }} />
-        <p className={`ah-prj-count${over ? ' ah-prj-count-over' : ''}`} aria-live="polite">
-          {trimmedLength}/{TASK_REJECT_REASON_MAX}
-        </p>
-        <FieldError id="ah-task-reject-err" show={localError !== null} message={localError} />
+        <FieldError id="ah-prj-form-err-background" show={localError?.field === 'background'} message={localError?.message} />
       </div>
     </DialogShell>
   )

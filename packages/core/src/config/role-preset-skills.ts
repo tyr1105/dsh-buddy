@@ -3,7 +3,7 @@
  *
  * 为什么单独一个文件：preset-skills.ts 放类型、通用清单和物化规则，岗位内容一多会把规则淹没。
  * 为什么仍然是预置 skill：物化路径、删除规则、唤醒包只列名称和用途，这些都沿用 P40，不另造一套。
- * 为什么条件都是「每次唤醒」：岗位方法和具体任务无关；唤醒包只列名称和用途，不塞正文，占用很小。
+ * 什么时候读由 DSH 的技能目录告诉模型（P55 去掉了加载条件）；目录只列名称和用途，不塞正文，占用很小。
  *
  * 内容只讲做事方法，不涉及权限：不会因此多出任何工具、审批豁免或数据可见范围。
  * 这里只从 preset-skills.ts 引入类型，编译后不会形成循环依赖。
@@ -24,9 +24,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'prd-writing',
     name: '需求写法',
     purpose: '把想法写成别人能照着做、能判断做没做完的需求。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '写需求时按这个顺序，每一项都要能被别人直接用：',
       '',
@@ -43,9 +41,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'task-breakdown',
     name: '拆活与跟进',
     purpose: '把大事拆成能派出去、能验收的小活，并一直跟到有结果。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '派活前先拆，每件小活都要写清四件事：',
       '',
@@ -63,9 +59,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'ui-review',
     name: '界面设计检查',
     purpose: '交付页面前检查用户看不看得懂，各种状态有没有想到。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '交付页面或原型前，逐项检查：',
       '',
@@ -82,9 +76,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'build-self-check',
     name: '动手前后自查',
     purpose: '动手前确认怎么算做完，交付前自己验证一遍。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '动手前：',
       '',
@@ -104,9 +96,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'review-checklist',
     name: '评审清单',
     purpose: '按严重程度列问题，每条都说清在哪、为什么不对、怎么算改好。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '评审时先对照要求和验收项，再看有没有别的问题：',
       '',
@@ -124,9 +114,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'acceptance-check',
     name: '逐项验收',
     purpose: '按验收项一条条核对，写清过没过、证据在哪。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '验收时只看验收项，不临时加要求：',
       '',
@@ -142,9 +130,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'seo-checklist',
     name: 'SEO 检查清单',
     purpose: '从用户搜什么出发，给有依据的标题、内容和关键词建议。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '做 SEO 建议时按这个顺序：',
       '',
@@ -162,9 +148,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'video-script',
     name: '短视频脚本结构',
     purpose: '把卖点写成能直接开拍的脚本：画面、台词、字幕和时长。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '写推广视频脚本时按这个结构：',
       '',
@@ -182,9 +166,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'probing-questions',
     name: '追问方法',
     purpose: '一次只问一个问题，把含糊的地方问到能落地为止。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '被点名时按这个方法追问：',
       '',
@@ -201,9 +183,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'reverse-ideas',
     name: '反向想点子',
     purpose: '换几个反常的角度，给出差别很大的点子和最便宜的试法。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '被点名时用这几个角度想点子：',
       '',
@@ -220,9 +200,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'teammate-review',
     name: '队友复盘',
     purpose: '读队友的工作记录，找出做得好和反复出错的地方，给具体建议。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '被点名复盘队友时：',
       '',
@@ -240,9 +218,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'external-voice',
     name: '对外口径',
     purpose: '对外内容先说对用户的影响，口径一致，只写草稿等主人批准。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '写公告、发版说明或回复用户时：',
       '',
@@ -259,9 +235,7 @@ export const ROLE_PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'market-brief',
     name: '市场简报',
     purpose: '说清用户是谁、竞品怎么做、卖点是什么，以及怎么看效果。',
-    condition: 'every_wake',
     audience: 'role',
-    taskKeywords: [],
     content: body([
       '写市场分析或推广计划时按这个顺序：',
       '',

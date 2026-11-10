@@ -34,7 +34,6 @@ export interface TeammatesGroupProps {
   onQueryChange: (value: string) => void
   team: OverviewView['team']
   view: PageView
-  mainFace: 'thread' | 'home'
   selectedThread: string
   /** 已按搜索词过滤后的在名单队友（不含归档）；过滤规则在父层，组件只渲染。 */
   bots: BotCard[]
@@ -92,7 +91,7 @@ export function TeammatesGroup(props: TeammatesGroupProps): ReactNode {
           <div className="ah-nav-rows">
             <button
               type="button"
-              className={`ah-nav-item ah-nav-team${props.view === 'main' && props.selectedThread === 'team' && props.mainFace === 'thread' ? ' ah-selected' : ''}`}
+              className={`ah-nav-item ah-nav-team${props.view === 'main' && props.selectedThread === 'team' ? ' ah-selected' : ''}`}
               onClick={() => props.onSelectBot('team')}
             >
               <span className="ah-avatar ah-avatar-team" aria-hidden="true">B</span>

@@ -94,6 +94,8 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'assignTask': return run(() => api.assignTask(raw))
       // V2-PH4-04：派活/恢复/催办/改派统一入口，整对象透传，三 id 与留言由 core zod 校验。
       case 'dispatchTask': return run(() => api.dispatchTask(raw))
+      // P63：开项目主题，整对象透传由 core zod 校验；之后发消息沿用 sendMessage，线程 id 就是主题 id。
+      case 'createProjectTopic': return run(() => api.createProjectTopic(raw))
       case 'taskBlock': return run(() => api.taskBlock(reqStr(raw, 'id')))
       case 'taskResume': return run(() => api.taskResume(reqStr(raw, 'id')))
       case 'reportDone': return run(() => api.reportDone(reqStr(raw, 'id')))
@@ -264,6 +266,9 @@ export class LazyHubFacade implements HubFacade {
 // ---------- 停用门面：rootDir/.hub/DISABLED 存在时 ----------
 
 const emptyOverview = {
+  // P58：停用时总览接口仍返回 200，这里明确标出空名册只是占位，
+  // 否则界面会以为队友都不存在，把主人选中的对话和本地记忆一起清掉。
+  rosterUnavailable: true,
   bots: [], inbox: { total: 0, approvals: 0, questions: 0, proposals: 0, alerts: 0 },
   team: { unread: 0, lastMessageText: null }, quota: { light: 'green', lightLabel: '未知', usedText: '已停用', resetText: null },
   health: { ok: false, heartbeatText: '已停用', downtimeText: null, openAlerts: 0, sandboxWarning: null },
@@ -278,6 +283,8 @@ const emptyResource: ResourceView = {
 
 /** 停用后的空项目视图：没有项目与任务，项目页显示正常空态而不是整页错误。 */
 const emptyProject: ProjectView = {
+  // P63：和空总览同一个道理，空列表只是占位，界面不能据此判断主题没了、把本地记住的主题清掉。
+  rosterUnavailable: true,
   asOf: 0, projects: [],
   counts: { active: 0, paused: 0, done: 0, archived: 0, total: 0, tasksTotal: 0, tasksPendingCheck: 0 },
 }

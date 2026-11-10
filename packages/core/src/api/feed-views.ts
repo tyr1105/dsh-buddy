@@ -8,6 +8,7 @@ import { INBOX_TYPE_LABELS, LIFECYCLE_LABELS, OUTCOME_LABELS, PUSH_CHANNELS } fr
 import { nonempty } from '../model/primitives.js';
 import { C04_DEFAULTS } from '../config/defaults.js';
 import { presetSkillOptions } from '../config/preset-skills.js';
+import { readDshSkillOptions } from './skills.js';
 import { readModelCatalog } from './models.js';
 import { threadMessages } from '../outreach/thread.js';
 import { readAuditDetail } from '../outreach/audit.js';
@@ -48,8 +49,9 @@ function messageView(ctx: HubContext, row: ThreadMessage): ThreadMessageView {
 export function threadView(ctx: HubContext, threadId: string, page?: PageInput): ThreadView {
   threadId = input(nonempty, threadId, 'threadId');
   // P48：队友被删除后线程标题不再抛错，改用「已删除的队友」，历史仍可翻看。
+  // P63：主题线程的标题就是主题名。
   const title = threadId === 'team' ? '团队'
-    : ctx.store.table('bots').get(threadId)?.name ?? '已删除的队友';
+    : ctx.store.table('projectTopics').get(threadId)?.title ?? ctx.store.table('bots').get(threadId)?.name ?? '已删除的队友';
   const all = threadMessages(ctx, threadId).reverse();
   const result = paginate(all, page, row => row.createdAt);
   const rows = result.rows.reverse();
@@ -61,7 +63,10 @@ export function inboxView(ctx: HubContext): InboxView {
     .sort((a, b) => a.priority.localeCompare(b.priority) || a.createdAt - b.createdAt).map(stored => {
       const row = approvalCardView(ctx, stored);
       const bot = row.botId ? ctx.store.table('bots').get(row.botId) : null;
+      // P65：来自项目主题的事项带上主题，界面写「来自主题：……」，「查看对话」直接进主题；主题已删除时不带。
+      const topic = row.topicId ? ctx.store.table('projectTopics').get(row.topicId) : null;
       return { id: row.id, botId: row.botId, botName: bot?.name ?? null, botColor: bot?.color ?? null,
+        topicId: topic?.id ?? null, topicTitle: topic?.title ?? null,
         approvalId: row.type === 'approval' ? row.refId : null,
         goalId: goalCheckId(ctx, row),
         type: row.type, typeLabel: INBOX_TYPE_LABELS[row.type], priority: row.priority, title: row.title, body: row.body,
@@ -95,14 +100,15 @@ export function activityView(ctx: HubContext, page?: PageInput): ActivityView {
 /** 有目录时只展示宿主可用模型；未提供目录时保留默认模型与名册选择的兼容视图。 */
 export async function settingsView(ctx: HubContext): Promise<SettingsView> {
   const catalog = await readModelCatalog(ctx);
+  const dshSkillOptions = await readDshSkillOptions(ctx);
   if (catalog !== null) return { settings: structuredClone(ctx.settings), pushChannelOptions: [...PUSH_CHANNELS],
     modelOptions: [{ value: null, label: '跟随宿主默认模型' }, ...catalog.map(({ provider, model, label }) => ({ value: { provider, model }, label }))],
-    presetSkillOptions: presetSkillOptions() };
+    presetSkillOptions: presetSkillOptions(), dshSkillOptions };
   const choices: ModelChoice[] = [null, ctx.settings.defaultModel, ...ctx.store.table('bots').list().map(row => row.model)];
   const unique = [...new Map(choices.map(value => [JSON.stringify(value), value])).values()];
   return { settings: structuredClone(ctx.settings), pushChannelOptions: [...PUSH_CHANNELS],
     modelOptions: unique.map(value => ({ value, label: value ? `${value.provider} / ${value.model}` : '跟随宿主默认模型' })),
-    presetSkillOptions: presetSkillOptions() };
+    presetSkillOptions: presetSkillOptions(), dshSkillOptions };
 }
 /** 教学会话由宿主提供，校验返回值后只展示最小信息，不自行读取会话正文。 */
 export async function recentSessions(ctx: HubContext): Promise<RecentSessionView[]> {

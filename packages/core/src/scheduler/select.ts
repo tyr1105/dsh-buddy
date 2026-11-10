@@ -7,6 +7,7 @@ import { explainSuppression, logAppraisal } from '../appraisal/log.js';
 import { rollWindow } from '../quota/window.js';
 import { discardRelatedPercepts } from './percept-consumption.js';
 import { ownerReasonSummary } from '../util/owner-text.js';
+import { settleDroppedTopicEntry } from '../project/topics.js';
 /** 遍历候选并记录被拦原因，只选择可放行项而不提前消费队列。 */
 export function selectNext(ctx: HubContext, now: number): QueueEntry | null {
   // 事件入口也会选择候选，不能要求它一定先经过下一次 tick 才滚动过期额度。
@@ -31,6 +32,8 @@ export function selectNext(ctx: HubContext, now: number): QueueEntry | null {
       // 暂停保留主人消息供恢复处理；等主人同一事项则已作出明确丢弃决定。
       if (gate.by === 'waiting_owner_same_subject') discardRelatedPercepts(ctx, entry, now);
       removeEntry(ctx, entry.id);
+      // P63：主题里被叫的人这一棒丢了，要把它移出等待名单并交给下一棒，讨论不能卡死。
+      settleDroppedTopicEntry(ctx, entry);
     }
   }
   return null;

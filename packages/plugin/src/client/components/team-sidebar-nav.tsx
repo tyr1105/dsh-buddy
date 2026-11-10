@@ -17,7 +17,9 @@
  * 纪律：
  * - 顺序、排序、会话口径全部来自 logic/sidebar-groups，组件不自己决定；
  * - 队友组标题右侧常驻「新建队友」，搜索保留；队友行与项目行各有自己的加号；
- * - 新建会话只发一个 saveTask（父层执行），成功后由父层决定是否直接打开线程；
+ * - 新建会话只发一个 createProjectTopic（父层执行），成功后父层直接打开这个主题；
+ *   P60（2026-11-10）起项目行加号不再弹表单，直接进草稿主题（空聊天），第一句发出才建成；
+ *   队友行加号仍是内联表单（要先选项目、第一句会 @ 这位队友）；
  * - 收起态只画图标列（36px），不渲染搜索与表单，键盘仍可用 aria-label 识别。
  */
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
@@ -33,7 +35,6 @@ import {
   toggleGroup,
   type SidebarGroupId,
   type SidebarProjectNode,
-  type SidebarSession,
 } from '../logic/sidebar-groups.js'
 import { Chevron, GearIcon, OfficeIcon } from './sidebar-nav-parts.js'
 import {
@@ -46,11 +47,10 @@ import { SidebarSessionForm, type SidebarFormState } from './sidebar-session-for
 import { TeammatesGroup } from './sidebar-teammates-group.js'
 import { WorkspacesGroup } from './sidebar-workspaces-group.js'
 
-/** 新建会话的入参：父层据此发 saveTask 并刷新。 */
+/** 新建会话的入参：父层据此开主题。text 就是第一条消息，队友行加号进来时已经带上 @名字。 */
 export interface NewSessionInput {
   projectId: string
-  assigneeBotId: string | null
-  title: string
+  text: string
 }
 
 export interface TeamSidebarNavProps {
@@ -58,13 +58,10 @@ export interface TeamSidebarNavProps {
   /** 项目视图还没加载时为 null：工作区组显示「还没读出来」，不假装没有工作。 */
   project: ProjectView | null
   view: PageView
-  mainFace: 'thread' | 'home'
   selectedThread: string
   /** 宿主侧栏收起态：只画图标列。 */
   compact?: boolean
   notice?: string | null
-  /** 当前线程对应的左栏会话 id（P44-R2）：子行据此显示选中态。 */
-  activeTaskId?: string | null
   /** 当前打开的项目 id（P44-R2）：项目行据此显示选中态。 */
   activeProjectId?: string | null
   onOpenOffice: () => void
@@ -78,9 +75,15 @@ export interface TeamSidebarNavProps {
   /** 工作区项目视图迟迟没读出来时的重试（U11 #06）：宿主侧栏不传时不显示重试按钮。 */
   onRetryProject?: () => void
   onOpenProject: (projectId: string) => void
-  onOpenSession: (session: SidebarSession) => void
-  /** 父层负责发命令与刷新；返回中文错误，null 表示成功。 */
+  /** 点左栏的主题行：进这条主题聊天（P63）。 */
+  onOpenTopic: (topicId: string) => void
+  /** 父层负责发命令与刷新；返回中文错误，null 表示成功。现在只有队友行加号的内联表单用它。 */
   onCreateSession?: (input: NewSessionInput) => Promise<string | null>
+  /**
+   * 项目行加号（P60，2026-11-10）：直接进这个项目的一张空聊天（草稿主题），第一句发出才建成。
+   * 两个父层（宿主侧栏、页面内降级列）都传；没传时退回旧的「先写一句」内联表单。
+   */
+  onOpenTopicDraft?: (projectId: string) => void
   /**
    * P48 归档链路：先校验再执行，父层只负责发命令与刷新。
    * 校验失败时返回中文字符串；成功返回受影响项目与任务数（canArchive 为 false 时界面拦截）。
@@ -149,8 +152,8 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
     [sidebarProjects, expandedProjectIds, props.activeProjectId],
   )
   const botById = useMemo(() => new Map(overviewBots.map(bot => [bot.id, bot])), [overviewBots])
-  /** 可新建会话的项目：进行中或暂停；已完成/归档不再加活。 */
-  const creatable = sidebarProjects.filter(project => project.status === 'active' || project.status === 'paused')
+  /** 可新建会话的项目：只有进行中的项目能开主题（core 同样拒绝其余状态）。 */
+  const creatable = sidebarProjects.filter(project => project.status === 'active')
 
   const toggleGroupCollapsed = (groupId: SidebarGroupId): void => {
     setCollapsedGroups(prev => toggleGroup(prev, groupId))
@@ -166,9 +169,17 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
     )
   }
 
-  /** 打开「给项目新建会话」：默认待领（不指派），成员下拉可选。 */
+  /**
+   * 项目行加号：「在项目里新建会话」，默认发给项目负责人。
+   * P60 起父层给了草稿入口就直接进空聊天，不再展开内联表单；顺手收起别处开着的表单。
+   */
   const openProjectForm = (projectId: string): void => {
-    setForm({ projectId, botId: null, fromBotId: null })
+    if (props.onOpenTopicDraft !== undefined) {
+      closeForm()
+      props.onOpenTopicDraft(projectId)
+      return
+    }
+    setForm({ projectId, fromBotId: null })
     setTitle('')
     setFormError(null)
     if (!(expandedProjectIds ?? []).includes(projectId)) {
@@ -177,12 +188,12 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
     }
   }
 
-  /** 打开「给队友新建会话」：项目只列它参与的可加活项目，指派固定为它。 */
+  /** 打开「给队友新建会话」：项目只列它参与的进行中项目，第一句话会 @ 它。 */
   const openBotForm = (botId: string): void => {
     const own = projectsForBot(creatable, botId)
-    setForm({ projectId: own[0]?.id ?? '', botId, fromBotId: botId })
+    setForm({ projectId: own[0]?.id ?? '', fromBotId: botId })
     setTitle('')
-    setFormError(own.length === 0 ? '它还没进任何项目。打开项目页，把它加进去，再派活。' : null)
+    setFormError(own.length === 0 ? '它还没进任何进行中的项目。打开项目页，把它加进去，再开会话。' : null)
   }
 
   const closeForm = (): void => {
@@ -194,14 +205,16 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
   const submitForm = (event: FormEvent): void => {
     event.preventDefault()
     if (form === null || busy) return
-    const name = title.trim()
-    // U11 #12：说清缺什么、上限多少（core 实际上限 120 字，audit 写的 60 与实现不一致，见 questions.md）。
-    if (name === '') { setFormError('还差一个名字。填 1 到 120 个字，再点「新建会话」。'); return }
+    const text = title.trim()
+    // U11 #12：说清缺什么。这句话就是第一条消息，所以不用另外起名字。
+    if (text === '') { setFormError('还差一句话。写清这条会话做什么，再点「新建会话」。'); return }
     if (form.projectId === '') { setFormError('未选择项目。请先选择项目。'); return }
     if (props.onCreateSession === undefined) { setFormError('这里建不了。先去项目页，把队友加进成员。'); return }
     setBusy(true)
     setFormError(null)
-    void props.onCreateSession({ projectId: form.projectId, assigneeBotId: form.botId, title: name })
+    // 从队友行加号进来：第一句话点名这位队友，它会先接话，而不是默认发给负责人。
+    const target = form.fromBotId === null ? undefined : botById.get(form.fromBotId)?.name
+    void props.onCreateSession({ projectId: form.projectId, text: target === undefined ? text : `@${target} ${text}` })
       .then((error) => {
         if (error !== null) { setFormError(error); return }
         closeForm()
@@ -326,20 +339,17 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
     )
   }
 
-  // 表单的派生数据：队友表单的可选项目、项目表单的成员名单、表单标题里的队友名。
+  // 表单的派生数据：队友表单的可选项目、表单标题里的队友名。
   const botFormProjects = form?.fromBotId === null || form === null ? [] : projectsForBot(creatable, form.fromBotId)
-  const formMembers = form === null ? [] : sidebarProjects.find(project => project.id === form.projectId)?.memberBotIds ?? []
   const formBot = form?.fromBotId === null || form === null ? null : botById.get(form.fromBotId) ?? null
   /** 两个入口共用同一个表单节点；form 为 null 时不挂载，状态全部留在本组件。 */
   const formNode = form === null ? null : (
     <SidebarSessionForm
-      form={form}
-      memberOptions={formMembers.map(id => ({ id, name: botById.get(id)?.name ?? id }))}
+      canSubmit={form.projectId !== ''}
       title={title}
       busy={busy}
       error={formError}
       onTitleChange={setTitle}
-      onMemberChange={botId => setForm(prev => prev === null ? prev : { ...prev, botId })}
       onCancel={closeForm}
       onSubmit={submitForm}
     />
@@ -363,13 +373,14 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
             <span className="ah-nav-group-title">{SIDEBAR_GROUP_TITLES.office}</span>
             {/* 办公室组只报「多少人正在忙」：待你处理的总数归底部唯一入口，
                 这里再报一个同样的数字最容易误读（P2-3）。 */}
-            <span className="ah-nav-group-count">
-              {(() => {
-                // U11 #03：计数只报真人数；零在忙时把梗放这一句，且全左栏只此一处幽默。
-                const thinking = overviewBots.filter(bot => bot.activity === 'thinking').length
-                return thinking > 0 ? `${thinking} 人在忙` : '办公室还空着。没人搬砖，也没人摸鱼。'
-              })()}
-            </span>
+            {(() => {
+              // U11 #03：计数只报真人数；零在忙时把梗放这一句，且全左栏只此一处幽默。
+              const thinking = overviewBots.filter(bot => bot.activity === 'thinking').length
+              const status = thinking > 0 ? `${thinking} 人在忙` : '办公室还空着。没人搬砖，也没人摸鱼。'
+              // P59：灰字放大到 12px 后，这句在左栏里放不下、会被省略；
+              // 和「队友」「工作区」的计数一样带上 title，鼠标悬停能读全文。
+              return <span className="ah-nav-group-count" title={status}>{status}</span>
+            })()}
           </button>
           {/* 办公室组没有动作按钮：补一个同宽占位（U01 第 43 轮 P2-O1），
               让三组计数右缘落在同一条线上；aria-hidden 且不可聚焦，不进 Tab 序列。 */}
@@ -397,7 +408,6 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
         onQueryChange={setQuery}
         team={props.overview.team}
         view={props.view}
-        mainFace={props.mainFace}
         selectedThread={props.selectedThread}
         bots={activeBots}
         archivedBots={archivedBots}
@@ -423,7 +433,7 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
         onToggle={() => toggleGroupCollapsed('workspaces')}
         projects={workspaceProjects}
         projectUnloaded={props.project === null}
-        activeTaskId={props.activeTaskId ?? null}
+        selectedThread={props.selectedThread}
         notice={props.notice ?? null}
         clipped={workspaceClipped}
         canNewProject={props.onNewProject !== undefined}
@@ -432,7 +442,7 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
         onToggleProject={toggleProject}
         onOpenProject={props.onOpenProject}
         onOpenProjectForm={openProjectForm}
-        onOpenSession={props.onOpenSession}
+        onOpenTopic={props.onOpenTopic}
         rowsRef={rowsRef}
         form={form}
         formNode={formNode}

@@ -12,7 +12,7 @@ import {
 } from '../shared/fixtures.js'
 import { fixtureOffice } from '../shared/fixture-office.js'
 import { fixtureResource } from '../shared/fixture-resource.js'
-import { fixtureProject } from '../shared/fixture-project.js'
+import { fixtureProject, fixtureTopicThreads } from '../shared/fixture-project.js'
 import { fixtureLedgerDetail, fixtureLedgerRows } from '../shared/fixture-ledger.js'
 
 /** 变化事件：告诉界面哪个范围的数据变了（scope ∈ overview | thread | inbox | activity | bot | settings | ledger）。 */
@@ -85,7 +85,7 @@ function contextIsEmpty(context: ProjectContext): boolean {
  * 其余命令一律返回 { ok: true }（D01 不接真引擎）。
  */
 export class FixtureHub implements HubFacade {
-  private threads: ThreadView[] = clone(fixtureThreads)
+  private threads: ThreadView[] = clone([...fixtureThreads, ...fixtureTopicThreads])
   /** 样例项目可变副本：共享上下文的编辑/采纳/驳回要在沙箱里真的改到视图上。 */
   private projectView: ProjectView = clone(fixtureProject)
   /** P40：样例机器人的可变副本，档案里保存的预置 skill 要能重新打开时看到。 */
@@ -108,6 +108,71 @@ export class FixtureHub implements HubFacade {
 
   private findThread(threadId: string): ThreadView | undefined {
     return this.threads.find((t) => t.threadId === threadId)
+  }
+
+  /** 找主题所在的项目行和主题列表里的那一行（P63）；不是主题时返回 null。 */
+  private findTopic(threadId: string): { row: ProjectViewRow; topic: ProjectViewRow['topics'][number] } | null {
+    for (const row of this.projectView.projects) {
+      const topic = row.topics.find(item => item.id === threadId)
+      if (topic) return { row, topic }
+    }
+    return null
+  }
+
+  /** 主题有新楼层时更新列表里的预览：样例模式也要能看到排序和未读的变化。 */
+  private touchTopic(threadId: string, text: string, from: string, unreadDelta: number): void {
+    const found = this.findTopic(threadId)
+    if (found === null) return
+    found.topic.lastMessageAt = Date.now()
+    found.topic.lastMessageText = '刚刚'
+    found.topic.lastMessagePreview = text.slice(0, 60)
+    found.topic.lastMessageFrom = from
+    found.topic.unread += unreadDelta
+    found.row.topics.sort((a, b) => b.lastMessageAt - a.lastMessageAt)
+    this.emit({ scope: 'project' })
+  }
+
+  /** 样例模式开主题：真的进项目视图和线程表，返回 topicId，和真引擎同一个形状。 */
+  private commandCreateTopic(input: Record<string, unknown>): CommandResult {
+    const projectId = String(input.projectId ?? '')
+    const text = String(input.text ?? '').trim()
+    if (text === '') return { ok: false, error: '第一句话不能为空' }
+    const row = this.projectView.projects.find(item => item.project.id === projectId)
+    if (!row) return { ok: false, error: `项目不存在：${projectId}` }
+    if (row.project.status !== 'active') return { ok: false, error: `项目「${row.project.name}」当前是「${row.statusLabel}」，恢复进行中后才能在里面讨论` }
+    const topicId = `ptp_sample_${this.seq++}`
+    const title = [...text.split(/\r?\n/)[0]!.trim()].slice(0, 120).join('')
+    const firstId = `own-${Date.now()}-${this.seq++}`
+    this.threads.push({
+      threadId: topicId, title, hasMore: false, oldestId: firstId,
+      messages: [{ id: firstId, thread: topicId, from: 'owner', fromName: '主人', fromColor: null, kind: 'chat', text, createdAt: Date.now(), timeText: '刚刚', card: null }],
+    })
+    row.topics.unshift({ id: topicId, title, lastMessageAt: Date.now(), lastMessageText: '刚刚', unread: 0, lastMessagePreview: text.slice(0, 60), lastMessageFrom: '主人' })
+    this.emit({ scope: 'project' })
+    this.scheduleSampleReply(topicId)
+    return { ok: true, data: { topicId } }
+  }
+
+  /** 2 秒后追加一条样例回复（看实时推送效果用）；主题里由负责人回复。 */
+  private scheduleSampleReply(threadId: string): void {
+    const timer = setTimeout(() => {
+      this.pendingTimers.delete(timer)
+      const t = this.findThread(threadId)
+      if (!t) return
+      const found = this.findTopic(threadId)
+      const bot = fixtureOverview.bots.find(b => b.id === (found?.row.ownerBotId ?? threadId))
+      const fromName = t.threadId === 'team' ? '总管' : (bot?.name ?? '队友')
+      const text = '（样例回复）收到。这是 D01 样例数据模式的自动回应，接上真实引擎后就是它的真话了。'
+      t.messages.push({
+        id: `bot-${Date.now()}-${this.seq++}`, thread: t.threadId, from: bot?.id ?? 'hub',
+        fromName, fromColor: bot?.color ?? 'var(--dsw-alias-accent)', kind: 'reply', text,
+        createdAt: Date.now(), timeText: '刚刚', card: null,
+      })
+      this.emit({ scope: 'thread', botId: threadId })
+      this.emit({ scope: 'overview' })
+      this.touchTopic(threadId, text, fromName, 1)
+    }, 2000)
+    this.pendingTimers.add(timer)
   }
 
   async overview(): Promise<OverviewView> { return clone(fixtureOverview) }
@@ -308,6 +373,13 @@ export class FixtureHub implements HubFacade {
     if (contextResult !== null) return contextResult
     // P40：档案里保存的预置 skill 勾选在样例模式也持久化。
     if (name === 'updateBot') return this.commandUpdateBot(input)
+    if (name === 'createProjectTopic') return this.commandCreateTopic(input)
+    // 主题的未读在项目视图里：看过了要清零，左栏的点才会灭。
+    if (name === 'markThreadRead') {
+      const found = this.findTopic(String(input.threadId ?? ''))
+      if (found !== null) { found.topic.unread = 0; this.emit({ scope: 'project' }) }
+      return { ok: true }
+    }
     if (name === 'sendMessage') {
       const threadId = String(input.threadId ?? '')
       const text = String(input.text ?? '').trim()
@@ -323,22 +395,9 @@ export class FixtureHub implements HubFacade {
       })
       this.emit({ scope: 'thread', botId: threadId })
       this.emit({ scope: 'overview' })
+      this.touchTopic(threadId, text, '主人', 0)
       // 2) 2 秒后追加一条机器人的样例回复（看实时推送效果用）。
-      const timer = setTimeout(() => {
-        this.pendingTimers.delete(timer)
-        const bot = fixtureOverview.bots.find((b) => b.id === threadId)
-        const fromName = t.threadId === 'team' ? '总管' : (bot?.name ?? '队友')
-        const fromColor = bot?.color ?? 'var(--dsw-alias-accent)'
-        t.messages.push({
-          id: `bot-${Date.now()}-${this.seq++}`, thread: t.threadId, from: bot?.id ?? 'hub',
-          fromName, fromColor, kind: 'reply',
-          text: '（样例回复）收到。这是 D01 样例数据模式的自动回应，接上真实引擎后就是它的真话了。',
-          createdAt: Date.now(), timeText: '刚刚', card: null,
-        })
-        this.emit({ scope: 'thread', botId: threadId })
-        this.emit({ scope: 'overview' })
-      }, 2000)
-      this.pendingTimers.add(timer)
+      this.scheduleSampleReply(threadId)
       return { ok: true }
     }
     // 其余命令：D01 一律成功（不接真引擎）。

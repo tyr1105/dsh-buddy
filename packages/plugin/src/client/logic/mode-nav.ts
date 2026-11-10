@@ -12,7 +12,7 @@
 import type { PageView } from '../hub-state.js'
 import type { SpaceMode } from './space-capability.js'
 
-/** 独立存储键：不与看板折叠、激活页等键混用，升级时互不牵连。 */
+/** 独立存储键：不与激活页等其他界面记忆键混用，升级时互不牵连。 */
 export const spaceModeStorageKey = 'dsh-buddy:space-mode:v1'
 /** 中栏表面单独一个键：模式和表面互不影响，坏掉一个不拖累另一个。 */
 export const spaceSurfaceStorageKey = 'dsh-buddy:surface:v1'

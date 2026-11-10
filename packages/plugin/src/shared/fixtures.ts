@@ -183,6 +183,11 @@ export const fixtureBots: Record<string, BotView> = {
       model: null, modelText: '跟随宿主默认模型',
       createdAt: NOW - 9 * 24 * 60 * 60_000, homeDir: '~/AgentHub/bots/xunjian', sessionId: 'sess-xunjian-demo', createdText: '10-28', probationText: null, workDataAllowed: false,
       presetSkillIds: ['owner-brief', 'incident-triage'],
+      dshSkillNames: [],
+      temperament: null,
+      speechStyle: null,
+      brief: '',
+      onDemand: false,
     },
     aspirations: [{ id: 'asp1', text: '让盯着的每一项都有「期望」：什么算正常、什么该叫人。', status: 'active' }],
     goals: [
@@ -229,6 +234,11 @@ export const fixtureBots: Record<string, BotView> = {
       model: { provider: 'deepseek-official', model: 'deepseek-flash' }, modelText: 'deepseek-official / deepseek-flash',
       createdAt: NOW - 5 * 24 * 60 * 60_000, homeDir: '~/AgentHub/bots/tanlu', sessionId: 'sess-tanlu-demo', createdText: '11-02', probationText: '试岗第 5/7 天', workDataAllowed: false,
       presetSkillIds: ['data-check'],
+      dshSkillNames: [],
+      temperament: null,
+      speechStyle: null,
+      brief: '',
+      onDemand: false,
     },
     aspirations: [
       { id: 'asp1', text: '把数据日报链路彻底查明白，让它别再半夜出问题。', status: 'active' },
@@ -268,6 +278,11 @@ export const fixtureBots: Record<string, BotView> = {
       model: null, modelText: '跟随宿主默认模型',
       createdAt: NOW - 17 * 24 * 60 * 60_000, homeDir: '~/AgentHub/bots/zongguan', sessionId: 'sess-zongguan-demo', createdText: '10-20', probationText: null, workDataAllowed: false,
       presetSkillIds: ['owner-brief', 'project-handoff'],
+      dshSkillNames: [],
+      temperament: null,
+      speechStyle: null,
+      brief: '',
+      onDemand: false,
     },
     aspirations: [{ id: 'asp1', text: '让全队的每次思考都花在刀刃上。', status: 'active' }],
     goals: [{ id: 'g1', title: '本月把全队的无变化思考占比降到 40% 以下', doneWhen: '统计口径下连续一周达标', period: 'month', periodText: '月', status: 'active', statusLabel: '进行中', lastProgressText: '本周 41%，接近达标', createdBy: 'bot' }],
@@ -303,10 +318,16 @@ export const fixtureSettings: SettingsView = {
   ],
   // P40：与 core 内置清单同文案的只读候选；样例里给不同队友勾不同的项，走查看差异。
   presetSkillOptions: [
-    { id: 'owner-brief', name: '给主人的简报', purpose: '汇报先把结论写在第一句，再补证据与下一步，避免主人从头读。', condition: 'every_wake', conditionLabel: '每次唤醒' },
-    { id: 'project-handoff', name: '项目交接核对', purpose: '在项目里动手前先核对共享上下文、交接目录与待领清单，避免重复劳动。', condition: 'project_work', conditionLabel: '仅项目工作' },
-    { id: 'incident-triage', name: '异常排查四步', purpose: '遇到异常按「确认现象、定位范围、找最近变化、给下一步」推进，不猜结论。', condition: 'task_type', conditionLabel: '特定任务类型' },
-    { id: 'data-check', name: '数据核对清单', purpose: '交付数字前先核对口径、时间范围与总量，避免把错数送给主人。', condition: 'task_type', conditionLabel: '特定任务类型' },
+    { id: 'owner-brief', name: '给主人的简报', purpose: '汇报先把结论写在第一句，再补证据与下一步，避免主人从头读。' },
+    { id: 'project-handoff', name: '项目交接核对', purpose: '在项目里动手前先核对共享上下文、交接目录与待领清单，避免重复劳动。' },
+    { id: 'incident-triage', name: '异常排查四步', purpose: '遇到异常按「确认现象、定位范围、找最近变化、给下一步」推进，不猜结论。' },
+    { id: 'data-check', name: '数据核对清单', purpose: '交付数字前先核对口径、时间范围与总量，避免把错数送给主人。' },
+  ],
+  // P55：走查用的 DSH 技能，名字取自 DSH 随包提供的办公技能。
+  dshSkillOptions: [
+    { name: 'office-docx', description: 'Create, read, edit, and validate Word documents (.docx).' },
+    { name: 'office-pptx', description: 'Create, read, edit, and validate PowerPoint presentations (.pptx).' },
+    { name: 'office-xlsx', description: 'Read, create, edit, and validate Excel workbooks, data, and formulas (.xlsx).' },
   ],
 }
 

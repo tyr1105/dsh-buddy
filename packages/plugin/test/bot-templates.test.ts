@@ -16,20 +16,20 @@ import { testing, type Hub } from '@agent-hub/core'
 import { createEngineHub } from '../src/host/index.js'
 import { RealHubFacade } from '../src/host/real-hub.js'
 import {
-  BOT_TEMPLATES, BOT_TEMPLATE_GROUPS, MAX_TEAM_SIZE, PRESENCE_OPTIONS, buildTemplateInput, defaultDetailTemplate, draftHasContent, freeTemplateName,
+  BOT_TEMPLATES, BOT_TEMPLATE_GROUPS, MAX_TEAM_SIZE, buildTemplateInput, defaultDetailTemplate, draftHasContent, freeTemplateName,
   hasLiveChief, isTemplateAdded, pickWholeGroup, templateBlock, templateById, templateDetailRows, templateDetailTitle, templateMeta,
-  templatePersona, templateSkillNames, templatesInGroup, toggleTemplatePick, type BotTemplate,
+  templateSkillNames, templatesInGroup, toggleTemplatePick, type BotTemplate,
 } from '../src/client/logic/bot-templates.js'
 import { addTeammatesFromTemplates, templateBatchError, templateBatchNotice, type WizardCreateHub } from '../src/client/logic/wizard-create.js'
 import { splitPresetSkillOptions } from '../src/client/logic/preset-skills.js'
-import { MBTI_OPTIONS, PRESET_COLORS, emptyDraft } from '../src/client/logic/wizard.js'
+import { BRIEF_MAX, MBTI_OPTIONS, RHYTHM_OPTIONS, SPEECH_STYLE_OPTIONS, TEMPERAMENT_OPTIONS, emptyDraft, rhythmAllowed } from '../src/client/logic/wizard.js'
 import type { CommandResult, PresetSkillOption } from '../src/shared/views.js'
 
 /** 文案审计定下的禁用词，主人看得到的文字都不能出现。 */
 const JARGON = ['产物', '交账', '唤醒', '上下文', '治理', '投影', '额度保护', '套路']
 const template = (id: string): BotTemplate => templateById(id)!
 /** 名册里的一位队友，只带选择规则用得到的字段。 */
-const bot = (name: string, role: 'chief' | 'researcher' | 'executor' | 'sentinel' = 'executor', lifecycle: 'active' | 'retired' | 'probation' = 'active') => ({ name, role, lifecycle })
+const bot = (name: string, role: 'chief' | 'researcher' | 'executor' | 'sentinel' | 'advisor' = 'executor', lifecycle: 'active' | 'retired' | 'probation' = 'active') => ({ name, role, lifecycle })
 
 describe('模板数据的底线', () => {
   it('一共 15 个，5 组都有模板，id 和名字都不重复', () => {
@@ -39,20 +39,23 @@ describe('模板数据的底线', () => {
     expect(new Set(BOT_TEMPLATES.map(item => item.name)).size).toBe(15)
   })
 
-  it('字段都在 core 的限制内：名字 20 字、性格 300 字、志向 1 到 3 条', () => {
+  it('字段都在 core 的限制内：名字 20 字、员工说明不超上限、志向 1 到 3 条', () => {
     for (const item of BOT_TEMPLATES) {
       expect([...item.name].length, item.name).toBeLessThanOrEqual(20)
-      expect([...templatePersona(item)].length, `${item.name} 的性格`).toBeLessThanOrEqual(300)
+      expect([...item.brief].length, `${item.name} 的员工说明`).toBeLessThanOrEqual(BRIEF_MAX)
       expect(item.aspirations.length, item.name).toBeGreaterThanOrEqual(1)
       expect(item.aspirations.length, item.name).toBeLessThanOrEqual(3)
       expect(item.presetSkillIds.length, item.name).toBeLessThanOrEqual(8)
     }
   })
 
-  it('MBTI 和头像色都来自现有选项', () => {
+  it('性格、说话风格、MBTI、节奏都来自现有选项，头像色是合法颜色', () => {
     for (const item of BOT_TEMPLATES) {
+      expect(TEMPERAMENT_OPTIONS.some(option => option.value === item.temperament), item.name).toBe(true)
+      expect(SPEECH_STYLE_OPTIONS.some(option => option.value === item.speechStyle), item.name).toBe(true)
       expect(MBTI_OPTIONS.some(option => option.value === item.mbti), item.name).toBe(true)
-      expect(PRESET_COLORS, item.name).toContain(item.color)
+      expect(RHYTHM_OPTIONS.some(option => option.value === item.rhythm), item.name).toBe(true)
+      expect(item.color, item.name).toMatch(/^#[0-9a-f]{6}$/)
     }
   })
 
@@ -69,29 +72,34 @@ describe('模板数据的底线', () => {
     for (const item of BOT_TEMPLATES) {
       for (const word of JARGON) {
         expect(item.tagline, item.name).not.toContain(word)
-        expect(templatePersona(item), item.name).not.toContain(word)
+        expect(item.brief, item.name).not.toContain(word)
       }
       expect(item.tagline, item.name).not.toMatch(/[;；]/)
     }
   })
 
-  it('上场方式写进性格并换算成节奏：常驻不加话，等活和点名才来都用安静节奏', () => {
-    expect(PRESENCE_OPTIONS.standing.pace).toBe('normal')
+  it('节奏换算到位：听吩咐是硬规则，模板都不放权（等级都是 L1）', () => {
     for (const item of BOT_TEMPLATES) {
       const input = buildTemplateInput(item)
-      expect(input.pace, item.name).toBe(item.presence === 'standing' ? 'normal' : 'quiet')
-      expect(input.persona, item.name).toBe(`${item.persona}${PRESENCE_OPTIONS[item.presence].clause}`)
+      const rhythm = RHYTHM_OPTIONS.find(option => option.value === item.rhythm)!
+      expect(input.pace, item.name).toBe(rhythm.pace)
+      expect(input.onDemand, item.name).toBe(rhythm.onDemand)
+      expect(input.autonomy, item.name).toBe('L1')
+      expect(input.brief, item.name).toBe(item.brief)
     }
-    expect(templatePersona(template('engineer'))).toContain('没活就等着')
-    expect(templatePersona(template('team-coach'))).toContain('只在被点名时说话')
-    expect(templatePersona(template('inspector'))).not.toContain('没活就等着')
+    expect(buildTemplateInput(template('engineer')).onDemand).toBe(true)
+    expect(buildTemplateInput(template('inspector')).onDemand).toBe(false)
   })
 
-  it('外脑三位都是点名才来，对外两位都有红线，其余没有红线', () => {
-    for (const item of templatesInGroup('advisor')) expect(item.presence, item.name).toBe('by_mention')
+  it('外脑三位和评审员是建议风格，节奏都不会动手', () => {
+    for (const item of templatesInGroup('advisor')) expect(item.role, item.name).toBe('advisor')
+    expect(template('reviewer').role).toBe('advisor')
+    for (const item of BOT_TEMPLATES) expect(rhythmAllowed(item.role, item.rhythm), item.name).toBe(true)
+  })
+
+  it('对外两位的员工说明写明红线，其余没有', () => {
     for (const item of BOT_TEMPLATES) {
-      if (item.group === 'external') expect(item.redLines?.length, item.name).toBeGreaterThan(0)
-      else expect(item.redLines, item.name).toBeUndefined()
+      expect(item.brief.includes('红线：'), item.name).toBe(item.group === 'external')
     }
   })
 
@@ -156,15 +164,14 @@ describe('选择规则', () => {
     expect(draftHasContent(emptyDraft())).toBe(false)
     expect(draftHasContent({ ...emptyDraft(), name: '小王' })).toBe(true)
     expect(draftHasContent({ ...emptyDraft(), role: 'chief' })).toBe(true)
-    expect(draftHasContent({ ...emptyDraft(), step: 2 })).toBe(true)
     expect(draftHasContent({ ...emptyDraft(), name: '   ' })).toBe(false)
   })
 })
 
 describe('详情面板', () => {
   const options: PresetSkillOption[] = [
-    { id: 'external-voice', name: '对外口径', purpose: '', condition: 'every_wake', conditionLabel: '每次唤醒', audience: 'role' },
-    { id: 'owner-brief', name: '给主人的简报', purpose: '', condition: 'every_wake', conditionLabel: '每次唤醒' },
+    { id: 'external-voice', name: '对外口径', purpose: '', audience: 'role' },
+    { id: 'owner-brief', name: '给主人的简报', purpose: '' },
   ]
 
   it('标题写清部门和对内对外', () => {
@@ -175,17 +182,17 @@ describe('详情面板', () => {
     expect(defaultDetailTemplate('product').name).toBe('工程师')
     expect(defaultDetailTemplate('growth').name).toBe('SEO 专员')
   })
-  it('卡片底部写工作方式、MBTI 和上场方式', () => expect(templateMeta(template('engineer'))).toBe('执行 · ISTP · 等活'))
-  it('对外角色的详情有红线，技能按模板顺序显示中文名', () => {
+  it('卡片底部写执行风格、MBTI 和自主节奏', () => expect(templateMeta(template('engineer'))).toBe('执行 · ISTP · 听吩咐'))
+  it('详情就是表单里的那几项：对外角色的红线在员工说明里，技能按模板顺序显示中文名', () => {
     const rows = templateDetailRows(template('spokesperson'), options)
-    expect(rows.find(row => row.label === '红线')?.value).toContain('先经主人批准')
-    expect(rows.find(row => row.label === '专属技能')?.value).toBe('对外口径')
-    expect(rows.find(row => row.label === '自主等级')?.value).toContain('L1')
+    expect(rows.map(row => row.label)).toEqual(['执行风格', '性格', '说话风格', 'MBTI', '自主节奏', '岗位技能', '员工说明'])
+    expect(rows.find(row => row.label === '员工说明')?.value).toContain('先经主人批准')
+    expect(rows.find(row => row.label === '岗位技能')?.value).toBe('对外口径')
+    expect(rows.find(row => row.label === '自主节奏')?.value).toBe('听吩咐：你点名或派活才动')
   })
-  it('反例：对内角色没有红线行，技能清单没加载时不显示技能行', () => {
+  it('反例：技能清单没加载时不显示技能行', () => {
     const rows = templateDetailRows(template('engineer'), [])
-    expect(rows.some(row => row.label === '红线')).toBe(false)
-    expect(rows.some(row => row.label === '专属技能')).toBe(false)
+    expect(rows.some(row => row.label === '岗位技能')).toBe(false)
     expect(templateSkillNames(template('engineer'), [])).toEqual([])
   })
   it('岗位专属技能和通用项分开，旧夹具没有分组字段时按通用项', () => {
@@ -224,14 +231,10 @@ describe('批量添加', () => {
     expect(result.failed).toEqual([])
   })
 
-  it('对外角色建好后写红线，作用范围是它自己', async () => {
+  it('对外角色的红线随员工说明一起创建，不再单独写规矩', async () => {
     const hub = fakeHub()
     await addTeammatesFromTemplates(hub, [template('spokesperson')], [])
-    expect(hub.calls.at(-1)).toEqual({ name: 'upsertRule', arg: { scope: 'b_1', text: template('spokesperson').redLines![0], redLine: true } })
-  })
-  it('反例：对内角色不写规矩', async () => {
-    const hub = fakeHub()
-    await addTeammatesFromTemplates(hub, [template('engineer')], [])
+    expect(hub.calls[0]!.arg.brief).toContain('先经主人批准')
     expect(hub.calls.some(call => call.name === 'upsertRule')).toBe(false)
   })
 
@@ -256,14 +259,6 @@ describe('批量添加', () => {
     expect(result.added.map(item => item.name)).toEqual(['工程师'])
     expect(result.failed).toEqual([{ name: '评审员', error: '连接断开' }])
     errorLog.mockRestore()
-  })
-
-  it('红线存失败只提醒，不算添加失败', async () => {
-    const hub = fakeHub({ upsertRule: { ok: false, error: '写入失败' } })
-    const result = await addTeammatesFromTemplates(hub, [template('marketer')], [])
-    expect(result.added).toHaveLength(1)
-    expect(result.failed).toEqual([])
-    expect(result.warnings[0]).toContain('市场专员')
   })
 
   it('提示文案：一位成功不用说，多位列名字，失败写原因', () => {
@@ -308,19 +303,24 @@ describe('用真实 core 建一遍全部模板', () => {
       const view = await hub.api.bot(added.botId)
       expect(view.card.name).toBe(item.name)
       expect(view.card.role).toBe(item.role)
-      expect(view.profile.persona).toBe(templatePersona(item))
+      expect(view.profile.temperament).toBe(item.temperament)
+      expect(view.profile.speechStyle).toBe(item.speechStyle)
+      expect(view.profile.brief).toBe(item.brief)
       expect(view.profile.mbti).toBe(item.mbti)
       expect(view.profile.autonomy).toBe('L1')
-      expect(view.profile.pace).toBe(PRESENCE_OPTIONS[item.presence].pace)
+      const rhythm = RHYTHM_OPTIONS.find(option => option.value === item.rhythm)!
+      expect(view.profile.pace).toBe(rhythm.pace)
+      expect(view.profile.onDemand).toBe(rhythm.onDemand)
       expect(view.profile.presetSkillIds).toEqual([...item.presetSkillIds])
       // 技能真的写进了家目录，队友才读得到。
       for (const id of item.presetSkillIds) {
         await expect(readFile(join(rootDir, 'bots', added.botId, '.agents/skills', id, 'SKILL.md'), 'utf8')).resolves.toContain(`dsh-buddy:preset-skill:${id}`)
       }
-      // 身份文件里要有性格；对外角色还要有红线。
+      // 身份文件里要有选择题拼出的性格和员工说明；对外角色的红线就在员工说明里。
       const identity = await readFile(join(rootDir, 'bots', added.botId, 'AGENTS.md'), 'utf8')
-      expect(identity).toContain(templatePersona(item))
-      for (const line of item.redLines ?? []) expect(identity).toContain(`红线：${line}`)
+      expect(identity).toContain(view.profile.persona)
+      expect(identity).toContain(item.brief)
+      expect(identity.includes('听吩咐：'), item.name).toBe(rhythm.onDemand)
     }
     const overview = await hub.api.overview()
     expect(overview.bots.map(row => row.name).sort()).toEqual(batch.map(item => item.name).sort())

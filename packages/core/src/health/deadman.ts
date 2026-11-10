@@ -43,7 +43,8 @@ export function checkDeadman(ctx: HubContext, now: number): Candidate[] {
   for (const bot of ctx.store.table('bots').list()) {
     const open = openWakes.filter(w => w.botId === bot.id);
     const orphan = open.some(w => w.status === 'delivering' && now - w.startedAt > ctx.settings.c02.deliveryTimeoutMs);
-    if (!['active', 'probation'].includes(bot.lifecycle) || bot.activity === 'waiting_owner'
+    // P55：听吩咐的队友不承诺自己什么时候醒，没醒不算掉线；投递卡住（orphan）仍要处理。
+    if ((bot.onDemand && !orphan) || !['active', 'probation'].includes(bot.lifecycle) || bot.activity === 'waiting_owner'
       || (!orphan && (bot.activity === 'thinking' || bot.expectedBy === null))) continue;
     if (open.some(w => w.status === 'running' || w.status === 'committed'
       || (w.status === 'delivering' && now - w.startedAt <= ctx.settings.c02.deliveryTimeoutMs))) continue;

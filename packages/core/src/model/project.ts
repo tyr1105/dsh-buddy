@@ -11,7 +11,7 @@
  * 本模型只定义结构与校验，不读时钟、不读文件、不碰宿主，全部逻辑可单测。
  */
 import { z } from 'zod';
-import { nonempty, recordId, text, timestamp } from './primitives.js';
+import { count, nonempty, recordId, text, timestamp } from './primitives.js';
 
 /** 项目状态：进行中、已暂停、已完成、已归档。归档不删除任务与历史。 */
 export const PROJECT_STATUSES = ['active', 'paused', 'done', 'archived'] as const;
@@ -84,15 +84,19 @@ export function emptyProjectContext(): ProjectContext {
   return { background: '', conventions: '', decisions: [], glossary: [] };
 }
 
-/** 上下文修改来源：主人直接编辑，或队友提交建议后被主人采纳。 */
-export const PROJECT_CONTEXT_SOURCES = ['owner_edit', 'bot_proposal'] as const;
+/**
+ * 上下文修改来源：主人直接编辑、队友建议被主人采纳，
+ * 或项目负责人（P60）随项目推进直接更新背景，这一条不经主人采纳。
+ */
+export const PROJECT_CONTEXT_SOURCES = ['owner_edit', 'bot_proposal', 'owner_bot'] as const;
 export const ProjectContextSourceSchema = z.enum(PROJECT_CONTEXT_SOURCES, {
-  error: '上下文修改来源必须是 owner_edit 或 bot_proposal',
+  error: '上下文修改来源必须是 owner_edit、bot_proposal 或 owner_bot',
 });
 export type ProjectContextSource = z.infer<typeof ProjectContextSourceSchema>;
 export const PROJECT_CONTEXT_SOURCE_LABELS: Record<ProjectContextSource, string> = {
   owner_edit: '主人编辑',
   bot_proposal: '采纳队友建议',
+  owner_bot: '负责人更新',
 };
 
 /**
@@ -155,11 +159,33 @@ export const ProjectSchema = z.strictObject({
   // P39 项目共享上下文：四段正文 + 修改留痕。旧项目缺字段时按空上下文兼容，零迁移。
   context: ProjectContextSchema.default(() => emptyProjectContext()),
   contextRevisions: z.array(ProjectContextRevisionSchema).default([]),
+  // P60：项目背景最近一次由谁、什么时候更新；旧项目没有这两项，读取时按「没更新过」处理。
+  backgroundUpdatedAt: timestamp.nullable().optional(),
+  backgroundUpdatedBy: text.max(100, '背景更新人不能超过 100 字').nullable().optional(), // 'owner' 或队友 id
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: timestamp.nullable(), // 归档时间；软归档不删任务
 });
 export type Project = z.infer<typeof ProjectSchema>;
+
+/**
+ * 项目下的一个主题（P63）：一条会话一个主题，消息线性盖楼，不做楼中楼。
+ *
+ * 为什么单独建表：主题的楼层放在线程日志里（thread 字段写主题 id），这里只放「这条讨论走到哪了」：
+ * - agentTurnsSinceOwner：主人上次说话后队友已经发言几次，到上限就停，防止队友互相叫醒停不下来；
+ * - pendingBotIds：这一轮还在等谁开口，全部说完才回到 owner。
+ */
+export const ProjectTopicSchema = z.strictObject({
+  id: recordId('ptp'), // 主题 id，前缀 ptp_；同时就是线程 id
+  projectId: recordId('prj'), // 所属项目
+  title: nonempty.max(120, '主题标题不能超过 120 字'), // 取首条消息第一行
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  lastMessageAt: timestamp, // 最后一条消息的时间，项目页按它排序
+  agentTurnsSinceOwner: count, // 主人上次说话后队友的累计发言次数
+  pendingBotIds: z.array(nonempty), // 这一轮还在等谁开口
+});
+export type ProjectTopic = z.infer<typeof ProjectTopicSchema>;
 
 /**
  * 任务状态：执行者只能把任务推进到 done_pending_check（待主人验收），
@@ -195,6 +221,8 @@ export const ProjectTaskSchema = z.strictObject({
   status: TaskStatusSchema,
   wakeIds: z.array(nonempty), // 推进过它的唤醒 id；本卡恒为空数组
   artifactIds: z.array(nonempty), // 关联产物 id；本卡恒为空数组
+  // P63：这件事是从哪个主题聊出来的；可空，旧任务没有这一项时按空处理。
+  topicId: recordId('ptp').nullable().optional(),
   createdAt: timestamp,
   updatedAt: timestamp,
   dueAt: timestamp.nullable(), // 截止时间；空表示不设

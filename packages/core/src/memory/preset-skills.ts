@@ -43,7 +43,8 @@ export async function syncPresetSkills(ctx: HubContext, bot: Bot): Promise<{ wri
     const path = presetSkillPath(bot, skill.id);
     const existing = await ctx.fs.readText(path);
     // 没有文件，或文件不是中心写的那份（队友自建/改写）都保持原样。
-    if (existing === null || !existing.startsWith(presetSkillMarker(skill.id))) continue;
+    // 新文件的标记排在 YAML 头后面，旧文件在第一行，所以这里按「包含」判断。
+    if (existing === null || !existing.includes(presetSkillMarker(skill.id))) continue;
     await ctx.fs.remove(path, { within: bot.homeDir });
     // remove 是递归删除，目录里还有队友自己的文件时不能调用，所以先确认目录已空。
     try {

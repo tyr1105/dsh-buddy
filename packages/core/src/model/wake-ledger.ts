@@ -79,6 +79,7 @@ export const LedgerTriggerSchema = z.strictObject({
   ownerSummary: text.nullable(), // 给主人看的事实摘要；旧记录可能没有
   ownerInitiated: bool, // 是否由主人发起
   subjectKey: text.nullable(), // 同一事项的稳定标识
+  topicId: recordId('ptp').nullable().optional(), // P63：属于哪个项目主题；唤醒单先过期时靠它还原项目名和主题名
   queueWaitMs: count.nullable(), // 从入队到投递等待了多久
   evidenceRefs: z.array(nonempty).max(20), // 原始证据 id，最多 20 个
 });

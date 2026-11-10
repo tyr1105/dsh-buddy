@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import type { HubContext } from '../engine/context.js';
+import type { ProjectTask } from '../model/project.js';
 import type { WakeLedgerEntry } from '../model/wake-ledger.js';
 import {
   LEDGER_ACTION_KIND_LABELS, LEDGER_ACTION_SOURCE_LABELS, LEDGER_COMPLETENESS_LABELS,
@@ -17,8 +18,30 @@ import { V2_DEFAULTS } from '../config/defaults.js';
 import { input, shortTime } from './common.js';
 import type { WakeLedgerRow, WakeLedgerView } from './types.js';
 
+/** 按唤醒单找任务：一次唤醒可能带多件任务，办公室动线只要一件来说明在忙什么，取最先记录的。 */
+function tasksByWake(ctx: HubContext): Map<string, ProjectTask> {
+  const map = new Map<string, ProjectTask>();
+  for (const task of ctx.store.table('projectTasks').list()) {
+    for (const wakeId of task.wakeIds) if (!map.has(wakeId)) map.set(wakeId, task);
+  }
+  return map;
+}
+
+/**
+ * 这一回合属于哪个项目、在做哪件事：主题回合用主题名，别的回合看它推进过哪件事务。
+ * 主题 id 优先取账本自己存的，唤醒单比账本先过期，查不到也还能还原。
+ */
+function projectItemOf(ctx: HubContext, entry: WakeLedgerEntry, tasks: Map<string, ProjectTask>): { projectName: string | null; itemTitle: string | null } {
+  const topicId = entry.trigger.topicId ?? ctx.store.table('wakes').get(entry.wakeId)?.topicId ?? null;
+  const topic = topicId ? ctx.store.table('projectTopics').get(topicId) : null;
+  if (topic) return { projectName: ctx.store.table('projects').get(topic.projectId)?.name ?? null, itemTitle: topic.title };
+  const task = tasks.get(entry.wakeId);
+  if (task) return { projectName: ctx.store.table('projects').get(task.projectId)?.name ?? null, itemTitle: task.title };
+  return { projectName: null, itemTitle: null };
+}
+
 /** 把一行账本翻译成列表摘要；botName 缺失时给出明确占位，不显示空白。 */
-function rowOf(ctx: HubContext, entry: WakeLedgerEntry): WakeLedgerRow {
+function rowOf(ctx: HubContext, entry: WakeLedgerEntry, tasks: Map<string, ProjectTask>): WakeLedgerRow {
   const bot = ctx.store.table('bots').get(entry.botId);
   return {
     id: entry.id,
@@ -54,6 +77,7 @@ function rowOf(ctx: HubContext, entry: WakeLedgerEntry): WakeLedgerRow {
     truncated: entry.truncated,
     hasMissing: entry.missing.length > 0,
     missingLabels: entry.missing.map(part => LEDGER_MISSING_LABELS[part]),
+    ...projectItemOf(ctx, entry, tasks),
   };
 }
 
@@ -66,10 +90,11 @@ export function wakeLedgerList(ctx: HubContext, botId: string, limit?: number, b
   const cursor = before === undefined ? null
     : input(z.number().int('before 必须是整数毫秒').nonnegative('before 不能为负数'), before, 'before');
   const timeOf = (entry: WakeLedgerEntry): number => entry.sealedAt ?? entry.openedAt;
+  const tasks = tasksByWake(ctx);
   return ctx.store.table('wakeLedger').list(entry => entry.botId === id && (cursor === null || timeOf(entry) < cursor))
     .sort((a, b) => timeOf(b) - timeOf(a))
     .slice(0, size)
-    .map(entry => rowOf(ctx, entry));
+    .map(entry => rowOf(ctx, entry, tasks));
 }
 
 /** 读取一次唤醒的完整账本；只接受唤醒单 id，找不到返回 null。 */
@@ -83,7 +108,7 @@ export function wakeLedgerDetail(ctx: HubContext, wakeId: string): WakeLedgerVie
   return {
     entry,
     fullReport: originalCommit?.report ?? null,
-    row: rowOf(ctx, entry),
+    row: rowOf(ctx, entry, tasksByWake(ctx)),
     evidence: entry.evidence.items.map(item => ({
       ...item,
       kindLabel: LEDGER_EVIDENCE_KIND_LABELS[item.kind],

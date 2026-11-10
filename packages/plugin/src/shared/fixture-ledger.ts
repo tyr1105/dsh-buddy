@@ -60,6 +60,8 @@ function viewOf(sample: Sample): WakeLedgerView {
   const row: WakeLedgerRow = {
     id: entry.id, wakeId: entry.wakeId, botId: entry.botId, botName: sample.botName, botColor: sample.botColor,
     variant: entry.variant, variantLabel: VARIANT_TEXT[entry.variant],
+    // P62/P63 办公室动线字段：样例账本不属于任何项目主题。
+    projectName: null, itemTitle: null,
     status: entry.status, statusLabel: STATUS_TEXT[entry.status],
     source: entry.source, sourceLabel: SOURCE_TEXT[entry.source],
     completeness: entry.completeness, completenessLabel: COMPLETENESS_TEXT[entry.completeness],

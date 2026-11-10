@@ -25,6 +25,8 @@ export const QueueEntrySchema = z.strictObject({
   subjectKey: nonempty, // 同一事项的稳定标识，用于冷却与等待主人去重
   notBefore: timestamp, // 不早于此时间放行
   enqueuedAt: timestamp, // 进入队列的时间
+  // P63：这次唤醒属于哪个项目主题；旧候选没有这一项，一律当作 null（不属于主题）。
+  topicId: recordId('ptp').nullable().optional(),
 });
 export type QueueEntry = z.infer<typeof QueueEntrySchema>;
 /** 校验一次唤醒从投递到结束的事实，支持幂等交账和故障核对。 */
@@ -35,6 +37,7 @@ export const WakeTicketSchema = z.strictObject({
   variant: e.VariantSchema, // 常规、轻复查、复盘、补课、试跑或教学回合
   reason: WakeReasonSchema, // 为什么需要思考，包含分数、门槛和证据
   subjectKey: nonempty.optional(), // C02：精确保留本次事项键；旧唤醒单兼容缺省，读取时从证据恢复。
+  topicId: recordId('ptp').nullable().optional(), // P63：回复要落到哪个项目主题；旧唤醒单没有这一项，一律当作 null。
   dispatchedAt: timestamp.nullable().optional(), // null 明确表示尚未成功投递；缺省兼容旧记录。C04 投递成功时写入真实时刻。
   ownerDirect: bool.optional(), // 是否由已有宿主会话中的主人直聊触发；缺省兼容旧记录
   tokensKnown: bool.optional(), // 宿主是否已经提供实际 token 用量，缺省兼容旧记录

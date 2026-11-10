@@ -2,9 +2,9 @@
  * P40 队友可选预置 skill - core 测试。
  * 覆盖：
  * - 默认空数组：建队不写任何 skill 文件，唤醒包不出现技能段，行为与未接入时一致；
- * - 物化：勾选后写 `bots/<id>/.agents/skills/<id>/SKILL.md`，内容带标记、名称、用途与条件；
+ * - 物化：勾选后写 `bots/<id>/.agents/skills/<id>/SKILL.md`，开头是 DSH 要求的 YAML 头，后面带标记、名称和用途；
  * - 入口校验：未知 id 在创建/修改档案时报中文错误；
- * - 三档加载条件：每次唤醒恒列；仅项目工作看本轮任务；特定任务类型按关键词命中；
+ * - P55 去掉了三档加载条件：什么时候读改由 DSH 的技能目录告诉模型，唤醒包不再单独列技能；
  * - 删除：只清理带中心标记的文件，队友自建/改写过的 skill 不碰；
  * - 视图：设置视图给出只读候选清单（不含正文），机器人详情带勾选 id。
  */
@@ -13,10 +13,7 @@ import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { createBot, updateBot } from '../src/api/bots.js';
 import { botView } from '../src/api/bot-view.js';
 import { settingsView } from '../src/api/feed-views.js';
-import { saveProject, saveTask } from '../src/project/service.js';
-import { assignTask } from '../src/project/assign.js';
 import { buildWakePacket } from '../src/wake/packet.js';
-import { buildPresetSkillsSection, presetSkillActive } from '../src/wake/preset-skills.js';
 import { PRESET_SKILLS, presetSkillById, renderPresetSkillFile } from '../src/config/preset-skills.js';
 import { BotSchema } from '../src/model/bot.js';
 import { botFixture } from './model-fixtures.js';
@@ -48,7 +45,7 @@ describe('P40 默认空：与今天行为一致', () => {
 });
 
 describe('P40 物化与入口校验', () => {
-  it('勾选后写 SKILL.md：带标记、名称、用途与加载条件', async () => {
+  it('勾选后写 SKILL.md：开头是 DSH 要求的 YAML 头，并带标记、名称和用途', async () => {
     const ctx = createTestContext();
     const bot = await createBot(ctx, { ...base, presetSkillIds: ['owner-brief', 'incident-triage'] });
     expect(bot.presetSkillIds).toEqual(['owner-brief', 'incident-triage']);
@@ -56,8 +53,10 @@ describe('P40 物化与入口校验', () => {
     expect(brief).toBe(renderPresetSkillFile(presetSkillById('owner-brief')!));
     expect(brief).toContain('<!-- dsh-buddy:preset-skill:owner-brief -->');
     expect(brief).toContain('给主人的简报');
-    expect(brief).toContain('加载条件：每次唤醒');
-    expect(await ctx.fs.readText(skillPath(ctx, bot.id, 'incident-triage'))).toContain('加载条件：特定任务类型');
+    // DSH 按「文件开头的 YAML」识别技能，YAML 头必须在第一行，中心标记只能排在后面。
+    expect(brief!.startsWith('---\nname: owner-brief\ndescription: "给主人的简报：')).toBe(true);
+    expect(brief).not.toContain('加载条件');
+    expect(await ctx.fs.readText(skillPath(ctx, bot.id, 'incident-triage'))).toContain('name: incident-triage');
   });
 
   it('未知 id 在创建时报中文错误，且不留下半个机器人', async () => {
@@ -98,51 +97,35 @@ describe('P40 删除只清清单内文件', () => {
   });
 });
 
-describe('P40 三档加载条件', () => {
-  const everyWake = presetSkillById('owner-brief')!;
-  const projectWork = presetSkillById('project-handoff')!;
-  const taskType = presetSkillById('incident-triage')!;
-
-  it('每次唤醒恒命中；仅项目工作看本轮任务；特定任务类型按关键词', () => {
-    expect(presetSkillActive(everyWake, { projectWork: false, triggerText: '', lightCheck: true })).toBe(true);
-    expect(presetSkillActive(projectWork, { projectWork: false, triggerText: '', lightCheck: false })).toBe(false);
-    expect(presetSkillActive(projectWork, { projectWork: true, triggerText: '', lightCheck: false })).toBe(true);
-    expect(presetSkillActive(taskType, { projectWork: false, triggerText: '整理资料', lightCheck: false })).toBe(false);
-    expect(presetSkillActive(taskType, { projectWork: false, triggerText: '排查数据日报异常', lightCheck: false })).toBe(true);
+describe('P55 什么时候读由 DSH 决定', () => {
+  it('每份技能的 YAML 头都合法：名字是短横线写法，description 能被 JSON 解析', () => {
+    for (const skill of PRESET_SKILLS) {
+      const lines = renderPresetSkillFile(skill).split('\n');
+      expect(lines[0]).toBe('---');
+      expect(lines[1]).toBe(`name: ${skill.id}`);
+      expect(skill.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+      const description = JSON.parse(lines[2]!.replace('description: ', '')) as string;
+      expect(description).toBe(`${skill.name}：${skill.purpose}`);
+      expect(lines[3]).toBe('user-invocable: false');
+      expect(lines[4]).toBe('---');
+    }
   });
 
-  it('常规唤醒：项目任务命中关键词时三档全列；轻复查只列每次唤醒档', async () => {
+  it('勾选了技能，唤醒包也不再单独列技能，不重复占用额度', async () => {
     const turn = await turnContext('regular', { presetSkillIds: ['owner-brief', 'project-handoff', 'incident-triage'] });
-    const project = saveProject(turn.ctx, { name: '数据日报项目', memberBotIds: [turn.bot.id] });
-    const task = saveTask(turn.ctx, { projectId: project.id, title: '排查数据日报半夜报错' });
-    assignTask(turn.ctx, { taskId: task.id, botId: turn.bot.id });
-
     const packet = await buildWakePacket(turn.ctx, turn.bot, turn.entry, turn.ticket);
-    expect(packet).toContain('给主人的简报');
-    expect(packet).toContain('项目交接核对');
-    expect(packet).toContain('异常排查四步');
-    // 只列名称、用途与条件，不塞正文。
-    expect(packet).not.toContain('交账或回复主人时，按这个顺序写');
-
-    const light = await turnContext('light_check', { presetSkillIds: ['owner-brief', 'project-handoff', 'incident-triage'] });
-    const lightPacket = await buildWakePacket(light.ctx, light.bot, light.entry, light.ticket);
-    expect(lightPacket).toContain('给主人的简报');
-    expect(lightPacket).not.toContain('项目交接核对');
-    expect(lightPacket).not.toContain('异常排查四步');
+    expect(packet).not.toContain('给主人的简报');
+    expect(packet).not.toContain('预置 skill');
+    const light = await turnContext('light_check', { presetSkillIds: ['owner-brief'] });
+    expect(await buildWakePacket(light.ctx, light.bot, light.entry, light.ticket)).not.toContain('给主人的简报');
   });
 
-  it('常规唤醒没有项目任务且理由不含关键词：只列每次唤醒档', async () => {
-    const turn = await turnContext('regular', { presetSkillIds: ['owner-brief', 'project-handoff', 'incident-triage'] });
-    const section = buildPresetSkillsSection(turn.bot, { projectWork: false, triggerText: '核对资料变化', lightCheck: false })!;
-    expect(section.body).toContain('给主人的简报');
-    expect(section.body).not.toContain('项目交接核对');
-    expect(section.body).not.toContain('异常排查四步');
-    expect(section.body).toContain('不改变工具权限');
-  });
-
-  it('一项都没命中时整段省略', () => {
-    const turn = botFixture;
-    expect(buildPresetSkillsSection({ ...turn, presetSkillIds: [] }, { projectWork: false, triggerText: '', lightCheck: false })).toBeNull();
+  it('旧文件（标记在第一行、没有 YAML 头）取消勾选时仍能被识别并清理', async () => {
+    const ctx = createTestContext();
+    const bot = await createBot(ctx, { ...base, presetSkillIds: ['owner-brief'] });
+    await ctx.fs.writeTextAtomic(skillPath(ctx, bot.id, 'owner-brief'), '<!-- dsh-buddy:preset-skill:owner-brief -->\n# 给主人的简报\n');
+    await updateBot(ctx, bot.id, { presetSkillIds: [] });
+    expect(await ctx.fs.readText(skillPath(ctx, bot.id, 'owner-brief'))).toBeNull();
   });
 });
 
@@ -152,7 +135,7 @@ describe('P40 视图', () => {
     const bot = await createBot(ctx, { ...base, presetSkillIds: ['data-check'] });
     const settings = await settingsView(ctx);
     expect(settings.presetSkillOptions).toHaveLength(PRESET_SKILLS.length);
-    expect(settings.presetSkillOptions[0]).toEqual(expect.objectContaining({ id: 'owner-brief', conditionLabel: '每次唤醒' }));
+    expect(settings.presetSkillOptions[0]).toEqual(expect.objectContaining({ id: 'owner-brief', name: '给主人的简报' }));
     expect(JSON.stringify(settings.presetSkillOptions)).not.toContain('交账或回复主人时');
     const view = await botView(ctx, bot.id);
     expect(view.profile.presetSkillIds).toEqual(['data-check']);

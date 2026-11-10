@@ -1,159 +1,202 @@
 /**
- * 当日轨迹面板（P36）：点像素小人后，在右侧列出它今天的唤醒轨迹，可往前翻。
+ * 员工动线面板（P62，决策 DC37）：点像素小人后，从办公室页右侧展开这位队友的动线，
+ * 一行一段时间，只到「空闲」「项目，事项」「完成工作，等待验收」这个颗粒度。
  *
- * 为什么这样设计：轨迹必须是对真实唤醒账本的复盘，不是另编一份「工作日志」。
- * 本组件只做三件事——按需读这个队友的账本行、交给 P31 的纯逻辑按本地自然日分组、
- * 把每条事件画成可点的行；点一行就打开那次唤醒的账本，界面不自己编造事件或结论。
- * 读取失败、某天没有记录、时间不可靠的条数，都如实写在面板里。
+ * 为什么这样设计：主人要的是一眼看懂「它这段时间在干嘛」，不是复盘账本。所以这里只留
+ * 标题、收起、按天翻看、时间段列表和「打开对话」；桌上产出、门口待办、结果标签、账本说明
+ * 全部拿掉，行也不再可点。时间段怎么算全在 logic/office-trail-timeline.ts，这里只管读数据和画。
+ *
+ * 宽屏是页面右侧的侧栏，窄窗是盖在上面的抽屉，差别全部由 workspace.css 的 .ah-trail 段决定；
+ * 抽屉模式下的键盘和读屏规则在 use-trail-drawer.ts。
  */
-import { useEffect, useState, type ReactNode } from 'react'
-import type { WakeLedgerRow } from '../../shared/views.js'
-import { buildOfficeTrail, officeTrailWindow, stepTrailDay } from '../logic/office-trail.js'
-import { trailEventsFromWakes, utcOffsetMinutesAt } from '../logic/office.js'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { ProjectView, WakeLedgerRow } from '../../shared/views.js'
+import { officeTrailWindow, stepTrailDay } from '../logic/office-trail.js'
+import { buildTrailTimeline, trailProjectsFromView, type TrailProjectInput } from '../logic/office-trail-timeline.js'
+import { utcOffsetMinutesAt } from '../logic/office.js'
+import { useTrailDrawer } from './use-trail-drawer.js'
+
+/**
+ * 看现在的房间时，每隔多久走一次钟（10 秒）。
+ * 走钟要做两件事：一是更新「现在」，这样工作刚结束的那段空闲到了一分钟就能出现；
+ * 二是看房间有没有变化，变了才重读。一次回合里事件很密，隔 10 秒合并一次，不连发请求。
+ */
+const TRAIL_LIVE_TICK_MS = 10_000
 
 export interface OfficeTrailPanelProps {
   botId: string
   botName: string
-  /** 桌上产出（来自 core 投影）；没有产出时 title 为 null。 */
-  deskKindLabel: string
-  deskTitle: string | null
-  /** 座位门口未关闭的收件箱件数（来自 core 投影）。 */
-  doorCount: number
-  /** 当前投影时刻：轨迹以它为「今天」，倒带时不会把未来事件算进来。 */
+  /** 房间投影的时刻：动线以它为「今天」。 */
   now: number
+  /** true=看现在的房间，时钟会走、内容会自己刷新；false=倒带，时间停在所选时刻。 */
+  live: boolean
   /** 中心设置时区；缺省时按本机时区分组。 */
   timezone?: string
-  /** 按需读唤醒账本行（HubPage 注入现有 /wake-ledger 接口，不新增数据源）。 */
+  /** 按需读这位队友的唤醒账本行。 */
   loadRows: (botId: string) => Promise<WakeLedgerRow[]>
-  /** 点一条轨迹：打开这次唤醒的账本。 */
-  onOpenWake: (botId: string, wakeId: string) => void
-  /** 点桌上产出（沿用办公室既有的下钻规则）。 */
-  onOpenDesk: () => void
-  /** 打开这位队友详情。 */
-  onOpenBotDetail: () => void
-  /** 打开门口对应的收件箱项。 */
-  onOpenInbox: () => void
-  /** 收起面板，回到房间。 */
+  /** 读项目全貌，用来判断每次唤醒属于哪个任务。 */
+  loadProjects: () => Promise<ProjectView>
+  /** 打开和这位队友的对话。 */
+  onOpenChat: () => void
+  /** 收起面板，办公室恢复全宽。 */
   onClose: () => void
 }
 
-/** 读账本的三态：加载中 / 读到 / 读失败；界面按它给骨架、列表或重试。 */
-type LoadPhase = 'loading' | 'ready' | 'error'
+/** 读到的内容记着是谁的：换人那一刻不把上一位的动线安在新名字下面。 */
+interface LoadedTrail {
+  botId: string
+  rows: WakeLedgerRow[]
+  projects: TrailProjectInput[]
+  /** 项目信息这次没读到：行会退回「为什么醒」的说法，要跟主人说一声。 */
+  projectsFailed: boolean
+}
 
 export function OfficeTrailPanel(props: OfficeTrailPanelProps): ReactNode {
-  const [phase, setPhase] = useState<LoadPhase>('loading')
-  const [rows, setRows] = useState<WakeLedgerRow[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const { panelRef, scrimRef } = useTrailDrawer(props.botId)
+  const [loaded, setLoaded] = useState<LoadedTrail | null>(null)
+  const [failure, setFailure] = useState<{ botId: string; message: string } | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   /** 当前看的是第几天：0=今天，1=昨天，往后依次更早。 */
   const [dayIndex, setDayIndex] = useState(0)
+  /** 只用来触发重新渲染，让「现在」往前走。 */
+  const [, setClockTick] = useState(0)
 
-  // 换人、重试才重新读账本；组件内部翻页不再发请求。
+  // HubPage 传进来的读取函数每次渲染都是新的。放进 ref，只有换人、重试、房间变化才重读，
+  // 否则整页任何一次刷新都会重读，还会把翻到的日期打回今天。
+  const loaders = useRef({ loadRows: props.loadRows, loadProjects: props.loadProjects })
+  loaders.current = { loadRows: props.loadRows, loadProjects: props.loadProjects }
+
+  // 房间投影的时刻只在房间有变化时更新，可能停在几小时前。看现在的房间时，
+  // 从收到投影的那一刻起往前走，今天的最后一段才写得准；用中心给的时刻做基准，不依赖本机时钟。
+  const arrival = useRef({ asOf: props.now, receivedAt: Date.now() })
+  if (arrival.current.asOf !== props.now) arrival.current = { asOf: props.now, receivedAt: Date.now() }
+  const now = props.live ? props.now + (Date.now() - arrival.current.receivedAt) : props.now
+  /** 上一次读数据时房间的时刻；走钟时比对它，房间变了才重读。 */
+  const loadedAsOf = useRef(props.now)
+
+  useEffect(() => { setDayIndex(0) }, [props.botId])
+
   useEffect(() => {
     let cancelled = false
-    setPhase('loading')
-    setError(null)
-    setDayIndex(0)
+    loadedAsOf.current = arrival.current.asOf
     const load = async (): Promise<void> => {
       try {
-        const next = await props.loadRows(props.botId)
+        const [rows, projects] = await Promise.all([
+          loaders.current.loadRows(props.botId),
+          // 项目读不到不拖垮整块：动线本身还能看，只是说得粗一点。
+          loaders.current.loadProjects().then(trailProjectsFromView).catch(() => null),
+        ])
         if (cancelled) return
-        setRows(next)
-        setPhase('ready')
+        setLoaded(previous => ({
+          botId: props.botId,
+          rows,
+          projects: projects ?? (previous?.projects ?? []),
+          projectsFailed: projects === null,
+        }))
+        setFailure(null)
       } catch (cause) {
         if (cancelled) return
-        setError(cause instanceof Error ? cause.message : '唤醒账本读取失败。点击「重试」；仍失败请检查 DSH 运行状态。')
-        setPhase('error')
+        setFailure({
+          botId: props.botId,
+          message: cause instanceof Error ? cause.message : '动线读取失败。点击「重试」；仍失败请检查 DSH 运行状态。',
+        })
       }
     }
     void load()
     return () => { cancelled = true }
-  }, [props.botId, props.loadRows, reloadKey])
+  }, [props.botId, reloadKey])
 
-  // 轨迹完全由 P31 的纯逻辑分组；这里只把时区偏移算出来交给它。
-  const trail = buildOfficeTrail({
-    events: trailEventsFromWakes(rows),
-    now: props.now,
-    utcOffsetMinutes: utcOffsetMinutesAt(props.now, props.timezone),
+  useEffect(() => {
+    if (!props.live) return
+    const timer = setInterval(() => {
+      // 定时器回调必须兜底：这里出错不能影响宿主。
+      try {
+        setClockTick(tick => tick + 1)
+        if (arrival.current.asOf !== loadedAsOf.current) setReloadKey(key => key + 1)
+      } catch { /* 下一次走钟再试 */ }
+    }, TRAIL_LIVE_TICK_MS)
+    return () => clearInterval(timer)
+  }, [props.live])
+
+  // 还没读到这个人的内容时不算出空列表，免得先闪一句「没有记录」。
+  const current = loaded?.botId === props.botId ? loaded : null
+  // 已经有内容时后台重读失败不打断主人看，只有一次都没读到才显示重试。
+  const failed = current === null && failure?.botId === props.botId ? failure : null
+  const timeline = buildTrailTimeline({
+    rows: current?.rows ?? [],
+    projects: current?.projects ?? [],
+    now,
+    utcOffsetMinutes: utcOffsetMinutesAt(now, props.timezone),
+    live: props.live,
   })
-  const window = officeTrailWindow(trail, dayIndex)
+  const dayWindow = officeTrailWindow(timeline.trail, dayIndex)
+  const segments = dayWindow === null ? [] : timeline.segments[dayWindow.day.key] ?? []
+
+  const retry = (): void => {
+    setFailure(null)
+    setReloadKey(key => key + 1)
+  }
 
   return (
-    <aside className="ah-trail" aria-label={`${props.botName}的当日轨迹`}>
-      <header className="ah-trail-head">
-        {/* U01 第 37 轮（1.3.1）：标题容器升级为真 h3，挂在办公室页 h2 之下不跳级；
-            同时让 header 因地标内标题自动获得可访问名。 */}
-        <h3 className="ah-trail-title">
-          <strong>{props.botName}</strong>
-          <span>当日轨迹</span>
-        </h3>
-        <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onClose}>收起</button>
-      </header>
+    <>
+      {/* 窄窗抽屉的遮罩，宽屏由 CSS 隐藏；点一下就收起。 */}
+      <div className="ah-trail-scrim" ref={scrimRef} aria-hidden="true" onClick={props.onClose} />
+      <aside className="ah-trail" ref={panelRef} tabIndex={-1} aria-label={`${props.botName}的动线`}
+        onKeyDown={event => { if (event.key === 'Escape') props.onClose() }}>
+        <header className="ah-trail-head">
+          {/* 标题是真 h3，挂在办公室页 h2 之下不跳级；外层的 strong 只管字重。 */}
+          <h3 className="ah-trail-title"><strong>{props.botName}的动线</strong></h3>
+          <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onClose}>收起</button>
+        </header>
 
-      {/* 桌子与门口都直接来自 core 投影：没有产出就如实说，不拿别的东西充数。 */}
-      <div className="ah-trail-facts">
-        <button type="button" className="ah-trail-fact" disabled={props.deskTitle === null}
-          title={props.deskTitle === null ? '桌上暂无产出' : '打开桌上的产出'}
-          onClick={props.onOpenDesk}>
-          <span className="ah-trail-fact-label">{props.deskKindLabel}</span>
-          <span className="ah-trail-fact-text">{props.deskTitle ?? '—'}</span>
-        </button>
-        <button type="button" className="ah-trail-fact" disabled={props.doorCount === 0}
-          title={props.doorCount === 0 ? '门口暂无待办' : '打开门口第一件事'}
-          onClick={props.onOpenInbox}>
-          <span className="ah-trail-fact-label">门口</span>
-          <span className="ah-trail-fact-text">{props.doorCount === 0 ? '暂无待办' : `${props.doorCount} 件待办`}</span>
-        </button>
-      </div>
-
-      {phase === 'loading' ? (
-        <p className="ah-trail-note" role="status">正在读唤醒账本……</p>
-      ) : phase === 'error' ? (
-        <p className="ah-trail-error" role="alert">
-          {error ?? '唤醒账本读取失败。点击「重试」；仍失败请检查 DSH 运行状态。'}
-          <button type="button" className="ah-btn" onClick={() => setReloadKey(key => key + 1)}>重试</button>
-        </p>
-      ) : window === null ? (
-        <p className="ah-trail-note">暂无轨迹。下一次唤醒后在此显示。</p>
-      ) : (
-        <>
+        {dayWindow !== null ? (
           <div className="ah-trail-days">
-            {/* 前翻=更早；到最早一天时按钮禁用，不越界也不循环。 */}
-            <button type="button" className="ah-btn ah-btn-ghost" disabled={!window.canGoOlder}
-              title="看更早的一天" onClick={() => setDayIndex(stepTrailDay(trail, window.index, 'older'))}>‹ 前翻</button>
-            <span className="ah-trail-day-label">{window.day.label}</span>
-            <button type="button" className="ah-btn ah-btn-ghost" disabled={!window.canGoNewer}
-              title="看更新的一天" onClick={() => setDayIndex(stepTrailDay(trail, window.index, 'newer'))}>后翻 ›</button>
+            {/* 前翻=更早；到头时按钮禁用，不越界也不循环。 */}
+            <button type="button" className="ah-btn ah-btn-ghost" disabled={!dayWindow.canGoOlder}
+              title="看更早的一天" onClick={() => setDayIndex(stepTrailDay(timeline.trail, dayWindow.index, 'older'))}>‹ 前翻</button>
+            <span className="ah-trail-day-label">{dayWindow.day.label}</span>
+            <button type="button" className="ah-btn ah-btn-ghost" disabled={!dayWindow.canGoNewer}
+              title="看更新的一天" onClick={() => setDayIndex(stepTrailDay(timeline.trail, dayWindow.index, 'newer'))}>后翻 ›</button>
           </div>
+        ) : null}
 
-          {window.day.events.length === 0 ? (
-            <p className="ah-trail-note">该日暂无唤醒记录。切换其他日期查看。</p>
+        {/* key：换人或换天时滚动位置回到顶部。tabIndex：行不再是按钮，键盘要靠这里滚动长列表。 */}
+        <div className="ah-trail-scroll" key={`${props.botId}:${dayWindow?.day.key ?? ''}`}
+          tabIndex={0} role="group" aria-label="时间段列表">
+          {failed !== null ? (
+            <p className="ah-trail-error" role="alert">
+              {failed.message}
+              <button type="button" className="ah-btn" onClick={retry}>重试</button>
+            </p>
+          ) : current === null ? (
+            <p className="ah-trail-note" role="status">正在读取动线……</p>
+          ) : segments.length === 0 ? (
+            <p className="ah-trail-note">
+              {dayWindow?.day.isToday === true ? '今天暂无活动记录。队友开工后在此显示。' : '该日暂无活动记录。可切换其他日期查看。'}
+            </p>
           ) : (
             <ol className="ah-trail-list">
-              {window.day.events.map(event => (
-                <li key={event.id}>
-                  <button type="button" className="ah-trail-event"
-                    title={`打开 ${event.timeText} 这次唤醒的账本`}
-                    onClick={() => props.onOpenWake(props.botId, event.id)}>
-                    <span className="ah-trail-time">{event.timeText}</span>
-                    {event.kindLabel ? <span className="ah-trail-kind">{event.kindLabel}</span> : null}
-                    <span className="ah-trail-text">{event.text}</span>
-                  </button>
+              {segments.map(segment => (
+                <li key={segment.id} className={`ah-trail-row ah-trail-row-${segment.kind}`}>
+                  {/* 全角波浪线和全角冒号是主人定的格式，整行连起来读就是「14:02～14:30：内容」。 */}
+                  <span className="ah-trail-time">{segment.timeText}：</span>
+                  <span className="ah-trail-text">{segment.text}</span>
                 </li>
               ))}
             </ol>
           )}
-
-          <footer className="ah-trail-foot">
-            <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onOpenBotDetail}>打开队友详情</button>
+          {current?.projectsFailed === true ? (
             <p className="ah-trail-note">
-              轨迹仅取自唤醒账本，不补充推断。
-              {trail.dropped > 0 ? ` ${trail.dropped} 条时间不可靠，已丢弃。` : ''}
-              {trail.truncated > 0 ? ` 更早的 ${trail.truncated} 条超出回看窗口。` : ''}
+              项目信息读取失败，部分时段仅显示大致内容。
+              <button type="button" className="ah-btn" onClick={retry}>重试</button>
             </p>
-          </footer>
-        </>
-      )}
-    </aside>
+          ) : null}
+        </div>
+
+        <footer className="ah-trail-foot">
+          <button type="button" className="ah-btn" onClick={props.onOpenChat}>打开对话</button>
+        </footer>
+      </aside>
+    </>
   )
 }

@@ -1,27 +1,14 @@
 /**
- * 队友可选预置 skill 的内置清单。
+ * 队友可选预置 skill 的内置清单（界面上叫「队友自带」）。
  *
  * 为什么放在 config 而不是用户数据里：这些内容随插件版本发布，只读、不可运行时下载；
  * 主人能选的只是「给这个队友开哪几项」，改动的是 Bot.presetSkillIds 这个引用列表。
- * 每个预置项自带三档加载条件：
- * - every_wake：每次唤醒都在唤醒包里列出来；
- * - project_work：只有本轮在推进项目任务时才列出来；
- * - task_type：本轮的活命中自带关键词时才列出来（任务模型暂无类型字段，见 questions）。
- * 唤醒包只列名称、用途与条件，不塞正文；正文物化到家目录 .agents/skills/<id>/SKILL.md。
+ *
+ * P55 起文件按 DSH 官方格式写到家目录 .agents/skills/<id>/SKILL.md，开头带 name 和 description。
+ * 这样它们就是真正的 DSH 技能：只有这位队友的工作目录看得到，什么时候读由 DSH 的技能目录告诉模型。
  * 清单分两类：通用（任何队友都适合）和岗位专属（P52 模板库配套，内容在 role-preset-skills.ts）。
  */
 import { ROLE_PRESET_SKILLS } from './role-preset-skills.js';
-
-/** 三档加载条件的机器值。 */
-export const PRESET_SKILL_CONDITIONS = ['every_wake', 'project_work', 'task_type'] as const;
-export type PresetSkillCondition = (typeof PRESET_SKILL_CONDITIONS)[number];
-
-/** 条件的中文说明；界面与唤醒包都用同一份文案，避免两处口径不一致。 */
-export const PRESET_SKILL_CONDITION_LABELS: Readonly<Record<PresetSkillCondition, string>> = {
-  every_wake: '每次唤醒',
-  project_work: '仅项目工作',
-  task_type: '特定任务类型',
-};
 
 /** 这项技能给谁用：general 任何队友都适合；role 是某个岗位专属，选择界面里默认收起。 */
 export type PresetSkillAudience = 'general' | 'role';
@@ -30,19 +17,16 @@ export type PresetSkillAudience = 'general' | 'role';
 export interface PresetSkill {
   id: string;
   name: string;
-  /** 一句话用途，界面与唤醒包共用；不写成长篇说明。 */
+  /** 一句话用途，界面与 DSH 技能目录共用；不写成长篇说明。 */
   purpose: string;
-  condition: PresetSkillCondition;
   /** 不写就是通用；只影响选择界面的分组，不影响物化和唤醒。 */
   audience?: PresetSkillAudience;
-  /** 仅 task_type 条件使用：任务标题/说明/议程标题命中任一关键词即视为匹配。 */
-  taskKeywords: readonly string[];
   /** SKILL.md 正文（物化时再加统一标记与标题）。 */
   content: string;
 }
 
 /**
- * 内置预置清单：前 4 条是通用项，覆盖三档条件；后面接岗位专属项，界面里默认收起，不会变成一大片。
+ * 内置预置清单：前 4 条是通用项；后面接岗位专属项，界面里默认收起，不会变成一大片。
  * 内容只讲做事方法，不涉及权限：不会因此多出任何工具、审批豁免或数据可见范围。
  */
 export const PRESET_SKILLS: readonly PresetSkill[] = [
@@ -50,8 +34,6 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'owner-brief',
     name: '给主人的简报',
     purpose: '汇报先把结论写在第一句，再补证据与下一步，避免主人从头读。',
-    condition: 'every_wake',
-    taskKeywords: [],
     content: [
       '交账或回复主人时，按这个顺序写：',
       '',
@@ -67,8 +49,6 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'project-handoff',
     name: '项目交接核对',
     purpose: '在项目里动手前先核对共享上下文、交接目录与待领清单，避免重复劳动。',
-    condition: 'project_work',
-    taskKeywords: [],
     content: [
       '在项目里开始一件活之前，先做三步核对：',
       '',
@@ -84,8 +64,6 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'incident-triage',
     name: '异常排查四步',
     purpose: '遇到异常按「确认现象、定位范围、找最近变化、给下一步」推进，不猜结论。',
-    condition: 'task_type',
-    taskKeywords: ['排查', '异常', '故障', '报错', '报警', '复盘'],
     content: [
       '排查类任务按四步走，每一步都要留下可复查的证据：',
       '',
@@ -102,8 +80,6 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
     id: 'data-check',
     name: '数据核对清单',
     purpose: '交付数字前先核对口径、时间范围与总量，避免把错数送给主人。',
-    condition: 'task_type',
-    taskKeywords: ['数据', '报表', '指标', '统计', '核对', '大盘'],
     content: [
       '交付任何数字前，先自己核对四件事：',
       '',
@@ -121,7 +97,7 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
 
 /** 界面用的只读选项（不含正文）：向导与档案页据此渲染勾选列表。 */
 export interface PresetSkillOption {
-  id: string; name: string; purpose: string; condition: PresetSkillCondition; conditionLabel: string;
+  id: string; name: string; purpose: string;
   /** 岗位专属项在选择界面里默认收起；旧夹具没有这个字段，按通用项处理。 */
   audience?: PresetSkillAudience;
 }
@@ -129,7 +105,6 @@ export interface PresetSkillOption {
 /** 把清单整理成界面选项；正文只留在代码里，不随视图发给界面。 */
 export function presetSkillOptions(): PresetSkillOption[] {
   return PRESET_SKILLS.map(skill => ({ id: skill.id, name: skill.name, purpose: skill.purpose,
-    condition: skill.condition, conditionLabel: PRESET_SKILL_CONDITION_LABELS[skill.condition],
     audience: skill.audience ?? 'general' }));
 }
 
@@ -162,15 +137,23 @@ export function presetSkillMarker(id: string): string {
   return `<!-- dsh-buddy:preset-skill:${id} -->`;
 }
 
-/** 渲染要写入的 SKILL.md：统一标记 + 标题 + 用途 + 条件 + 正文。 */
+/**
+ * 渲染要写入的 SKILL.md。
+ * DSH 要求文件开头是带 name 和 description 的 YAML 头，少了会被跳过，所以中心标记排在它后面。
+ * description 用 JSON 字符串写，引号和冒号都不会破坏 YAML；中文名和用途给模型看，判断什么时候该读。
+ * user-invocable 关掉：这是给队友自己用的，主人不需要用斜杠命令调用。
+ */
 export function renderPresetSkillFile(skill: PresetSkill): string {
   return [
+    '---',
+    `name: ${skill.id}`,
+    `description: ${JSON.stringify(`${skill.name}：${skill.purpose}`)}`,
+    'user-invocable: false',
+    '---',
     presetSkillMarker(skill.id),
     `# ${skill.name}`,
     '',
     skill.purpose,
-    '',
-    `加载条件：${PRESET_SKILL_CONDITION_LABELS[skill.condition]}`,
     '',
     skill.content,
     '',

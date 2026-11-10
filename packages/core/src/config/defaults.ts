@@ -88,6 +88,24 @@ export const V2_DEFAULTS = {
   PROJECT_CONTEXT_DECISION_CHARS: 100, // 摘要单条决策字数上限
   PROJECT_CONTEXT_GLOSSARY_MAX_HITS: 6, // 摘要最多列 6 条命中的术语
   PROJECT_CONTEXT_GLOSSARY_CHARS: 120, // 摘要单条术语释义字数上限
+  // P60/P63 项目主题聊天：标题、消息和唤醒包里楼层的边界；都是防撑爆常量，不做 UI 配置。
+  TOPIC_TITLE_MAX_CHARS: 120, // 主题标题取首条消息第一行，最多这么多字
+  TOPIC_MESSAGE_MAX_CHARS: 4000, // 主人在主题里一条消息的字数上限；长内容请放项目目录
+  TOPIC_PREVIEW_CHARS: 60, // 项目页主题列表里最后一条消息的预览字数
+  TOPIC_PACKET_FLOOR_MAX_CHARS: 400, // 唤醒包里单楼的字数上限（最新主人原话不受此限）
+  TOPIC_PACKET_FLOORS_MAX_BYTES: 2400, // 唤醒包楼层段的总字节上限（最新主人原话不计入）
+  TOPIC_PACKET_CONTEXT_MAX_BYTES: 1500, // 唤醒包里项目背景、成员、事务这一段的硬上限
+  TOPIC_PACKET_BACKGROUND_CHARS: 300, // 项目背景进入唤醒包的字数上限
+  TOPIC_PACKET_MEMBERS_MAX: 8, // 唤醒包最多列几位成员
+  TOPIC_PACKET_BRIEF_CHARS: 40, // 员工说明进入唤醒包的字数上限
+  TOPIC_PACKET_SKILLS_MAX: 4, // 每位成员最多列几个技能名
+  TOPIC_PACKET_TASKS_MAX: 8, // 唤醒包最多列几条未结束的事务
+  // 主题名写进唤醒摘要和队友活动句时最多这么多字；界面按同一长度认出「谁正在回复这个主题」，两边要一致。
+  TOPIC_SUMMARY_TITLE_CHARS: 40,
+  // P65：主人在「待你处理」里处理了来自主题的事项后，主题里那句旁白引用事项标题和主人回答的字数上限；
+  // 完整内容仍在卡片上，旁白只要让读主题的人看懂前因后果。
+  TOPIC_FOLLOWUP_TITLE_CHARS: 60,
+  TOPIC_FOLLOWUP_ANSWER_CHARS: 200,
 } as const;
 
 // C02-MBTI：默认不替旧机器人猜性格；提示段落的字节上限保证唤醒包不被撑大。
@@ -225,6 +243,8 @@ export const DEFAULTS = {
   CLOSING_GRACE_MS: 3 * MINUTE,
   // 唤醒包：最大正文，单位：字节。
   WAKE_PACKET_MAX_BYTES: 6 * KIB,
+  // P63 主题聊天：主人每说一句后队友最多连续发言几次，到上限由 owner 收尾；验收时可在设置里调。
+  TOPIC_AGENT_TURNS_PER_OWNER_MESSAGE: 8,
   // 唤醒包：单个 AGENTS.md 上限，单位：字节。
   BOT_AGENTS_MAX_BYTES: 8 * KIB,
   // 唤醒包：全体守则上限，单位：字节。
@@ -400,6 +420,7 @@ const defaultSettings = {
   botDailyTokenBudget: DEFAULTS.BOT_DAILY_TOKEN_BUDGET,   botWindowTurnBudget: DEFAULTS.BOT_WINDOW_TURN_BUDGET,   probationBudgetMultiplier: DEFAULTS.PROBATION_BUDGET_MULTIPLIER,
   driveDailyCap: DEFAULTS.DRIVE_DAILY_CAP,   driveSnoozeMs: DEFAULTS.DRIVE_SNOOZE_MS,   driveSnoozeMaxMs: DEFAULTS.DRIVE_SNOOZE_MAX_MS,
   turnLimitsByVariant: DEFAULTS.TURN_LIMITS_BY_VARIANT,   closingGraceMs: DEFAULTS.CLOSING_GRACE_MS,   wakePacketMaxBytes: DEFAULTS.WAKE_PACKET_MAX_BYTES,
+  topicAgentTurnsPerOwnerMessage: DEFAULTS.TOPIC_AGENT_TURNS_PER_OWNER_MESSAGE,
   botAgentsMaxBytes: DEFAULTS.BOT_AGENTS_MAX_BYTES,   globalRulesMaxBytes: DEFAULTS.GLOBAL_RULES_MAX_BYTES,   memorySummaryMaxBytes: DEFAULTS.MEMORY_SUMMARY_MAX_BYTES,
   maxWatchesPerBot: DEFAULTS.MAX_WATCHES_PER_BOT,   httpMinIntervalMs: DEFAULTS.HTTP_MIN_INTERVAL_MS,   httpTimeoutMs: DEFAULTS.HTTP_TIMEOUT_MS,
   httpMaxBytes: DEFAULTS.HTTP_MAX_BYTES,   scriptMinIntervalMs: DEFAULTS.SCRIPT_MIN_INTERVAL_MS,   scriptTimeoutMs: DEFAULTS.SCRIPT_TIMEOUT_MS,
@@ -472,7 +493,8 @@ export function resolveSettings(partial?: unknown): Settings {
 
 // 最短间隔只计算角色与节奏档；无变化退避和额度灯由后续调度模块按状态叠加。
 export function paceMinMsFor(role: Role, paceProfile: PaceProfile, settings: Settings): number {
-  return settings.paceMinMsByRole[role] * settings.paceMultiplierByProfile[paceProfile];
+  // P55：建议风格沿用调研的最短间隔，所以旧的设置文件不需要补新键。
+  return settings.paceMinMsByRole[role === 'advisor' ? 'researcher' : role] * settings.paceMultiplierByProfile[paceProfile];
 }
 /** 按是否存在目标选择最长沉默期，保证机器人不会无限休眠。 */
 export function paceMaxMsFor(hasActiveGoal: boolean, settings: Settings): number {

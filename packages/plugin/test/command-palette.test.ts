@@ -4,7 +4,7 @@
  * 两条线一起锁：
  * 1. 纯逻辑：七个视图一个不少、中文与别名都能搜到、上下移动会绕回；
  * 2. 组件与挂载：面板必须是模态对话框、只在打开时渲染（关闭不占布局）、
- *    键盘能搜能选能回车，顶栏只有一个「跳转」按钮，旧的整行快速导航彻底删除。
+ *    键盘能搜能选能回车，顶栏没有「跳转」按钮（只靠 ⌘K / Ctrl+K 进入），旧的整行快速导航彻底删除。
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -18,6 +18,7 @@ const logicSource = readFileSync(new URL('logic/command-palette.ts', clientRoot)
 const hubSource = readFileSync(new URL('pages/HubPage.tsx', clientRoot), 'utf8')
 const topBarSource = readFileSync(new URL('components/TopBar.tsx', clientRoot), 'utf8')
 const cssSource = readFileSync(new URL('styles.css', clientRoot), 'utf8')
+// 顶栏布局规则写在 workspace.css（P61 的断言要查这一份，只查 styles.css 永远为真）。
 const workspaceCssSource = readFileSync(new URL('workspace.css', clientRoot), 'utf8')
 
 describe('跳转面板清单', () => {
@@ -130,21 +131,49 @@ describe('跳转面板挂载契约', () => {
     expect(hubSource).toContain("if (target === 'inbox') { openInbox(); return }")
   })
 
-  it('顶栏只有一个「跳转」按钮，带对话框语义与快捷键说明', () => {
-    expect(topBarSource).toContain('>跳转</button>')
-    expect(topBarSource).toContain('aria-haspopup="dialog"')
-    expect(topBarSource).toContain('aria-keyshortcuts="Meta+K Control+K"')
-    expect(topBarSource).toContain('onOpenPalette')
+  it('顶栏没有「跳转」和「新建队友」按钮，也不再接收这两个回调（P61）', () => {
+    // 主人 2026-11-10 要求删除：顶栏只留标题、状态句和额度灯。
+    expect(topBarSource).not.toContain('>跳转</button>')
+    expect(topBarSource).not.toContain('>新建队友</button>')
+    expect(topBarSource).not.toContain('onOpenPalette')
+    expect(topBarSource).not.toContain('onNewBot')
+    expect(topBarSource).not.toContain('aria-haspopup')
+    expect(topBarSource).not.toContain('aria-keyshortcuts')
+    // HubPage 调用 TopBar 时不再传回调。
+    expect(hubSource).toMatch(/<TopBar overview=\{overview\} \/>/)
   })
 
-  it('顶栏不再重复办公室/待你处理入口，原位置显示当前位置（P1-1）', () => {
-    // 主入口只有左栏一套：顶栏删掉这两个同名同目的地的按钮与其 props。
+  it('跳转面板仍由 ⌘K / Ctrl+K 快捷键打开，不依赖顶栏按钮（P61）', () => {
+    expect(hubSource).toContain('setPaletteOpen(open => !open)')
+    expect(hubSource).toContain('<CommandPalette')
+  })
+
+  it('新建队友入口仍在左栏队友组（P61）', () => {
+    const sidebarSource = readFileSync(new URL('components/team-sidebar.tsx', clientRoot), 'utf8')
+    const groupSource = readFileSync(new URL('components/sidebar-teammates-group.tsx', clientRoot), 'utf8')
+    expect(sidebarSource).toContain('props.hub.requestNewBot()')
+    expect(groupSource).toContain('aria-label="新建队友"')
+  })
+
+  it('顶栏不放任何页面切换，导航只留左栏一套（P61）', () => {
+    // 主人 2026-11-10 要求删除：所有页面的「队友 / 当前页 | 动态 | 项目」都不再显示。
     expect(topBarSource).not.toContain('onOpenOffice')
     expect(topBarSource).not.toContain('onOpenInbox')
+    expect(topBarSource).not.toContain('onOpenActivity')
+    expect(topBarSource).not.toContain('onOpenProject')
     expect(topBarSource).not.toContain('>办公室</button>')
-    // 原位置是「队友 / 当前页」面包屑，离开主视图也能知道自己在哪。
-    expect(topBarSource).toContain('PAGE_TITLES')
-    expect(topBarSource).toContain('ah-topbar-here')
+    expect(topBarSource).not.toContain('>动态</button>')
+    expect(topBarSource).not.toContain('>项目</button>')
+    expect(topBarSource).not.toContain('PAGE_TITLES')
+    expect(topBarSource).not.toContain('ah-topbar-here')
+    expect(topBarSource).not.toContain('ah-topbar-nav')
+    // 样式也要一起清掉，不留下没人用的规则。
+    expect(workspaceCssSource).not.toContain('.ah-topbar-nav')
+    expect(workspaceCssSource).not.toContain('.ah-topbar-here')
+  })
+
+  it('动态页在顶栏删除后仍能从跳转面板进入（P61）', () => {
+    expect(COMMAND_VIEWS.map(item => item.id)).toContain('activity')
   })
 })
 

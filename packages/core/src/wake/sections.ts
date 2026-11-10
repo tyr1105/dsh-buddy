@@ -54,7 +54,10 @@ export function fitSections(sections: PacketSection[], limit: number, agendaKeep
         }
     }
     // 极端输入连必留条目也超长时，继续按节截正文；从不截断围栏或固定规矩。
-    for (const section of copy.filter(s => !['rules', 'header', 'limits', 'variant', 'agenda', 'evidence', 'trusted-evidence'].includes(s.key)))
+    // 截断顺序：先截一般内容，再截主题的成员与楼层，主人的原话最后才动（越靠后越晚被截）。
+    const lastResort = copy.filter(s => !['rules', 'header', 'limits', 'variant', 'agenda', 'evidence', 'trusted-evidence', 'topic-rules'].includes(s.key));
+    const shrinkRank = (key: string): number => key === 'owner' ? 3 : key === 'topic-floor-first' ? 2 : key === 'topic' || key === 'topic-floor' ? 1 : 0;
+    for (const section of [...lastResort].sort((a, b) => shrinkRank(a.key) - shrinkRank(b.key)))
         shrink(section);
     // 保留前十项/前五条的身份；超长的单条正文逐条缩短，仍让模型知道有哪些事项。
     if (byteLength(renderSections(copy)) > limit) {

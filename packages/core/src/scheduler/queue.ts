@@ -1,4 +1,5 @@
 /** 每个机器人尽量合并候选；审批与只读复盘分开排队，避免批准动作失去执行机会。 */
+import { onDemandBlocks } from './on-demand.js';
 import { ownerReasonSummary } from '../util/owner-text.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import type { HubContext } from '../engine/context.js';
@@ -21,7 +22,14 @@ function mergeVariant(old: Variant, next: Variant): Variant {
 /** 兼容候选合并证据，最高分理由决定解释；审批与复盘各自保留到真正处理。 */
 export function enqueue(ctx: HubContext, input: Candidate): QueueEntry | null {
   const candidate = parseInput(CandidateSchema, input, '排队候选');
-  if (!ctx.store.table('bots').get(candidate.botId)) throw new Error(`机器人不存在：${candidate.botId}`);
+  const candidateBot = ctx.store.table('bots').get(candidate.botId);
+  if (!candidateBot) throw new Error(`机器人不存在：${candidate.botId}`);
+  // P55：入队总闸兜底。时钟、内驱、感知这几条高频路径在源头就已跳过，这里不会刷屏。
+  if (onDemandBlocks(candidateBot, candidate.reason.kind)) {
+    logAppraisal(ctx, { botId: candidate.botId, perceptIds: candidate.reason.evidence, score: candidate.reason.score,
+      threshold: candidate.reason.threshold, decision: 'suppressed', suppressedBy: null, text: '听吩咐：没有人点名或派活，不自己行动' });
+    return null;
+  }
   // 自动轻复查与运维控制有独立触发条件；普通感知、议程、内驱仍必须达到当时门槛。
   const control = ['light_check', 'catch_up', 'retry', 'trial', 'teach', 'reflection', 'approval_decided', 'inbox_reply'].includes(candidate.reason.kind);
   if (!candidate.ownerInitiated && !control && candidate.reason.score < candidate.reason.threshold) {
@@ -33,7 +41,9 @@ export function enqueue(ctx: HubContext, input: Candidate): QueueEntry | null {
   const table = ctx.store.table('queue');
   // 两种入队顺序都隔离；审批证据即使已并入主人消息，也不能再被复盘变体接管。
   const approval = hasApprovalDecision(ctx, candidate);
+  // P63：按（队友, 主题）合并：不同主题各排各的，回复才能落回各自的主题；旧候选没有主题，按 null 算。
   const existing = table.list(row => row.botId === candidate.botId
+    && (row.topicId ?? null) === (candidate.topicId ?? null)
     && !(candidate.variant === 'reflection' && hasApprovalDecision(ctx, row))
     && !(row.variant === 'reflection' && approval))[0];
   let row: QueueEntry;

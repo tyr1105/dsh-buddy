@@ -8,7 +8,6 @@
  */
 import type { ReactNode } from 'react'
 import type { PageView } from '../hub-state.js'
-import type { SidebarSession } from '../logic/sidebar-groups.js'
 
 /** 展开箭头：纯 CSS 旋转，收起时朝右、展开时朝下。 */
 export function Chevron(props: { open: boolean }): ReactNode {
@@ -35,13 +34,6 @@ export function FolderIcon(): ReactNode {
       <path d="M1.8 4.2c0-.6.4-1 1-1h3l1.4 1.6h5c.6 0 1 .4 1 1v5.8c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
     </svg>
   )
-}
-
-/** 会话行首的状态点：颜色只做辅助，title 里始终有中文状态。 */
-export function sessionDotClass(session: SidebarSession): string {
-  if (session.blocked) return 'ah-nav-dot ah-nav-dot-blocked'
-  if (session.pendingCheck) return 'ah-nav-dot ah-nav-dot-check'
-  return 'ah-nav-dot ah-nav-dot-doing'
 }
 
 /** 当前选中的队友行：只在主视图下高亮，别的页面不抢焦点。 */

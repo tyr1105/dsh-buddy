@@ -19,12 +19,17 @@ import { CreateBotSchema, ProfilePatchSchema } from './schemas.js';
 import { normalizePresetSkillIds, unknownPresetSkillIds } from '../config/preset-skills.js';
 import { syncPresetSkills } from '../memory/preset-skills.js';
 import { saveBotMbti } from '../personality/profile.js';
+import { composePersona, DEFAULT_ASPIRATION_BY_ROLE } from '../config/persona-choices.js';
 import { input, requireBot } from './common.js';
 import { makeGoal, makeWatch } from './entities.js';
 import { validateModelChoice } from './models.js';
 import { HUB_EVENT_SCOPES } from './event-scopes.js';
 
-const ROLE_COLORS = { chief: '#75634E', researcher: '#427C9D', executor: '#54836B', sentinel: '#9B6B45' };
+const ROLE_COLORS = { chief: '#75634E', researcher: '#427C9D', executor: '#54836B', sentinel: '#9B6B45', advisor: '#7A6A9B' };
+/** 建议风格只提意见不动手：自主等级不能超过 L1，否则角色和权限互相矛盾。 */
+function checkAdvisorAutonomy(role: Bot['role'], autonomy: Bot['autonomy']): void {
+  if (role === 'advisor' && (autonomy === 'L2' || autonomy === 'L3')) throw new Error('自主节奏：建议风格只提意见不动手，请选听吩咐或提建议');
+}
 /** 所有路径都由中心根目录和新 id 生成，外部输入不能替换家目录或宿主会话。 */
 export async function createBot(ctx: HubContext, raw: unknown): Promise<Bot> {
   const args = input(CreateBotSchema, raw, '创建机器人');
@@ -37,16 +42,25 @@ export async function createBot(ctx: HubContext, raw: unknown): Promise<Bot> {
   const id = newId('b', ctx.rng);
   // P40：预置 skill 只能从内置清单里选；重复 id 去重，未知 id 直接拒绝。
   const presetSkillIds = checkPresetSkillIds(args.presetSkillIds ?? []);
+  // P55：听吩咐默认用安静节奏；主人显式传了 pace 时以主人为准。
+  const onDemand = args.onDemand ?? false;
+  const autonomy = args.autonomy ?? 'L1';
+  checkAdvisorAutonomy(args.role, autonomy);
+  const temperament = args.temperament ?? null;
+  const speechStyle = args.speechStyle ?? null;
+  const persona = args.persona ?? composePersona({ name: args.name, role: args.role, temperament, speechStyle });
+  const aspirationTexts = args.aspirations ?? [DEFAULT_ASPIRATION_BY_ROLE[args.role]];
   // MBTI 不写进 Bot 本体：旧版本用 strictObject 解析 bots.json，额外字段会让它整体读不出队友。
-  const bot = input(BotSchema, { id, name: args.name, role: args.role, persona: args.persona,
+  const bot = input(BotSchema, { id, name: args.name, role: args.role, persona,
     color: ROLE_COLORS[args.role],
-    lifecycle: 'probation', activity: 'watching', activityText: '试岗开始，准备试跑', autonomy: args.autonomy ?? 'L1', pace: args.pace ?? 'normal',
+    lifecycle: 'probation', activity: 'watching', activityText: '试岗开始，准备试跑', autonomy, pace: args.pace ?? (onDemand ? 'quiet' : 'normal'),
     model, homeDir: posix.join(ctx.settings.rootDir, 'bots', id),
     sessionId: null, sessionStartedAt: null, createdAt: now, probationStartedAt: now, probationEndsAt: now + ctx.settings.probationMs,
     noChangeStreak: 0, lastThinkAt: null, nextThinkAt: null, nextThinkReason: null, nextThinkBy: null, nextThinkMode: null,
     lightCheckAt: now + ctx.settings.paceMaxIdleMs, expectedBy: null, consecutiveErrors: 0, consecutiveNoCommit: 0, violations: 0,
-    retryAt: null, quarantineReason: null, workDataAllowed: false, presetSkillIds, updatedAt: now }, '机器人');
-  const aspirations = args.aspirations.map(text => input(AspirationSchema, { id: newId('asp', ctx.rng), botId: id, text,
+    retryAt: null, quarantineReason: null, workDataAllowed: false, presetSkillIds,
+    dshSkillNames: [...new Set(args.dshSkillNames ?? [])], temperament, speechStyle, brief: args.brief?.trim() ?? '', onDemand, updatedAt: now }, '机器人');
+  const aspirations = aspirationTexts.map(text => input(AspirationSchema, { id: newId('asp', ctx.rng), botId: id, text,
     status: 'active', createdBy: 'owner', approved: true, createdAt: now }, '志向'));
   if ((args.watches?.length ?? 0) > ctx.settings.maxWatchesPerBot) throw new Error('关注项数量已达上限');
   const watches = (args.watches ?? []).map(watch => makeWatch(ctx, bot, { ...watch, botId: id }, null));
@@ -103,9 +117,18 @@ export async function updateBot(ctx: HubContext, botId: string, raw: unknown): P
   const { mbti, ...patch } = input(ProfilePatchSchema, raw, '档案修改');
   // P40：勾选列表同样只认内置清单，未知 id 在落表前就拒绝。
   if (patch.presetSkillIds !== undefined) patch.presetSkillIds = checkPresetSkillIds(patch.presetSkillIds);
+  if (patch.dshSkillNames !== undefined) patch.dshSkillNames = [...new Set(patch.dshSkillNames)];
+  if (patch.brief !== undefined) patch.brief = patch.brief.trim();
+  // P55：选择题改了就重新拼 persona；主人同时传了 persona 时以传入的为准。
+  if ((patch.temperament !== undefined || patch.speechStyle !== undefined) && patch.persona === undefined) {
+    patch.persona = composePersona({ name: patch.name ?? old.name, role: patch.role ?? old.role,
+      temperament: patch.temperament !== undefined ? patch.temperament : old.temperament,
+      speechStyle: patch.speechStyle !== undefined ? patch.speechStyle : old.speechStyle });
+  }
   if (old.lifecycle === 'retired') throw new Error('退役机器人不能再修改档案');
   const preview = input(BotSchema, { ...old, ...patch, updatedAt: ctx.clock.now() }, '机器人');
   checkNameAndRole(ctx, preview.name, preview.role, preview.id);
+  checkAdvisorAutonomy(preview.role, preview.autonomy);
   // 编辑也重验最终模型，目录移除的型号不能被无关档案修改默默保留。
   await validateModelChoice(ctx, preview.model);
   // 宿主目录读取期间主人仍可打断回合；只把档案字段合入最新状态，不能复活旧会话或覆盖运行计数。

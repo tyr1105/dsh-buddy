@@ -6,7 +6,7 @@
  * - 无空间位（P42）：本页承载页面内「对话 / 队友」切换条。对话侧不回放原生列表，
  *   只说明原生界面保持原样并给出回去的按钮，避免出现第二份假的会话列表。
  *
- * 骨架阶段只做容器与空态；P33 起把队友主页放进来，P41/P42 决定它挂在哪。
+ * 只做容器与空态；队友侧内容（团队线程等）由调用方通过 children 放进来。
  */
 import type { ReactNode } from 'react'
 import { SpaceSwitch, type SpaceSwitchSource } from '../components/space-switch.js'

@@ -7,7 +7,13 @@
 
 // ---------- 领域枚举（与 core src/model/enums.ts 的取值保持一致） ----------
 
-export type Role = 'chief' | 'researcher' | 'executor' | 'sentinel'
+export type Role = 'chief' | 'researcher' | 'executor' | 'sentinel' | 'advisor'
+/** P55 性格选择题；每项写进身份文件的话在 core 的 persona-choices.ts。 */
+export type Temperament = 'steady' | 'rigorous' | 'cheerful' | 'inventive' | 'calm' | 'gentle'
+/** P55 说话风格选择题。 */
+export type SpeechStyle = 'conclusion_first' | 'brief' | 'detailed' | 'gentle' | 'blunt' | 'playful'
+/** P55 DSH 里的一项技能：只有名字和用途，正文留在 DSH。 */
+export interface DshSkillOption { name: string; description: string }
 export type Lifecycle = 'draft' | 'probation' | 'active' | 'paused' | 'quarantined' | 'retired'
 export type Activity = 'watching' | 'queued' | 'thinking' | 'waiting_owner' | 'waiting_peer' | 'blocked' | 'resting' | 'reflecting' | 'catching_up'
 export type ThreadKind = 'chat' | 'reply' | 'report' | 'question' | 'approval' | 'proposal' | 'alert' | 'digest' | 'handoff' | 'peer' | 'system'
@@ -79,18 +85,18 @@ export type { Grant, Resource, ResourceGrantViewRow, ResourceView, ResourceViewR
  */
 // eslint-disable-next-line import/no-duplicates -- 类型集中再导出
 import type {
-  CriterionStatus, Project, ProjectContext, ProjectContextProposal, ProjectContextProposalView,
+  CriterionStatus, Project, ProjectBackgroundView, ProjectContext, ProjectContextProposal, ProjectContextProposalView,
   ProjectContextRevision, ProjectContextRevisionView, ProjectCriterionView, ProjectIssueView,
-  ProjectLayersView, ProjectMemberView, ProjectOriginalLayerView, ProjectStatus, ProjectTask,
+  ProjectLayersView, ProjectMemberView, ProjectOriginalLayerView, ProjectPathView, ProjectStatus, ProjectTask,
   ProjectTaskAcceptanceView, ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView,
-  ProjectTeamLayerView, ProjectView, ProjectViewRow, TaskStatus,
+  ProjectTeamLayerView, ProjectTopic, ProjectTopicView, ProjectView, ProjectViewRow, TaskStatus,
 } from '@agent-hub/core'
 export type {
-  CriterionStatus, Project, ProjectContext, ProjectContextProposal, ProjectContextProposalView,
+  CriterionStatus, Project, ProjectBackgroundView, ProjectContext, ProjectContextProposal, ProjectContextProposalView,
   ProjectContextRevision, ProjectContextRevisionView, ProjectCriterionView, ProjectIssueView,
-  ProjectLayersView, ProjectMemberView, ProjectOriginalLayerView, ProjectStatus, ProjectTask,
+  ProjectLayersView, ProjectMemberView, ProjectOriginalLayerView, ProjectPathView, ProjectStatus, ProjectTask,
   ProjectTaskAcceptanceView, ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView,
-  ProjectTeamLayerView, ProjectView, ProjectViewRow, TaskStatus,
+  ProjectTeamLayerView, ProjectTopic, ProjectTopicView, ProjectView, ProjectViewRow, TaskStatus,
 }
 /** P40：预置 skill 的只读候选（名称、用途、加载条件），正文不下发到界面。 */
 import type { PresetSkillOption } from '@agent-hub/core'
@@ -114,6 +120,11 @@ export interface BotCard {
 
 export interface OverviewView {
   bots: BotCard[]
+  /**
+   * 这份总览只是占位，bots 为空不代表队友都没了（P58）。
+   * 目前只有中心停用时的 DisabledHub 会带上它：真名册读不到，界面不能据此判断谁不存在。
+   */
+  rosterUnavailable?: true
   costs?: import('@agent-hub/core').CostView
   inbox: { total: number; approvals: number; questions: number; proposals: number; alerts: number }
   team: { unread: number; lastMessageText: string | null }
@@ -161,6 +172,14 @@ export interface BotView {
     homeDir: string; sessionId: string | null; createdAt: number; createdText: string; probationText: string | null; workDataAllowed: boolean
     /** P40：主人勾选的预置 skill id；空数组即未启用。 */
     presetSkillIds: string[]
+    /** P55：从 DSH 技能目录里选的技能名。 */
+    dshSkillNames: string[]
+    temperament: Temperament | null
+    speechStyle: SpeechStyle | null
+    /** 员工说明：主人对这位队友的其他要求。 */
+    brief: string
+    /** 听吩咐：只在被点名或派活时行动。 */
+    onDemand: boolean
   }
   aspirations: Array<{ id: string; text: string; status: string }>
   goals: Array<{ id: string; title: string; doneWhen: string; period: string; periodText: string; status: GoalStatus; statusLabel: string; lastProgressText: string; createdBy: 'owner' | 'bot'; checkText?: string }>
@@ -176,6 +195,11 @@ export interface BotView {
 
 export interface InboxItemView {
   id: string; botId: string | null; botName: string | null; botColor: string | null
+  /**
+   * P65：这件事来自哪个项目主题（主题 id 也是线程 id）和主题名；不来自主题或主题已删除时为空。
+   * 可选：样例数据和旧宿主没有这两项，按「不来自主题」处理。
+   */
+  topicId?: string | null; topicTitle?: string | null
   type: InboxType; typeLabel: string; priority: InboxPriority
   approvalId: string | null        // 仅审批卡有；decideApproval 用它，不能误传收件箱 id
   goalId?: string | null
@@ -200,6 +224,8 @@ export interface SettingsView {
   modelOptions: Array<{ value: ModelChoice; label: string }>
   /** P40：预置 skill 候选清单；只读，随插件版本走。 */
   presetSkillOptions: PresetSkillOption[]
+  /** P55：DSH 里可选的技能；读不到目录时是空数组。 */
+  dshSkillOptions: DshSkillOption[]
 }
 
 export interface RecentSessionView { sessionId: string; title: string; updatedText: string }

@@ -2,6 +2,7 @@
  * 项目任务状态工具（队友侧，v2 计划 3.4 / F08 尾巴批次八）。
  *
  * 让队友自己推进「已经指派给自己」的任务：标记受阻、恢复、交账待验收。
+ * P60 起项目由负责人（owner）确认完成，交账时的提示按项目有没有负责人区分。
  * 为什么不做「开始」：开始由主人派活完成（todo→doing），队友只能接手已经在进行
  * 的活，避免一个待办被队友自行开工、绕过主人派活。
  *
@@ -37,8 +38,12 @@ const AUDIT_ACTIONS = {
   report_done: 'task_report_done',
 } as const;
 
-/** 交账后给队友的提示要强调「还没完」：通过验收才算完成。 */
+/** 交账后给队友的提示要强调「还没完」：没有负责人的老项目仍等主人验收。 */
 const DONE_HINT = '，等主人验收；验收通过前不要把它当成已完成';
+/** P60：有负责人的项目由负责人确认。 */
+const OWNER_CHECK_HINT = '，等项目负责人确认；确认前不要把它当成已完成';
+/** P60：负责人自己的事务没人替它确认，要提醒它自己把状态改掉。 */
+const SELF_CHECK_HINT = '；你是这个项目的负责人，确认做完后用 hub_project_task_upsert 把状态改成 accepted';
 
 export const hubTaskUpdate = defineTool('hub_task_update',
   '推进指派给你的项目任务：block 标记受阻、resume 恢复进行中、report_done 交账待验收；只有进行中/受阻任务能用。',
@@ -66,8 +71,10 @@ export const hubTaskUpdate = defineTool('hub_task_update',
       from, to, via: 'hub_task_update', botId: tc.botId,
     }, tc.botId, now);
     ctx.emit(HUB_EVENT_SCOPES.project, null);
+    const hint = args.action !== 'report_done' ? ''
+      : project.ownerBotId === null ? DONE_HINT : project.ownerBotId === tc.botId ? SELF_CHECK_HINT : OWNER_CHECK_HINT;
     return {
       ok: true,
-      text: `任务「${record.title}」已从「${TASK_STATUS_LABELS[from]}」变为「${TASK_STATUS_LABELS[to]}」${args.action === 'report_done' ? DONE_HINT : ''}。`,
+      text: `任务「${record.title}」已从「${TASK_STATUS_LABELS[from]}」变为「${TASK_STATUS_LABELS[to]}」${hint}。`,
     };
   });

@@ -31,6 +31,8 @@ export function triggerFromWake(wake: WakeTicket): LedgerTrigger {
     ownerSummary: wake.reason.ownerSummary ?? null,
     ownerInitiated: wake.ownerInitiated,
     subjectKey: wake.subjectKey ?? null,
+    // P63：只有主题回合才带这一项；账本比唤醒单活得久，办公室动线要靠它还原项目名和主题名。
+    ...(wake.topicId ? { topicId: wake.topicId } : {}),
     queueWaitMs: null,
     evidenceRefs: wake.reason.evidence.slice(0, 20),
   };

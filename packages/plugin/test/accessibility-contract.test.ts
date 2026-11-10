@@ -54,7 +54,6 @@ const clientRoot = new URL('../src/client/', import.meta.url)
 const read = (path: string): string => readFileSync(new URL(path, clientRoot), 'utf8')
 
 const spaceSwitch = read('components/space-switch.tsx')
-const taskRow = read('pages/project-task-row.tsx')
 const replayPage = read('pages/office-replay-page.tsx')
 const hubPage = read('pages/HubPage.tsx')
 const css = read('styles.css')
@@ -62,15 +61,11 @@ const workspaceCss = read('workspace.css')
 const settingsPane = read('components/SettingsPane.tsx')
 const activityPane = read('components/ActivityPane.tsx')
 const resourcePage = read('pages/ResourcePage.tsx')
-const wakeLedger = read('components/WakeLedger.tsx')
 const trailPanel = read('components/office-trail-panel.tsx')
 const threadPane = read('components/ThreadPane.tsx')
 const officePage = read('pages/OfficePage.tsx')
 const inboxPane = read('components/InboxPane.tsx')
-const contextPanel = read('components/project-context-panel.tsx')
-const projectPage = read('pages/ProjectPage.tsx')
 const commandPalette = read('components/command-palette.tsx')
-const artifactSection = read('components/artifact-section.tsx')
 // 第 39 轮登记六个真实弹窗挂载点；P48 队友归档新增 bot-archive-dialog（其拦截态
 // BlockedDialog 自带原生 role="dialog"，其余三态复用 ConfirmDialog），挂载点增至七个
 // （use-drawer-focus.ts 里的 role="dialog" 只是注释示例）。
@@ -185,18 +180,6 @@ describe('WCAG 2.5.3 切换器：徽章计数并入按钮名称', () => {
   })
 })
 
-describe('WCAG 2.5.3 唤醒链接：名称包含可见时间文字', () => {
-  it('aria-label 以可见的打开时间开头，用途说明放在后面', () => {
-    expect(taskRow).toContain(
-      "aria-label={`${wake.openedText ?? '查不到记录'}（打开这次唤醒的账本：${title}）`}",
-    )
-  })
-
-  it('可见文字与名称用同一个 openedText，查不到记录时两边同口径', () => {
-    expect(taskRow).toContain("{wake.openedText ?? '查不到记录'}")
-  })
-})
-
 describe('WCAG 2.5.3 回放滑块：动态时间读数不冒名字段标签', () => {
   it('外层是普通 div 而不是 label，两端时间不会变成滑块的可见标签', () => {
     expect(replayPage).toContain('<div className="ah-replay-range">')
@@ -236,35 +219,6 @@ describe('WCAG 2.4.1 跳过区块', () => {
   })
 })
 
-describe('WCAG 2.4.3/4.1.2 项目页「归档 N」锚点：跳转后焦点落在目的地（U01 第 41 轮）', () => {
-  it('归档计数是带动作的真按钮，名称含归档总数，可见文字与名称同物', () => {
-    expect(projectPage).toContain('className="ah-prj-summary-link"')
-    expect(projectPage).toContain('aria-label={`展开并定位到归档区，共 ${part.count} 个归档项目`}')
-    expect(projectPage).toContain('title="展开归档区并滚动定位"')
-  })
-
-  it('仅当归档数大于 0 才渲染按钮，0 个时保持纯文本（不制造无动作的假链接）', () => {
-    expect(projectPage).toContain("if (part.key === 'archived' && part.count > 0)")
-  })
-
-  it('目标折叠区同时有 id（可被定位）与 ref（编程展开/聚焦的唯一句柄）', () => {
-    expect(projectPage).toContain('id="ah-prj-archived" ref={archivedRef}')
-    expect(projectPage).toContain('useRef<HTMLDetailsElement | null>(null)')
-  })
-
-  it('看板模式先切回列表再定位，并在折叠区挂载后把焦点交给 summary', () => {
-    expect(projectPage).toContain("if (mode !== 'list') setMode('list')")
-    expect(projectPage).toContain('el.open = true')
-    expect(projectPage).toContain("el.scrollIntoView({ block: 'start' })")
-    expect(projectPage).toContain("el.querySelector('summary')")
-  })
-
-  it('行内锚点沿用 2.5.8 例外不套 24px 方块，但保留焦点环与点击手型', () => {
-    expect(css).toContain('.ah-prj-summary-link {')
-    expect(css).toMatch(/\.ah-prj-archived\s*\{[^}]*scroll-margin-top:\s*16px/)
-  })
-})
-
 describe('WCAG 1.3.1 标题层级：每视图有 h2 且不跳级', () => {
   it('设置页有页面级 h2，当前分区用 h3（h2→h3 不跳级）', () => {
     expect(settingsPane).toContain('<header className="ah-pane-heading"><h2>设置</h2>')
@@ -284,18 +238,7 @@ describe('WCAG 1.3.1 标题层级：每视图有 h2 且不跳级', () => {
   })
 })
 
-describe('WCAG 1.3.1 装饰标题转正：账本段与轨迹面板用真标题元素', () => {
-  it('唤醒账本八个分区标题全部是 h3，不再用 p 冒充', () => {
-    expect(wakeLedger).not.toContain('<p className="ah-ledger-title">')
-    const titles = ['为什么醒', '手里的证据', '工具调用（中心观察到的）', '其它动作', '结果引用', '交了什么', '中心实查与主人验收', '执行者报告的变更']
-    for (const title of titles) {
-      expect(wakeLedger).toContain(`<h3 className="ah-ledger-title">${title}</h3>`)
-    }
-    // h3 的 UA 样式必须归零，视觉与改前的 p 完全一致。
-    expect(css).toContain('.ah-ledger p, .ah-ledger h3 { margin: 0; font-size: 12px; }')
-    expect(css).toMatch(/\.ah-ledger-title\s*\{[^}]*font-weight:\s*inherit/)
-  })
-
+describe('WCAG 1.3.1 装饰标题转正：轨迹面板用真标题元素', () => {
   it('轨迹面板标题从 div 转正为 h3，并让所在 header 自动获名', () => {
     expect(trailPanel).toContain('<h3 className="ah-trail-title">')
     expect(trailPanel).not.toContain('<div className="ah-trail-title">')
@@ -321,22 +264,11 @@ describe('WCAG 1.3.1 地标：功能区显式命名，纯布局槽不得冒充 h
     expect(css).not.toContain('.ah-inbox-row header')
   })
 
-  it('共享上下文面板头改回 div，命名由外层 section 的 aria-label 承担', () => {
-    expect(contextPanel).toContain('<div className="ah-context-head">')
-    expect(contextPanel).not.toContain('<header className="ah-context-head">')
-  })
 })
 
 describe('WCAG 3.2.1 聚焦本身不制造上下文变化', () => {
-  it('全客户端 onFocus 只有引用框「聚焦即选中文本」一处，且不含导航/发命令记号', () => {
-    const focus = collectHandlers('Focus')
-    expect(focus).toHaveLength(1)
-    // 上一行已锁定长度为 1，可选链只是给严格模式一个交代。
-    expect(focus[0]?.file).toBe('components/artifact-section.tsx')
-    expect(focus[0]?.body).toMatch(/\.select\(\)/)
-    expect(focus[0]?.body).not.toMatch(INPUT_DANGER_RE)
-    // 同一段便利逻辑确实在引用框组件里，防止文件路径被改后锁错对象。
-    expect(artifactSection).toContain('e.currentTarget.select()')
+  it('全客户端没有任何 onFocus 处理器（唯一的引用框随右栏产物区在 P64 拿掉）', () => {
+    expect(collectHandlers('Focus')).toEqual([])
   })
 
   it('全客户端没有任何 onBlur 处理器（失焦自动提交/跳转一律禁止）', () => {
@@ -451,7 +383,7 @@ describe('WCAG 1.3.1 弹窗是独立表面：标题从 h2 起且不跳级', () =
 
   it('向导与教学弹窗的 h2 包在 ah-wizard-head 里，不允许退回 h3', () => {
     expect(newBotWizard).toContain('<header className="ah-wizard-head">')
-    expect(newBotWizard).toContain('<h2>新建队友（第 {draft.step + 1}/6 步：{STEP_TITLES[draft.step]}）</h2>')
+    expect(newBotWizard).toContain('<h2>新建队友</h2>')
     expect(newBotWizard).not.toContain('<h3>')
     expect(teachDialog).toContain('<header className="ah-wizard-head">')
     expect(teachDialog).toContain('<h2>教 {props.botName} 技能</h2>')

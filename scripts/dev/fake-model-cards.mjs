@@ -11,6 +11,9 @@
  *     【审批】→ 先申请一个对外动作（POST 到本服务自己的 /hook-test），会生成审批卡；
  *               主人批准后中心会真的执行这一下，本服务把收到的请求记进日志，用来核对「批准只执行一次」
  *     【慢】  → 新回合的第一步故意拖 90 秒才回，留出时间点「打断」
+ *   下面两个只在项目主题里有用（P60 走查），回复里带 @名字，用来走通队友之间的接力：
+ *     【点名】→ 主人说话后，第一个回复的人 @ 另一位成员；被点名的人回一句，再回到负责人收尾
+ *     【连环】→ 每个人回复时都 @ 下一位，一直接力到中心的发言上限，用来看「到上限」的提示
  *
  * 怎么用：一般不用单独运行，scripts/dev/ui-sandbox.sh 会自动把它拉起来。
  *   单独运行：node scripts/dev/fake-model-cards.mjs（日志默认写到 .sandbox/fake-model-cards.log）
@@ -80,10 +83,73 @@ function decide(body) {
   return { action: base, delayMs }
 }
 
+/**
+ * 这一回合的唤醒正文：最后一条带文字的 user 消息。
+ * 交账那一步的最后一条 user 消息只有工具结果，所以要往前找；
+ * 同一工作会话里更早的唤醒包不算，否则上一轮的暗号会影响这一轮。
+ */
+function latestPacket(messages) {
+  for (const message of [...(messages ?? [])].reverse()) {
+    if (message?.role !== 'user') continue
+    const text = (Array.isArray(message.content) ? message.content : [])
+      .map(block => (block?.type === 'text' ? String(block.text ?? '') : ''))
+      .join('\n')
+    if (text.trim() !== '') return text
+  }
+  return ''
+}
+
+/**
+ * 从主题唤醒包的「成员：」清单里读出能 @ 的其他人。
+ * 一行长这样：`- 探路（负责人；你自己；调研）`。标了「你自己」的跳过（不能 @ 自己），
+ * 标了「不在岗」的也跳过（@ 了也叫不醒）。
+ */
+function otherMembers(packet) {
+  const names = []
+  let reading = false
+  for (const raw of packet.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line === '成员：') { reading = true; continue }
+    if (!reading) continue
+    const row = /^- (.+?)（(.*)）$/.exec(line)
+    if (row === null) break // 成员清单结束了
+    if (!row[2].includes('你自己') && !row[2].includes('不在岗')) names.push(row[1])
+  }
+  return names
+}
+
+/**
+ * 主题楼层里最新一楼是不是主人说的；是的话，这一回合就是主人说完后的第一个回复。
+ * 楼层一行长这样：`3 楼 探路（今天 12:00）：内容`。
+ * 不能看有没有「主人对你说」这一段：队友被点名时，唤醒依据里也带着主人那句话，这一段同样会出现。
+ */
+function lastFloorByOwner(packet) {
+  const floors = packet.split(/\r?\n/).map(line => /^\d+ 楼 (.+?)（/.exec(line.trim())).filter(row => row !== null)
+  return floors.at(-1)?.[1] === '主人'
+}
+
+/**
+ * 项目主题里这一回合说什么；不是主题回合时返回 null，沿用项目剧本的回复。
+ * 暗号从最新唤醒正文里找：主人的话不管在「主人对你说」还是「主题楼层」里，都读得到。
+ */
+function topicReplyFor(packet) {
+  if (!packet.includes('## 项目主题讨论')) return null
+  // 中心要求收尾时一律不再 @ 人，否则走查看不出上限规则有没有生效。
+  if (packet.includes('这是这轮讨论的最后一次发言')) return '大家的意见我收齐了，结论先这样，等你下一句。'
+  const next = otherMembers(packet)[0]
+  const firstReply = lastFloorByOwner(packet)
+  if (next !== undefined && packet.includes('【连环】')) return `这一棒我说完了。@${next} 你接着说。`
+  if (next !== undefined && firstReply && packet.includes('【点名】')) return `收到，这件事要找人一起看。@${next} 帮忙看一下。`
+  // 没有要接力的：主人叫的回一句「收到」，被队友叫的（点名或交回负责人）说看过了，都不再 @ 人。
+  return firstReply ? null : '我看过了，没有别的要补充。'
+}
+
 /** 交账参数：在项目剧本的合法参数上，按暗号补提问或提议。 */
 function commitFor(body) {
   const owner = ownerMessageOf(body?.messages ?? [])
   const args = commitArgs(owner)
+  const topicReply = topicReplyFor(latestPacket(body?.messages ?? []))
+  if (topicReply !== null) args.reply = topicReply
   if (owner?.includes('【提问】')) {
     args.outcome = 'needs_owner' // needs_owner 必须带 ownerQuestion，否则中心会拒收交账
     args.ownerQuestion = {

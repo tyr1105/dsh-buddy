@@ -2,7 +2,7 @@
   "name": "agent-hub",
   "private": true,
   "type": "module",
-  "description": "给一人公司（OPC）的 DeepSeek Harness 插件：分角色、派任务、验收返工，需要拍板时才找你。",
+  "description": "DeepSeek Harness 插件：你的 OPC 专业团队。像素办公室显示每位队友的状态，自主节奏和每日上限由你定。",
   "scripts": {
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",

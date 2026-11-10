@@ -27,7 +27,7 @@ it('所有枚举常量都有覆盖全部值的中文标签', () => {
     if (!Array.isArray(values)) continue;
     expect(maps.some(map => values.every(key => key in map))).toBe(true);
   }
-  expect(m.ROLE_LABELS).toEqual({ chief: '总管', researcher: '调研', executor: '执行', sentinel: '盯守' });
+  expect(m.ROLE_LABELS).toEqual({ chief: '总管', researcher: '调研', executor: '执行', sentinel: '盯守', advisor: '建议' });
 });
 it('机器人工作数据权限缺省时关闭', () => {
   const { workDataAllowed: _, ...input } = botFixture;

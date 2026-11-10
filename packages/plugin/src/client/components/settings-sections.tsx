@@ -118,7 +118,7 @@ export function UsageSection(props: {
           </div>
         </Row>
       </div>
-      <p className="ah-set-note">自主等级在每位队友的「详情」里单独设置。</p>
+      <p className="ah-set-note">自主节奏在每位队友的「编辑队友」里单独设置。</p>
       {/* 用量明细很长，放在设置项下面，免得把真正要改的项挤到屏幕外。 */}
       <div className="ah-set-usage"><CostMeter costs={props.overview?.costs} /></div>
     </>

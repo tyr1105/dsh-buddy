@@ -27,6 +27,7 @@ import { newId } from '../util/ids.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { recordAcceptancePassed } from './artifacts.js';
+import { assertOwnerEligible, pickDefaultOwnerId } from './owner-rules.js';
 import { normalizeProjectSharedDir, ensureProjectSharedDir } from './shared-dir.js';
 import {
   TASK_REJECT_REASON_MAX, checkTransition, nextStatus, type TaskAction,
@@ -102,15 +103,25 @@ export function saveProject(ctx: HubContext, raw: unknown): Project {
   }
   for (const botId of members) requireLiveBot(ctx, botId, '项目成员');
 
-  // 2. 负责人：可空；一旦指定，队友必须有效，且负责人必须是项目成员（不自动并入）。
-  const ownerBotId = input.ownerBotId === undefined
-    ? (existing?.ownerBotId ?? null)
+  // 2. 负责人：P60 起项目靠负责人运转，没指定（含界面传的 null）就按默认补：总管，否则第一位非建议风格的成员。
+  //    选不出来（还没有合适的成员）时先留空，主人开主题时再中文报错，不挡住先建项目后加人。
+  //    指定了的话，队友必须有效，且负责人必须是项目成员（不自动并入）。
+  // 没传负责人时沿用旧值；旧负责人已退役或被移出成员时不卡住保存，按默认重新选一位。
+  const inheritedOwner = existing?.ownerBotId ?? null;
+  const inheritedUsable = inheritedOwner !== null && members.includes(inheritedOwner)
+    && (ctx.store.table('bots').get(inheritedOwner)?.lifecycle ?? 'retired') !== 'retired';
+  const requestedOwner = input.ownerBotId === undefined
+    ? (inheritedUsable ? inheritedOwner : null)
     : input.ownerBotId;
+  const ownerBotId = requestedOwner
+    ?? pickDefaultOwnerId(members.map(id => ctx.store.table('bots').get(id)).filter(bot => bot !== null));
   if (ownerBotId !== null) {
-    requireLiveBot(ctx, ownerBotId, '项目负责人');
+    const ownerBot = requireLiveBot(ctx, ownerBotId, '项目负责人');
     if (!members.includes(ownerBotId)) {
       throw new Error('项目负责人必须是项目成员之一：请先把负责人加入成员名单');
     }
+    // 只在负责人变动时校验风格：旧项目的负责人如果是建议风格，不能因此连项目名都改不了。
+    if (ownerBotId !== existing?.ownerBotId) assertOwnerEligible(ownerBot);
   }
 
   // 3. 验收项：条数上限；带 id 的必须是本项目已有项；输入里同一 id 不得重复。
@@ -169,6 +180,9 @@ export function saveProject(ctx: HubContext, raw: unknown): Project {
     // 否则主人改一句项目目标就会顺手把上下文清空、或把队友的建议冲掉。
     context: existing?.context ?? emptyProjectContext(),
     contextRevisions: existing?.contextRevisions ?? [],
+    // P60：背景的更新人和时间同样只由上下文命令维护，保存项目时原样带上，不能被这里冲掉。
+    ...(existing?.backgroundUpdatedAt != null
+      ? { backgroundUpdatedAt: existing.backgroundUpdatedAt, backgroundUpdatedBy: existing.backgroundUpdatedBy ?? null } : {}),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     archivedAt: existing?.archivedAt ?? null,
@@ -276,6 +290,8 @@ export function saveTask(ctx: HubContext, raw: unknown): ProjectTask {
     status: existing?.status ?? 'todo',
     wakeIds: existing?.wakeIds ?? [], // 本卡只读：派活卡再维护
     artifactIds: existing?.artifactIds ?? [],
+    // P63：这件事是哪个主题聊出来的，只由负责人工具维护；主人改标题不能把它冲掉。
+    ...(existing?.topicId ? { topicId: existing.topicId } : {}),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     dueAt: input.dueAt === undefined ? (existing?.dueAt ?? null) : input.dueAt,

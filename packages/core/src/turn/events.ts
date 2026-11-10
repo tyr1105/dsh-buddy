@@ -20,6 +20,7 @@ import { syncAlertItems } from '../outreach/alerts.js';
 import { findOpenWake, createOwnerDirectWake } from './session.js';
 import { toolActionLabel } from '../util/action-text.js';
 import { recordDshToolAction, sealLedgerForWake } from '../ledger/service.js';
+import { settleFinishedTopicWake } from '../project/topics.js';
 /** 清理的只可能是本次放行前的旧候选，回合进行期间主人新发的消息必须保留。 */
 export async function finishTurn(ctx: HubContext, wakeId: string, at: number, status: WakeTicket['status'], errorText?: string): Promise<void> {
     const previous = ctx.store.table('wakes').get(wakeId);
@@ -28,6 +29,7 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
     const wake = ctx.store.table('wakes').patch(wakeId, { status, endedAt: at, lastEventAt: Math.max(previous.lastEventAt, at), error: errorText ?? previous.error });
     recordUsage(ctx, { botId: wake.botId, wakeId, tokens: wake.tokensKnown ? wake.tokens : null, steps: wake.steps, packetBytes: wake.packetBytes });
     for (const entry of ctx.store.table('queue').list(q => q.botId === wake.botId && q.enqueuedAt <= wake.startedAt
+        && (q.topicId ?? null) === (wake.topicId ?? null)
         && q.reason.kind === wake.reason.kind && q.reason.evidence.every(id => wake.reason.evidence.includes(id))))
         removeEntry(ctx, entry.id);
     if (errorText)
@@ -55,7 +57,8 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
         ctx.store.table('bots').patch(bot.id, { activity: waiting ? 'waiting_owner' : blocked ? 'blocked' : 'watching',
             activityText: waiting ? '在等主人回复' : blocked ? `受阻：${commit.blocker}` : '继续关注变化',
             lastThinkAt: bot.lastThinkAt === null || !wake.commitId ? at : bot.lastThinkAt, updatedAt: at });
-        if (errorText && bot.retryAt !== null)
+        // P63：主题回合失败不再单独重试，下面按「这一棒跳过」推进讨论，重试只会隔一会儿插错话。
+        if (errorText && bot.retryAt !== null && !wake.topicId)
             enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'retry',
                 score: ctx.settings.c02.deadmanRetryScore, evidence: [wake.id], summary: `上轮出错，按退避重试：${errorText}`,
                 ownerSummary: '上轮处理出错，稍后重新尝试', notBefore: bot.retryAt, now: at }));
@@ -68,6 +71,9 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
     // 不给主人直聊这种没有投递的回合凭空补账本。
     try { sealLedgerForWake(ctx, wake.id); }
     catch (error) { try { ctx.logger.error('封存唤醒账本失败', error); } catch { /* 账本故障不阻断回合收尾。 */ } }
+    // P63：不管这一回合是说了话、没说话还是出错，都在这里决定主题的下一棒交给谁。
+    try { settleFinishedTopicWake(ctx, ctx.store.table('wakes').get(wake.id)!); }
+    catch (error) { try { ctx.logger.error('主题讨论推进失败', error); } catch { /* 主题故障不阻断回合收尾。 */ } }
     await syncAlertItems(ctx);
     ctx.emit(HUB_EVENT_SCOPES.activity, wake.botId);
     ctx.emit(HUB_EVENT_SCOPES.bot, wake.botId);
@@ -103,7 +109,8 @@ export async function onTurnEvent(ctx: HubContext, raw: TurnEvent): Promise<void
                 ctx.store.table('wakes').patch(wake.id, { ownerInitiated: true, ownerDirect: true,
                     variant: 'regular', reason: { kind: 'owner_message', score: ctx.settings.c02.ownerSalience, threshold: 0, summary: e.text.trim() || '主人直接交谈', evidence: wake.reason.evidence } });
             ctx.store.table('bots').patch(bot.id, { activity: 'thinking', activityText: '正在回答主人', updatedAt: e.at });
-            postThread(ctx, { thread: bot.id, from: 'owner', kind: 'chat', text: e.text, refId: wake.id });
+            // P63：主题回合里的直聊也落回主题，否则回复在主题里、主人的话却在私聊里，对不上。
+            postThread(ctx, { thread: wake.topicId ?? bot.id, from: 'owner', kind: 'chat', text: e.text, refId: wake.id });
             ctx.emit(HUB_EVENT_SCOPES.activity, bot.id);
             ctx.emit(HUB_EVENT_SCOPES.bot, bot.id);
             return;
@@ -166,7 +173,7 @@ export async function onTurnEvent(ctx: HubContext, raw: TurnEvent): Promise<void
             }
             const latest = ctx.store.table('wakes').get(wake.id)!;
             if (latest.ownerDirect && !latest.commitId && latest.endedAt === null && e.finalText.trim())
-                postThread(ctx, { thread: bot.id, from: bot.id, kind: 'reply', text: e.finalText, refId: wake.id });
+                postThread(ctx, { thread: latest.topicId ?? bot.id, from: bot.id, kind: 'reply', text: e.finalText, refId: wake.id });
             await finishTurn(ctx, wake.id, e.at, latest.commitId && !latest.syntheticCommit ? 'committed' : 'no_commit');
             if (wake.ownerDirect)
                 ctx.store.log('audit').append({ id: newId('au', ctx.rng), at: e.at, actor: bot.id, action: 'owner_direct_end', detail: wake.id });

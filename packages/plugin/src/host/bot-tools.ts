@@ -17,6 +17,8 @@
  * - 识别机器人：名册 sessionId + 排除 header.origin === 'subagent'。
  */
 import type { Hub } from '@agent-hub/core'
+import { installBotSkillFilter, type BotSkillFilter } from './bot-skill-filter.js'
+import { readDshSkills } from './list-skills.js'
 
 /** 要从机器人会话去掉的工具（verified-T3 Q5-a/Q5-b 清单），preset 层的一并点名。 */
 export const BOT_DENY_TOOLS: readonly string[] = [
@@ -147,18 +149,26 @@ export interface BotToolsInstaller {
   revoke(agentId: string): void
   /** 撤销全部（插件 effect 用）。 */
   disposeAll(): void
+  /** P55：主人改了岗位技能后调用，让各队友的技能清单跟上。 */
+  refreshSkills(): void
 }
 
 export interface BotToolsDeps {
   hub: Hub
   /** 会话是否机器人会话（名册；调用方决定是否排除子代理）。 */
   isBotSession(sessionId: string): boolean
+  /** P55：会话对应哪位队友；不传时不按队友限定技能（测试和旧调用路径）。 */
+  botIdFor?(sessionId: string): string | null
+  /** P55：读 DSH 的完整技能目录（不含队友自己那一层）。 */
+  listAllSkills?: (cwd: string | undefined, signal: AbortSignal | undefined) => Promise<ReadonlyArray<{ name?: unknown; description?: unknown }>>
 }
 
 /** 创建安装器；listener 的挂载由 registerBotToolsLifecycle 完成。 */
 export function createBotToolsInstaller(deps: BotToolsDeps): BotToolsInstaller {
   const disposers = new Map<string, Array<() => unknown>>()
   const installed = new Set<string>()
+  /** P55：每个队友会话一个技能过滤器，主人改了选择时要通知它。 */
+  const skillFilters = new Map<string, BotSkillFilter>()
 
   function isBotAgent(agent: any): boolean {
     if (agent?.session?.header?.origin === 'subagent') return false
@@ -177,6 +187,23 @@ export function createBotToolsInstaller(deps: BotToolsDeps): BotToolsInstaller {
     }
   }
 
+  /** P55：让队友只看得到选中的技能。失败只记日志，最坏结果是它看到全部技能，不影响干活。 */
+  function installSkillFilter(agent: any, agentId: string, list: Array<() => unknown>): void {
+    const { botIdFor, listAllSkills } = deps
+    if (botIdFor === undefined || listAllSkills === undefined) return
+    try {
+      const filter = installBotSkillFilter({ agent, listAll: listAllSkills, allowedNames: () => {
+        const botId = botIdFor(agentId)
+        return botId === null ? null : deps.hub.allowedSkillNames(botId)
+      } })
+      if (filter === null) return
+      skillFilters.set(agentId, filter)
+      list.push(() => { skillFilters.delete(agentId); filter.dispose() })
+    } catch (error) {
+      console.error(`[agent-hub] 安装技能过滤失败（会话 ${agentId}）:`, error)
+    }
+  }
+
   function install(agent: any): void {
     const agentId = String(agent?.id ?? '')
     if (agentId === '' || !isBotAgent(agent) || installed.has(agentId)) return
@@ -191,6 +218,7 @@ export function createBotToolsInstaller(deps: BotToolsDeps): BotToolsInstaller {
     } catch (error) {
       console.error(`[agent-hub] 安装机器人工具失败（会话 ${agentId}）:`, error)
     }
+    installSkillFilter(agent, agentId, list)
     disposers.set(agentId, list)
   }
 
@@ -203,7 +231,8 @@ export function createBotToolsInstaller(deps: BotToolsDeps): BotToolsInstaller {
     }
   }
 
-  return { install, revoke, disposeAll: () => { for (const id of [...disposers.keys()]) revoke(id) } }
+  return { install, revoke, disposeAll: () => { for (const id of [...disposers.keys()]) revoke(id) },
+    refreshSkills: () => { for (const filter of skillFilters.values()) { try { filter.refresh() } catch { /* 刷新失败不影响别的队友 */ } } } }
 }
 
 /** registerBotToolsLifecycle 的返回件：总撤销函数 + 安装器（wireIfBot 补装用）。 */
@@ -220,7 +249,11 @@ export interface BotToolsLifecycle {
  * 安装器交给 HostPort 的 wireIfBot（D07 第 5 条：DSH 另铸会话 id 时补装）。
  */
 export function registerBotToolsLifecycle(ctx: any, deps: BotToolsDeps): BotToolsLifecycle {
-  const installer = createBotToolsInstaller(deps)
+  const installer = createBotToolsInstaller({ ...deps, listAllSkills: deps.listAllSkills ?? ((cwd, signal) => readDshSkills(ctx, cwd ?? '', signal)) })
+  // P55：主人改了岗位技能后让 DSH 重新生成清单。hub 的事件很频繁，真正重算前过滤器会先比较选择有没有变。
+  const offHub = deps.hub.subscribe?.(event => {
+    if (event.scope === 'bot') { try { installer.refreshSkills() } catch { /* 忽略 */ } }
+  })
   const offCreated = ctx.on('agent/created', (payload: any) => {
     // serial 事件：绝不能返回值（会短路官方监听器），绝不能抛错（会让会话创建失败）。
     try { installer.install(payload?.agent) } catch (error) { console.error('[agent-hub] agent/created 安装失败:', error) }
@@ -234,6 +267,7 @@ export function registerBotToolsLifecycle(ctx: any, deps: BotToolsDeps): BotTool
   return {
     installer,
     dispose() {
+      try { offHub?.() } catch { /* 忽略 */ }
       try { offCreated() } catch { /* 忽略 */ }
       try { offDisposed() } catch { /* 忽略 */ }
       installer.disposeAll()

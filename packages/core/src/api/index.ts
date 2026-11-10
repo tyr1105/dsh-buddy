@@ -35,6 +35,7 @@ import {
 } from '../project/context-service.js';
 import { ensureProjectSharedDir } from '../project/shared-dir.js';
 import { dispatchTask } from '../project/dispatch.js';
+import { createProjectTopic } from '../project/topics.js';
 import { KnowledgeBaseConfigSchema, knowledgeHost } from '../model/knowledge-base.js';
 import { checkKnowledgeConnection } from '../knowledge/index.js';
 import type { UiApi } from './types.js';
@@ -114,6 +115,8 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
     attachTaskArtifact: raw => run('attachTaskArtifact', () => attachTaskArtifact(ctx, raw)),
     assignTask: raw => run('assignTask', () => assignTask(ctx, raw)),
     dispatchTask: raw => run('dispatchTask', () => dispatchTask(ctx, raw)),
+    // P63：开主题走统一命令出口；之后的消息沿用 sendMessage，线程 id 就是主题 id。
+    createProjectTopic: raw => run('createProjectTopic', () => createProjectTopic(ctx, raw)),
     taskBlock: id => run('taskBlock', () => taskBlock(ctx, id)),
     taskResume: id => run('taskResume', () => taskResume(ctx, id)),
     reportDone: id => run('reportDone', () => reportDone(ctx, id)),

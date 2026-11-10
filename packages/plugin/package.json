@@ -1,8 +1,18 @@
 {
   "name": "@tyr1105/dsh-buddy",
   "private": true,
-  "version": "0.1.1",
-  "description": "给一人公司（OPC）的 DeepSeek Harness 插件：分角色、派任务、验收返工，需要拍板时才找你。",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness 插件：你的 OPC 专业团队。像素办公室显示每位队友的状态，自主节奏和每日上限由你定。",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "ai-agents",
+    "multi-agent",
+    "ai-team",
+    "opc",
+    "pixel-art"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tyr1105/dsh-buddy.git",

@@ -27,7 +27,9 @@ export function createTicket(ctx: HubContext, input: QueueEntry, sessionId: stri
                 .slice(-ctx.settings.noCommitReflectionCount).map(w => w.id), now }));
     }
     const ticket: WakeTicket = { id: newId('w', ctx.rng), botId: bot.id, sessionId,
-        variant: forceReflection && !approval ? 'reflection' : entry.variant,
+        // P63：主题回合要把话回到主题里，不能改成只读的复盘回合，否则主人等到的是一片空白。
+        variant: forceReflection && !approval && !entry.topicId ? 'reflection' : entry.variant,
+        ...(entry.topicId ? { topicId: entry.topicId } : {}),
         reason: entry.reason, subjectKey: entry.subjectKey, ownerInitiated: entry.ownerInitiated,
         dispatchedAt: null, packetBytes: 0, status: 'delivering', startedAt: now, lastEventAt: now,
         endedAt: null, steps: 0, tokens: 0, tokensKnown: false, steeredAt: null, awaitingApprovalAt: null,

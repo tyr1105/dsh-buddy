@@ -26,16 +26,60 @@ import {
 import { shortTime } from './common.js';
 import type {
   ProjectContextProposalView, ProjectContextRevisionView, ProjectCriterionView, ProjectMemberView,
-  ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView, ProjectView, ProjectViewRow,
+  ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView, ProjectTopicView, ProjectView, ProjectViewRow,
 } from './types.js';
+import { V2_DEFAULTS } from '../config/defaults.js';
+import { ROLE_LABELS } from '../model/enums.js';
+import type { Project, ProjectTopic } from '../model/project.js';
+import { threadDigests, type ThreadDigest } from '../outreach/thread.js';
 
 /** 展开一个成员队友；队友档案查不到时 name 为 null、invalid 为 true，问题里另有具体说明。 */
-function memberView(botId: string, bots: Map<string, Bot>): ProjectMemberView {
+function memberView(botId: string, bots: Map<string, Bot>, ownerBotId: string | null): ProjectMemberView {
   const bot = bots.get(botId) ?? null;
   return {
     botId,
     name: bot?.name ?? null,
     invalid: bot === null || bot.lifecycle === 'retired',
+    role: bot?.role ?? null,
+    roleLabel: bot ? ROLE_LABELS[bot.role] : null,
+    isOwner: botId === ownerBotId,
+  };
+}
+
+/** 把线程消息压成一行预览：换行折叠成斜杠，按完整字符截断。 */
+function previewOf(text: string): string {
+  const flat = text.replace(/\r?\n/g, ' / ').trim();
+  const chars = [...flat];
+  return chars.length <= V2_DEFAULTS.TOPIC_PREVIEW_CHARS ? flat : `${chars.slice(0, V2_DEFAULTS.TOPIC_PREVIEW_CHARS).join('')}…`;
+}
+
+/** 项目页的主题列表：最近有消息的排前面，未读和预览来自同一次线程汇总。 */
+function topicViews(ctx: HubContext, topics: readonly ProjectTopic[], digests: Map<string, ThreadDigest>, bots: Map<string, Bot>): ProjectTopicView[] {
+  return [...topics].sort((a, b) => b.lastMessageAt - a.lastMessageAt).map(topic => {
+    const digest = digests.get(topic.id);
+    const last = digest?.last ?? null;
+    return {
+      id: topic.id,
+      title: topic.title,
+      lastMessageAt: topic.lastMessageAt,
+      lastMessageText: shortTime(ctx, topic.lastMessageAt),
+      unread: digest?.unread ?? 0,
+      lastMessagePreview: last ? previewOf(last.text) : null,
+      lastMessageFrom: last === null ? null : last.from === 'owner' ? '主人' : last.from === 'hub' ? 'Agent 中心' : bots.get(last.from)?.name ?? '已删除的队友',
+    };
+  });
+}
+
+/** 项目背景的展示字段：更新人翻译成人话，旧项目没记录时就显示没更新过，不编造。 */
+function backgroundView(ctx: HubContext, project: Project, background: string, bots: Map<string, Bot>): ProjectViewRow['background'] {
+  const updatedBy = project.backgroundUpdatedBy ?? null;
+  const updatedAt = project.backgroundUpdatedAt ?? null;
+  return {
+    text: background,
+    updatedBy,
+    updatedByName: updatedBy === null ? null : updatedBy === 'owner' ? '主人' : bots.get(updatedBy)?.name ?? '已删除的队友',
+    updatedAt,
+    updatedText: shortTime(ctx, updatedAt),
   };
 }
 
@@ -107,6 +151,9 @@ function taskView(
   }
   return {
     task,
+    title: task.title,
+    assigneeName: assignee?.name ?? null,
+    topicId: task.topicId ?? null,
     statusLabel: TASK_STATUS_LABELS[task.status],
     assigneeBotId,
     assigneeBotName: assignee?.name ?? null,
@@ -182,6 +229,10 @@ export function projectView(ctx: HubContext): ProjectView {
     }
   }
 
+  // 全部主题的未读和预览一次算完，不按主题逐条扫线程日志。
+  const allTopics = ctx.store.table('projectTopics').list();
+  const digests = threadDigests(ctx, allTopics.map(topic => topic.id));
+
   const rows: ProjectViewRow[] = sortProjectsForView(projects).map(project => {
     const summary = summarizeProject(project, tasks, botList);
     const projectTasks = sortTasksForView(tasks.filter(task => task.projectId === project.id));
@@ -198,7 +249,7 @@ export function projectView(ctx: HubContext): ProjectView {
       // 失效队友名字给 null 并用 ownerInvalid 标记，界面不猜名字。
       ownerName: owner?.name ?? null,
       ownerInvalid: summary.ownerInvalid,
-      members: project.memberBotIds.map(botId => memberView(botId, bots)),
+      members: project.memberBotIds.map(botId => memberView(botId, bots, project.ownerBotId)),
       criteria,
       tasks: projectTasks.map(task => taskView(
         ctx, task, artifactVersions, latestReviews, ledgersByWake, bots,
@@ -226,6 +277,10 @@ export function projectView(ctx: HubContext): ProjectView {
       contextFilePath: projectContextPath(project),
       contextRevisions: contextRevisionViews(ctx, project, bots),
       contextProposals: contextProposalViews(ctx, project, bots),
+      // P60/P63：项目页收成队友、事务、背景、路径、主题，下面三项是新页面直接用的。
+      background: backgroundView(ctx, project, context.background, bots),
+      path: { workspaceDir: project.sharedDir, sharedDir: project.sharedDir },
+      topics: topicViews(ctx, allTopics.filter(topic => topic.projectId === project.id), digests, bots),
     };
   });
 
