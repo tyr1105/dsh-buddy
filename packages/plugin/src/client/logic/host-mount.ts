@@ -63,7 +63,7 @@ export function fallbackSpace(reason: SpaceFallbackReason): HostSpaceState {
  */
 export function findHostSpaceRoot(doc: Document): HTMLElement | null {
   const nav = findHostNavigation(doc)
-  if (nav?.parentElement) return nav.parentElement
+  if (nav?.parentElement) return liftOutOfGrid(nav.parentElement)
   // 入口图标所在的导航可能被包在功能列表内部：直接取父节点会把「侧栏根」认成
   // 一小段面板，原生工作区区域就不在根下，去重时漏掉它。所以从这个节点向上找
   // 同时含功能列表与工作区区域的祖先，找不到才退回第一父节点。
@@ -76,6 +76,34 @@ export function findHostSpaceRoot(doc: Document): HTMLElement | null {
   const anchor = (doc.querySelector('[class*="logoRow"]')
     ?? doc.querySelector('button[class*="newSession"]')) as HTMLElement | null
   return enclosingSidebarRoot(anchor?.parentElement ?? null)
+}
+
+/**
+ * 0.2.2 起宿主把功能列表与工作区区域放进侧栏内部的滚动容器，该容器是
+ * `display:grid` 且首列就是 4px 的内边距轨道。直接往这种 grid 里插节点会落进
+ * 那条轨道，被压成十几个像素宽（实测切换器 16×26、队友导航 6×8）。
+ * 所以遇到 grid 就上浮到外面那层真正的「侧栏列」再插。
+ */
+function liftOutOfGrid(mount: HTMLElement): HTMLElement {
+  // 测试与降级环境里可能没有真实 document：拿不到布局就维持原挂载点。
+  const win = mount.ownerDocument?.defaultView ?? null
+  if (!win) return mount
+  const displayOf = (el: Element | null): string => (win && el ? win.getComputedStyle(el).display : '')
+  const display = displayOf(mount)
+  if (display !== 'grid' && display !== 'inline-grid') return mount
+  // 唯一的 grid 也可能是侧栏本身（更老的宿主），此时父级不再同时含两块区域，
+  // best 保持 mount，行为与改动前一致。
+  let best = mount
+  let current = mount.parentElement
+  for (let depth = 0; depth < 3 && current; depth += 1) {
+    const outer = displayOf(current)
+    const layout = outer === 'flex' || outer === 'inline-flex' || outer === 'grid' || outer === 'inline-grid'
+    if (layout && current.querySelector('[class*="panelList"]') && current.querySelector('[class*="regionArea"]')) {
+      best = current
+    }
+    current = current.parentElement
+  }
+  return best
 }
 
 /**

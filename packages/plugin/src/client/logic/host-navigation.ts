@@ -47,6 +47,9 @@ export function watchHostNavigation(doc: Document): () => void {
   let sizes: ResizeObserver | null = null
   let watchedParent: HTMLElement | null = null
   let stopped = false
+  let scheduled = false
+  let removals = 0
+  let removalWindowStart = 0
 
   // 还原原值而不是一律删属性，确保卸载不改宿主已有的语义。
   const clear = (): void => {
@@ -76,6 +79,29 @@ export function watchHostNavigation(doc: Document): () => void {
       saveNavigationCollapsed(storage, collapsed)
     } catch (error) { console.error('[agent-hub] 切换功能导航失败:', error) }
   }
+  const dispose = (): void => {
+    stopped = true
+    try {
+      mutations?.disconnect()
+      sizes?.disconnect()
+      win?.removeEventListener('resize', schedule)
+      clear()
+    } catch (error) { console.error('[agent-hub] 清理功能折叠开关失败:', error) }
+  }
+  /**
+   * MutationObserver 的回调是微任务：在回调里同步写 DOM 会立刻再触发一次回调，
+   * 形成永不 yield 的微任务链。0.2.2-rc.2 的侧栏会被这条链占满渲染主线程，
+   * 启动屏永远停在 Loading plugins。所以观察器一律只回这个调度器，
+   * 真正的 DOM 写入推迟到下一帧。
+   */
+  const schedule = (): void => {
+    if (stopped || scheduled) return
+    scheduled = true
+    const run = (): void => { scheduled = false; sync() }
+    const raf = win?.requestAnimationFrame
+    if (typeof raf === 'function') raf.call(win, run)
+    else setTimeout(run, 0)
+  }
   const sync = (): void => {
     if (stopped) return
     try {
@@ -88,6 +114,18 @@ export function watchHostNavigation(doc: Document): () => void {
       }
       const next = candidate && hasExpandedSidebar(candidate) ? candidate : null
       if (next === nav && button?.nextElementSibling === next) return
+      if (nav && next === nav) {
+        // 同一个 nav 但按钮不在了：宿主重渲染把我方节点摘掉了。偶尔补回没问题，
+        // 但每帧都摘说明宿主正在接管这层 DOM，继续插只会互相打断并烧掉主线程。
+        const now = Date.now()
+        if (now - removalWindowStart > 2000) { removalWindowStart = now; removals = 0 }
+        removals += 1
+        if (removals > 8) {
+          console.warn('[agent-hub] 宿主反复移除功能折叠按钮，本次运行不再挂载它')
+          dispose()
+          return
+        }
+      }
       if (!next && !nav) return
       clear()
       if (!next) return
@@ -122,27 +160,19 @@ export function watchHostNavigation(doc: Document): () => void {
     }
   }
   try {
-    if (win && 'ResizeObserver' in win) sizes = new win.ResizeObserver(sync)
+    if (win && 'ResizeObserver' in win) sizes = new win.ResizeObserver(schedule)
     if (win && 'MutationObserver' in win) {
-      mutations = new win.MutationObserver(sync)
+      mutations = new win.MutationObserver(schedule)
       mutations.observe(doc.body, {
         childList: true, subtree: true, attributes: true,
         attributeFilter: ['class', 'data-sidebar-collapsed'],
       })
     }
-    win?.addEventListener('resize', sync)
+    win?.addEventListener('resize', schedule)
     sync()
   } catch (error) {
     try { clear() } catch { /* 保留宿主导航，不传播挂载异常 */ }
     console.error('[agent-hub] 观察功能导航失败:', error)
   }
-  return () => {
-    stopped = true
-    try {
-      mutations?.disconnect()
-      sizes?.disconnect()
-      win?.removeEventListener('resize', sync)
-      clear()
-    } catch (error) { console.error('[agent-hub] 清理功能折叠开关失败:', error) }
-  }
+  return dispose
 }
