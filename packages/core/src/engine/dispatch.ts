@@ -6,19 +6,24 @@ import type { QueueEntry, WakeTicket } from '../model/index.js';
 import { selectNext } from '../scheduler/select.js';
 import { enqueue, removeEntry } from '../scheduler/queue.js';
 import { buildCandidate } from '../appraisal/think.js';
-import { hasApprovalDecision } from '../util/approval-candidate.js';
+import { hasApprovalDecision, ownerDecidedByEvidence } from '../util/approval-candidate.js';
 import { logAppraisal } from '../appraisal/log.js';
 import { onDispatchOrTurnError } from '../scheduler/retry.js';
 import { createTicket } from '../wake/ticket.js';
+import { refundJobTurn } from '../job/turns.js';
+import { refundSkillTurn } from '../skill/run.js';
+import { parseSkillKey } from '../skill/keys.js';
 import { buildWakePacket } from '../wake/packet.js';
 import { needsRotation } from '../memory/rotation.js';
 import { beginQuotaWindow, consumeProbe, maybeAllowProbe, onProbeResult } from '../quota/window.js';
+import { computeStaffLight, getQuotaPlan } from '../quota/plan.js';
 import { postThread } from '../outreach/thread.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { createDeliveryWaits } from './delivery-wait.js';
 import { consumeRelatedPercepts } from '../scheduler/percept-consumption.js';
 import { openLedgerForWake, sealLedgerForWake } from '../ledger/service.js';
 import { settleFailedTopicDelivery } from '../project/topics.js';
+import { verifyBeforeDelivery } from '../turn/pre-delivery.js';
 
 /** pump 由 Hub 串行入口调用；探针身份仅绑定实际投递的唤醒单。 */
 export function createDispatcher(ctx: HubContext) {
@@ -27,8 +32,15 @@ export function createDispatcher(ctx: HubContext) {
   /** 红灯下主人消息保留在队列，并且每条消息只给一次明确回复。 */
   function explainQuota(): void {
     for (const id of redNotified.keys()) if (!ctx.store.table('queue').get(id)) redNotified.delete(id);
-    if (ctx.store.table('quota').get('quota')?.light !== 'red') return;
+    const quota = ctx.store.table('quota').get('quota');
+    if (quota?.light !== 'red') return;
+    // P76d：员工份额用完的红灯放行你发起的消息（不需要保留，也不需要说明）；只有真实额度用完才保留并说明。
+    const verdict = computeStaffLight(getQuotaPlan(ctx, ctx.clock.now()), quota, ctx.settings);
+    if (verdict.redKind === 'staff_full') return;
     for (const entry of ctx.store.table('queue').list(q => q.ownerInitiated)) {
+      // P75r5c（审查 L3）：技能类的键（学习、复盘、整理、核对）不是主人发来的消息，这句「消息已保留」对它们既不准确，
+      // 也违反「学习不落私聊」；跳过。
+      if (parseSkillKey(entry.subjectKey) !== null) continue;
       const key = `${entry.id}:${entry.reason.evidence.join(',')}`;
       if (redNotified.get(entry.id) === key) continue;
       redNotified.set(entry.id, key);
@@ -80,7 +92,9 @@ export function createDispatcher(ctx: HubContext) {
       ctx.store.table('queue').patch(entry.id, { reason: entry.reason });
       enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'approval_decided',
         score: ctx.settings.c02.replySalience, summary: '主人审批结果已有更新，当前状态见审批结果节',
-        evidence: approvalEvidence, subjectKey: `approval:deferred:${bot.id}`, now: ctx.clock.now() }));
+        evidence: approvalEvidence, subjectKey: `approval:deferred:${bot.id}`, now: ctx.clock.now(),
+        // P76r1 小修：证据里只要有一条是主人亲手批准或拒绝的，这条拆出来的候选就不算员工自己发起的；全部是到期处理的不带。
+        ...(ownerDecidedByEvidence(ctx, bot.id, approvalEvidence) ? { ownerDecided: true } : {}) }));
     }
     let wake: WakeTicket = createTicket(ctx, entry, bot.sessionId);
     const delivery = deliveries.open(wake.id);
@@ -104,12 +118,20 @@ export function createDispatcher(ctx: HubContext) {
         // 主人直聊占用会话时保留候选与感知，临时投递占位不能冒充一次真实回合。
         const now = ctx.clock.now();
         ctx.store.table('wakes').remove(wake.id);
+        // P74c：这次没有真正开始，退还建唤醒单时计的那个执行链回合。
+        refundJobTurn(ctx, wake);
+        // P75r5b：技能类回合同样退还（回合数减一、参与者从进行中改回排队中），候选还在队列里。
+        refundSkillTurn(ctx, wake);
         ctx.store.table('queue').patch(entry.id, { notBefore: now + ctx.settings.tickMs });
         logAppraisal(ctx, { botId: bot.id, at: now, perceptIds: entry.reason.evidence, score: entry.reason.score,
           threshold: entry.reason.threshold, decision: 'suppressed', suppressedBy: 'concurrency', until: now + ctx.settings.tickMs,
           text: `${ownerReasonSummary(entry.reason, ctx)}：主人会话正在运行，结束后再投递` });
         return false;
       }
+      // P75r3 第 1.5 节：真正投递之前先核对这位员工的技能目录（主人打断、宿主崩溃、别的员工改写的情形不经回合结束核对）。
+      // 没有问题时不写文件、不发事件；出错记审计和告警、不阻止投递。
+      await delivery.wait(verifyBeforeDelivery(ctx, bot.id));
+      assertNotInterrupted();
       probe = consumeProbe(ctx, wake.id);
       const rotate = needsRotation(bot, info, ctx.clock.now(), ctx.settings);
       if (rotate) wake = ctx.store.table('wakes').patch(wake.id, { sessionId: null });
@@ -132,7 +154,8 @@ export function createDispatcher(ctx: HubContext) {
         assertNotInterrupted();
         if (!created.sessionId?.trim()) throw new Error('宿主未返回有效的 sessionId');
         sessionId = created.sessionId;
-        ctx.store.table('bots').patch(bot.id, { sessionId, sessionStartedAt: ctx.clock.now() });
+        // P74r10：同时记下这次建会话交给宿主的模型，之后员工换了模型才能看出与会话不一致。
+        ctx.store.table('bots').patch(bot.id, { sessionId, sessionStartedAt: ctx.clock.now(), sessionModel: bot.model });
       } else await delivery.wait(ctx.host.deliver(sessionId!, packet, source));
       assertNotInterrupted();
       const now = ctx.clock.now();
@@ -160,6 +183,10 @@ export function createDispatcher(ctx: HubContext) {
       const text = error instanceof Error ? error.message : String(error);
       ctx.logger.error(`机器人 ${bot.id} 投递失败`, error);
       ctx.store.table('wakes').patch(wake.id, { status: 'error', error: text, endedAt: now, lastEventAt: now, dispatchedAt: null });
+      // P74c：没有送达就不算一个回合（候选还在队列里，退避之后会再投递一次，那一次才计数）。
+      refundJobTurn(ctx, wake);
+      // P75r5b：技能类回合同样没有送达就不算回合；参与者改回排队中，候选留在队列里，退避之后再投递。
+      refundSkillTurn(ctx, wake);
       // 投递失败也要留一条账本：主人需要区分「没有理由」和「有理由但没送出去」。
       try { sealLedgerForWake(ctx, wake.id, { createIfMissing: true }); }
       catch (sealError) { try { ctx.logger.error('投递失败后封存唤醒账本失败', sealError); } catch { /* 账本故障不阻断故障收尾。 */ } }

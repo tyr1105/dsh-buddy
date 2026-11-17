@@ -92,6 +92,7 @@ describe('仓库里的草稿', () => {
     const { hub, command } = setup()
     const leaves: Array<() => void> = [
       () => hub.selectThread('bot-tanlu'),
+      // P71：点旧的团队入口会落到办公室，同样要清掉草稿。
       () => hub.selectThread('team'),
       () => hub.setView('office'),
       () => hub.requestProject('prj_weekly'),
@@ -145,7 +146,7 @@ describe('入口只进草稿，不建主题', () => {
     const onOpenTopicDraft = vi.fn()
     const onCreateSession = vi.fn(async () => null)
     const props: TeamSidebarNavProps = {
-      overview: fixtureOverview, project: fixtureProject, view: 'main', selectedThread: 'team',
+      overview: fixtureOverview, project: fixtureProject, view: 'main', selectedThread: '',
       onOpenOffice: () => undefined, onSelectBot: () => undefined, onOpenInbox: () => undefined, onOpenSettings: () => undefined,
       onNewBot: () => undefined, onOpenProject: () => undefined, onOpenTopic: () => undefined, onCreateSession, onOpenTopicDraft,
     }
@@ -210,7 +211,7 @@ describe('草稿聊天的样子与失败提示', () => {
     const text = textOf(tree)
     expect(text).toContain('新会话')
     expect(text).toContain('竞品周报自动化')
-    expect(text).toContain('@ 队友')
+    expect(text).toContain('@ 员工')
     expect(text).toContain('这条会话做什么？')
     const textarea = findElements(tree, 'textarea')[0]!
     expect(textarea.props.placeholder).toBe('默认发给 探路，@ 可以点名…')

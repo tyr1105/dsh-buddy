@@ -6,6 +6,7 @@
  * GET 一律 requestBody:'buffered'（省略会让 GET 带上流式 body 而 400，verified-T5 Q3-1 推断）。
  */
 import type { HubFacade } from './hub-facade.js'
+import { requireSkillText } from './skill-input.js'
 
 const JSON_TYPE = 'application/json; charset=utf-8'
 
@@ -59,13 +60,14 @@ export function buildRoutes(hub: HubFacade): FetchRoute[] {
     get('/api/agent-hub/inbox', () => hub.inbox()),
     get('/api/agent-hub/activity', async (request) => hub.activity({ before: query(request, 'before'), limit: queryInt(request, 'limit') })),
     get('/api/agent-hub/settings', () => hub.settings()),
+    // P76k：设置页「最近 7 天的用量」表（只读；旧宿主没有这条路由，界面据失败与否决定是否显示）。
+    get('/api/agent-hub/weekly-usage', () => hub.weeklyUsage()),
     // 办公室（F03）：一次读一屏纯投影，不接受任何写参数。
     get('/api/agent-hub/office', () => hub.office()),
     // 资料授权矩阵（V2-PH2-04）：资料、授权展开行与计数的只读组装。
     get('/api/agent-hub/resource', () => hub.resource()),
     // 项目容器（V2-PH4-02）：项目分区、成员/验收项/任务展开、问题与计数的只读组装。
     get('/api/agent-hub/project', () => hub.project()),
-    get('/api/agent-hub/recent-sessions', () => hub.recentSessions()),
     // 账本只读视图：按机器人取摘要、按唤醒单取一次完整记录。
     get('/api/agent-hub/wake-ledger', async (request) => {
       const botId = query(request, 'botId')
@@ -77,6 +79,13 @@ export function buildRoutes(hub: HubFacade): FetchRoute[] {
       if (!wakeId) throw new Error('缺少参数 wakeId（要哪次唤醒的账本）')
       return hub.wakeLedgerDetail(wakeId)
     }),
+    // P75j：技能库一栏（按员工）与技能详情（按技能）；参数检查与命令同一套，缺参数报中文错误。
+    get('/api/agent-hub/skill-library', async (request) => hub.skillLibrary(requireSkillText({ botId: query(request, 'botId') }, 'botId'))),
+    get('/api/agent-hub/skill-detail', async (request) => hub.skillDetail(requireSkillText({ skillId: query(request, 'skillId') }, 'skillId'))),
+    // P76j：某位员工的「在办的事」；缺参数报中文错误，读失败由上面统一的兜错层处理。
+    get('/api/agent-hub/active-jobs', async (request) => hub.activeJobs(requireSkillText({ botId: query(request, 'botId') }, 'botId'))),
+    // P75k：「关于你的记忆」一页（全队共用一份，不带参数）；视图由 core 读存储生成，不调用模型。
+    get('/api/agent-hub/memory-page', () => hub.memoryPage()),
     {
       path: '/api/agent-hub/command', methods: ['POST'], requestBody: 'buffered',
       fetch: async (request) => {

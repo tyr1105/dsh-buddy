@@ -1,16 +1,19 @@
-/** 将健康模块的开放告警同步到收件箱和线程；逐条隔离通知失败，恢复后关闭对应卡片。 */
+/** 将健康模块的开放告警同步到收件箱和队友私聊（P71 起不再写团队线程）；逐条隔离通知失败，恢复后关闭对应卡片。 */
 import type { HubContext } from '../engine/context.js';
 import { createInboxItem, closeAlertItem } from './inbox.js';
 import { postThread } from './thread.js';
-import { requestPush } from './push.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { reconcileOpenAlerts } from '../health/alerts.js';
 import { writeOutreachAudit } from './audit.js';
+import { suspendedAlertTitle } from '../job/suspended.js';
 
 /** 内部 code 只用于合并；主人看到稳定的中文名称，未知类型也不会暴露实现标记。 */
 const alertNames: Readonly<Record<string, string>> = {
     quota: '额度', auth: '鉴权', deadman: '掉线', quarantine: '隔离',
     protected_verify: '受保护文件校验', host_approval_blocked: '宿主审批受阻', host_approval_wait: '宿主审批等待',
+    // P75h：第四块的四条告警。升级整理（P75f 迁移，两种代号）与技能目录（P75r3，两种代号）各用一个中文名。
+    'p75:migration': '升级整理', 'p75:migration-skipped': '升级整理',
+    skill_dir_replaced: '技能目录', skill_verify_failed: '技能目录',
 };
 
 /** 把开放告警同步为主人可处理的卡片和线程消息，通知失败仅影响当前告警。 */
@@ -42,7 +45,11 @@ export async function syncAlertItems(ctx: HubContext): Promise<void> {
             continue;
         }
         const bot = alert.botId ? ctx.store.table('bots').get(alert.botId) : null;
-        const title = `${bot?.name ?? '中心'}告警：${Object.hasOwn(alertNames, alert.code) ? alertNames[alert.code] : '异常'}`;
+        // P73r1：「项目负责人已归档」告警的代码带项目 id，按前缀识别名称。
+        const alertName = alert.code.startsWith('project_owner_archived:') ? '项目负责人已归档'
+            : Object.hasOwn(alertNames, alert.code) ? alertNames[alert.code] : '异常';
+        // P74r16b：员工被中心停用这一种告警，标题直接写事实；其余告警不变。
+        const title = alert.code === 'quarantine' && bot ? suspendedAlertTitle(bot.name) : `${bot?.name ?? '中心'}告警：${alertName}`;
         // 兼容旧版本同 id 重开的存档；新发生的观测晚于关闭时间时补卡，重复 tick 不重复补。
         const reopened = existing && existing.status !== 'open'
             && alert.lastAt > (existing.answeredAt ?? existing.createdAt);
@@ -58,16 +65,15 @@ export async function syncAlertItems(ctx: HubContext): Promise<void> {
         // 去重主题属于本轮卡片：恢复后的新轮故障仍按 P0/P1/P2 规则通知，不被旧轮的 24 小时去重吞掉。
         const item = createInboxItem(ctx, { botId: alert.botId, type: 'alert', title,
             body: alert.text, priority: alert.level, refId: alert.id,
-            subjectKey: `alert:${alert.botId ?? 'hub'}:${alert.code}:${alert.episodeId ?? alert.id}:${existing?.id ?? 'first'}` });
-        postThread(ctx, { thread: alert.botId ?? 'team', from: 'hub', kind: 'alert', text: alert.text, refId: item.id });
-        // P2 只进收件箱与日报，不挤占提问、审批的单推预算。
-        if (alert.level === 'P2') continue;
-        try {
-            const result = await requestPush(ctx, { botId: alert.botId, level: alert.level, title: item.title, body: alert.text, subjectKey: item.subjectKey });
-            ctx.store.table('inbox').patch(item.id, { pushed: result === 'sent' });
-        }
-        catch (error) {
-            ctx.logger.warn('告警已进收件箱，单推失败', String(error));
-        }
+            subjectKey: `alert:${alert.botId ?? 'hub'}:${alert.code}:${alert.episodeId ?? alert.id}:${existing?.id ?? 'first'}` },
+            // P76h：告警代码只用于判断通知类别：鉴权失败推送一次（P0），其余告警只进「待你处理」。
+            { alertCode: alert.code });
+        // P71：团队全景已下线。队友的告警落到它自己的私聊；没有对应队友的中心告警只进「待你处理」（上面已建卡），
+        // 不再写进任何对话。卡片正文以后会随告警更新，所以中心告警的当时原文改记一条审计，事后仍能核对推送内容。
+        if (alert.botId !== null)
+            postThread(ctx, { thread: alert.botId, from: 'hub', kind: 'alert', text: alert.text, refId: item.id });
+        else
+            writeOutreachAudit(ctx, 'hub_alert_original', { inboxId: item.id, alertId: alert.id, text: alert.text });
+        // P76h：这里原来自己调用 requestPush 推送告警，已删除；推送统一由 createInboxItem 按类别经 notifyOwner 发出（只有鉴权告警推送）。
     }
 }

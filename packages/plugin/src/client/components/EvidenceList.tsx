@@ -1,0 +1,224 @@
+/**
+ * 证据清单（P74h，设计稿场景 C）：交回卡、核对卡（P74i 的交付卡也用它）共用的清单，
+ * 每一行对应约定里「怎样算做完」的一条：左边序号，中间条目原文和证据，右边结论小章。
+ * 不符的行整行浅警示底色；「改到什么程度算过」单独一块，避免和「问题」混在一起。
+ *
+ * 截图证据（kind 为 image）是缩略图：进入视口后才经命令 readJobEvidence 请求（P74g 接宿主），
+ * 同一张图在同一次页面里只请求一次（logic/job.ts 的内存缓存）；读取中显示灰色占位框；
+ * 点缩略图打开大图，Esc 关闭、焦点回到缩略图。宽屏截图（宽大于高）显示 150 像素宽。
+ */
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { EvidenceItemView } from '../../shared/views.js'
+import { JOB_TEXT, evidenceTag, loadShot, returnFocus, trapTabIn, verdictClass, type ShotEntry, type ShotReader } from '../logic/job.js'
+import { api } from '../api.js'
+
+/**
+ * 截图读取命令的定位参数：core 的卡片视图不带内部编号，由接线的一层补上
+ * （消息的 refId 写着 submission:<id>；jobId 由宿主接线时给出，P74g 一并接好）。
+ * 没有 shotRef 时（旧数据、还没接线），截图只显示占位框，不发起请求。
+ */
+export interface ShotRef { jobId: string; submissionId: string }
+
+/** 截图缩略图：进入视口才请求；读取中占位；点开大图，Esc 关闭并还焦。 */
+export function ShotThumb(props: {
+  shotRef: ShotRef | null
+  evidence: EvidenceItemView['evidence'][number]
+  readShot?: ShotReader
+}): ReactNode {
+  const { evidence } = props
+  const read = props.readShot ?? ((input: Parameters<ShotReader>[0]) => api.readJobEvidence(input))
+  const [inView, setInView] = useState(false)
+  const [entry, setEntry] = useState<ShotEntry | null>(null)
+  const [wide, setWide] = useState(false)
+  const [open, setOpen] = useState(false)
+  /** 观察目标：外层的框（缩略图读取前后都在）；读取前的占位框不是按钮，没有 ref 可挂。 */
+  const wrapRef = useRef<HTMLSpanElement | null>(null)
+  /** 大图关闭后焦点回到缩略图（读取完成前是占位框，没有可聚焦的元素）。 */
+  const thumbRef = useRef<HTMLButtonElement | null>(null)
+  /** P74i：大图按模态弹窗处理——打开时焦点进入弹窗（弹窗本身可聚焦，Esc 关闭后焦点回到缩略图）。 */
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  /** P74i-m1（走查 D-11）：弹窗右上角的「关闭」按钮；焦点圈（Tab 循环）在弹窗与它之间转。 */
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+
+  // 大图打开时把焦点放进弹窗：键盘与读屏都以弹窗为起点；失败不影响图片本身。
+  useEffect(() => {
+    if (open) { try { dialogRef.current?.focus?.() } catch { /* 聚焦失败不影响显示 */ } }
+  }, [open])
+
+  // 进入视口的判断：用浏览器的 IntersectionObserver；环境里没有（测试替身）就当作已经进入视口，
+  // 宁可多请求一次，也不能让缩略图永远空着。任何一步出错都不影响清单其余部分。
+  useEffect(() => {
+    if (inView) return
+    const element = wrapRef.current
+    type ObserverCtor = new (callback: (records: Array<{ isIntersecting: boolean }>) => void, options?: { rootMargin?: string }) =>
+      { observe(el: object): void; disconnect(): void }
+    const Observer = (globalThis as { IntersectionObserver?: ObserverCtor }).IntersectionObserver
+    if (element === null || Observer === undefined) { setInView(true); return }
+    try {
+      const observer = new Observer(records => {
+        try { if (records.some(record => record.isIntersecting)) setInView(true) } catch { /* 回调出错按未进入视口处理 */ }
+      }, { rootMargin: '200px' })
+      observer.observe(element)
+      return () => { try { observer.disconnect() } catch { /* 清理失败不影响界面 */ } }
+    } catch { setInView(true); return }
+  }, [inView])
+
+  // 进入视口后请求一次；结果留在组件状态里，缓存保证同一张图不再请求。
+  // 没有 shotRef（旧数据、命令还没接线）时不请求：占位框比一次注定失败的请求更安静。
+  useEffect(() => {
+    if (!inView || entry !== null || props.shotRef === null) return
+    let alive = true
+    void loadShot(read, { ...props.shotRef, evidenceId: evidence.id })
+      .then(loaded => { if (alive) setEntry(loaded) })
+      .catch(() => { if (alive) setEntry({ state: 'error', error: '没有读到截图。' }) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 读取函数来自 props 或 api，结果只按证据 id 缓存一次
+  }, [inView, entry === null, evidence.id, props.shotRef])
+
+  // 大图：Esc、点遮罩空白处、「关闭」按钮都关闭，并把焦点还给缩略图。
+  const close = (): void => {
+    setOpen(false)
+    returnFocus(thumbRef.current)
+  }
+
+  /**
+   * P74i-m1（走查 D-11）：大图浮在页面之上——固定定位的全屏遮罩弹窗，不再在缩略图原位插块。
+   * - Esc 关闭；Tab 只在弹窗里循环（弹窗本身与「关闭」按钮之间，trapTabIn），页面其余部分到不了；
+   * - 点遮罩空白处关闭（弹窗自身拦截点击，点图片不误关）；
+   * - 没有过渡动画（减少动态效果时也没有）。环境缺方法（测试替身）时安静跳过。
+   */
+  const dialogKeyDown = (event: { key: string; shiftKey: boolean; preventDefault(): void; stopPropagation?: () => void }): void => {
+    if (event.key === 'Escape') { try { event.stopPropagation?.() } catch { /* 测试替身没有这个方法也不影响关闭 */ } close(); return }
+    if (event.key !== 'Tab') return
+    let active: unknown = null
+    try { active = document.activeElement } catch { active = null }
+    if (trapTabIn([dialogRef.current, closeRef.current], active, event.shiftKey)) event.preventDefault()
+  }
+
+  const caption = <span className="ah-shot-caption">{evidence.summary}</span>
+  return (
+    <span className="ah-shot" ref={wrapRef}>
+      {entry !== null && entry.state === 'ok' ? (
+        <button
+          type="button"
+          ref={thumbRef}
+          className={`ah-shot-btn${wide ? ' is-wide' : ''}`}
+          aria-label={JOB_TEXT.shotOpen}
+          onClick={() => { setOpen(true) }}
+        >
+          {/* 读取到实际尺寸后，宽屏（宽大于高）的截图显示 150 像素宽。 */}
+          <img src={entry.dataUrl} alt={evidence.summary} onLoad={event => {
+            const img = event.target as HTMLImageElement | null
+            try { if (img !== null && img.naturalWidth > img.naturalHeight) setWide(true) } catch { /* 尺寸读不到按普通宽度 */ }
+          }} />
+        </button>
+      ) : (
+        <span className={`ah-shot-placeholder${entry !== null && entry.state === 'error' ? ' is-error' : ''}`} aria-label={evidence.summary}>
+          {/* 出错显示错误文字；请求中显示「读取中」；没有定位参数（还没接线）时只画占位框。 */}
+          {entry !== null && entry.state === 'error' ? entry.error : inView && props.shotRef !== null ? JOB_TEXT.shotLoading : null}
+        </span>
+      )}
+      {caption}
+      {open && entry !== null && entry.state === 'ok' ? (
+        // P74i-m1（走查 D-11）：真正的遮罩弹窗——全屏遮罩浮在页面之上，图片居中、按窗口等比缩小；
+        // 右上角「关闭」，点遮罩空白处、按 Esc 都关闭；Tab 只在弹窗里循环（见 dialogKeyDown）。
+        // 弹窗清单登记在无障碍契约测试（accessibility-contract.test.ts）里。
+        <div className="ah-shot-overlay" onClick={close}>
+          <div ref={dialogRef} className="ah-shot-dialog" role="dialog" aria-modal="true" tabIndex={-1}
+            aria-label={JOB_TEXT.shotDialogLabel}
+            onClick={event => { event.stopPropagation() }}
+            onKeyDown={dialogKeyDown}>
+            <button type="button" ref={closeRef} className="ah-btn ah-shot-dialog-close" onClick={close}>{JOB_TEXT.shotClose}</button>
+            <img src={entry.dataUrl} alt={evidence.summary} />
+          </div>
+        </div>
+      ) : null}
+    </span>
+  )
+}
+
+/**
+ * 一项证据：截图是缩略图；文件是一行小条（「文件」小标签加文件名）；测试一句（左边细线）；链接显示主机名。
+ * 写成普通函数而不是子组件（与约定卡同一取舍）：整棵树是连续的元素，测试能直接检查每一种证据。
+ */
+function evidenceNode(evidence: EvidenceItemView['evidence'][number], shotRef: ShotRef | null, readShot?: ShotReader): ReactNode {
+  if (evidence.kind === 'image') {
+    return <ShotThumb key={evidence.id} shotRef={shotRef} evidence={evidence} readShot={readShot} />
+  }
+  if (evidence.kind === 'test') {
+    // 测试证据是一句结果（summary，「依次提交 81 条…」），小标签是「测试」的缩写。
+    return (
+      <span key={evidence.id} className="ah-ev-test">
+        <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>
+        {evidence.summary !== '' ? evidence.summary : evidence.label}
+      </span>
+    )
+  }
+  if (evidence.kind === 'link') {
+    // P74i-m2（第四次审查中-2）：链接证据是员工交回时写的地址，核心只限定 http(s)，不限主机——
+    // 画成不可点的文字（主机名加完整地址，可以选中复制），不出现 <a>，主人点一下不会离开 DSH
+    // 打开模型给的任意网址。地址为空时只显示说明文字。
+    let host: string | null = null
+    if (evidence.url !== null) {
+      try { host = new URL(evidence.url).hostname } catch { host = null }
+    }
+    return (
+      <span key={evidence.id} className="ah-ev-link">
+        <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>
+        {evidence.url === null || evidence.url === '' ? evidence.label : host !== null && host !== '' ? `${host} ${evidence.url}` : evidence.url}
+      </span>
+    )
+  }
+  return (
+    <span key={evidence.id} className="ah-ev-file">
+      <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
+    </span>
+  )
+}
+
+/**
+ * 清单里的一条：序号、条目原文、结论小章；下一行证据；说明、「改到什么程度算过」与历史按需出现。
+ * 同样写成普通函数：行里的序号、结论小章和「改到什么程度算过」都要能被测试直接找到。
+ */
+function evidenceRow(item: EvidenceItemView, shotRef: ShotRef | null, readShot?: ShotReader): ReactNode {
+  const bad = item.verdict.tone === 'bad'
+  return (
+    <li key={item.no} className={bad ? 'is-bad' : undefined}>
+      <span className="ah-ev-no">{item.no}</span>
+      <div className="ah-ev-main">
+        <p className="ah-ev-text">{item.text}</p>
+        {item.evidence.length > 0 ? (
+          <div className="ah-ev-proof">
+            {item.evidence.map(evidence => evidenceNode(evidence, shotRef, readShot))}
+          </div>
+        ) : null}
+        {item.evidence.some(evidence => evidence.checkText !== null) ? (
+          <p className="ah-ev-check">{item.evidence.filter(evidence => evidence.checkText !== null).map(evidence => evidence.checkText).join('；')}</p>
+        ) : null}
+        {item.note !== null ? <p className="ah-ev-note">{item.note}</p> : null}
+        {item.fixTo !== null ? (
+          <div className="ah-ev-fix">
+            <strong>{JOB_TEXT.fixTitle}</strong>
+            <span>{item.fixTo}</span>
+          </div>
+        ) : null}
+        {item.history !== null ? <p className="ah-ev-history">{item.history}</p> : null}
+      </div>
+      <span className={`ah-ev-verdict ${verdictClass(item.verdict.tone)}`}>{item.verdict.label}</span>
+    </li>
+  )
+}
+
+/** 整份清单：交回卡、核对卡、交付卡共用，只有结论一栏的人不同。 */
+export function EvidenceList(props: {
+  items: readonly EvidenceItemView[]
+  shotRef?: ShotRef | null
+  readShot?: ShotReader
+}): ReactNode {
+  const shotRef = props.shotRef ?? null
+  return (
+    <ol className="ah-ev-list">
+      {props.items.map(item => evidenceRow(item, shotRef, props.readShot))}
+    </ol>
+  )
+}

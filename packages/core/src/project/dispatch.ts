@@ -101,12 +101,12 @@ export function dispatchTask(ctx: HubContext, raw: unknown): ProjectTask {
 
   // 3. 承接队友：存在、在岗（在岗/试岗）、是项目成员，三条缺一不可（取消编制后不再看席位）。
   const bot = ctx.store.table('bots').get(input.botId);
-  if (!bot || bot.lifecycle === 'retired') throw new Error(`队友不存在或已退役：${input.botId}`);
+  if (!bot || bot.lifecycle === 'retired') throw new Error(`员工不存在或已归档：${input.botId}`);
   if (!isBotOnTeam(bot)) {
-    throw new Error(`队友「${bot.name}」当前是 ${bot.lifecycle}，只有在岗或试岗的队友能接活`);
+    throw new Error(`员工「${bot.name}」当前是 ${bot.lifecycle}，只有在岗或试岗的员工能接活`);
   }
   if (!project.memberBotIds.includes(bot.id)) {
-    throw new Error(`队友「${bot.name}」不是项目成员：请先把该队友加入项目成员`);
+    throw new Error(`员工「${bot.name}」不是项目成员：请先把该员工加入项目成员`);
   }
 
   // 4. 判定本次动作：改派（任务原在别的队友名下）、催办（进行中且仍是同一队友）、或新派/恢复。
@@ -123,7 +123,7 @@ export function dispatchTask(ctx: HubContext, raw: unknown): ProjectTask {
   if (!existingAgenda) {
     const openAgenda = ctx.store.table('agenda').count(a => a.botId === bot.id && a.status === 'open');
     if (openAgenda >= ctx.settings.maxOpenAgendaPerBot) {
-      throw new Error(`队友「${bot.name}」未完成议程已达上限 ${ctx.settings.maxOpenAgendaPerBot} 条，请先清理再派活`);
+      throw new Error(`员工「${bot.name}」未完成议程已达上限 ${ctx.settings.maxOpenAgendaPerBot} 条，请先清理再派活`);
     }
   }
   const droppedAgendas = reassigned && oldBotId

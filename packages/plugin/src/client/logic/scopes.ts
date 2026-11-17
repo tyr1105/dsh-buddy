@@ -6,13 +6,13 @@
  */
 
 /** 九个公开范围（与 core 的 HubEventScope 一致；不再出现内部表名）。 */
-export type HubScope = 'overview' | 'bot' | 'thread' | 'inbox' | 'activity' | 'settings' | 'ledger' | 'office' | 'project'
+export type HubScope = 'overview' | 'bot' | 'thread' | 'inbox' | 'activity' | 'settings' | 'ledger' | 'office' | 'project' | 'memory'
 
-/** 范围词表（值即 scope 字符串本身）。 */
+/** 范围词表（值即 scope 字符串本身）。P75k 起多一个 memory（记忆新增、更正、撤销、删除）。 */
 export const HUB_SCOPES: Readonly<Record<HubScope, HubScope>> = {
   overview: 'overview', bot: 'bot', thread: 'thread',
   inbox: 'inbox', activity: 'activity', settings: 'settings', ledger: 'ledger',
-  office: 'office', project: 'project',
+  office: 'office', project: 'project', memory: 'memory',
 }
 
 /** 一条 changed 事件要刷新哪些视图（宁多刷不漏刷；botId 为 null 表示全局/团队）。 */
@@ -20,7 +20,7 @@ export interface RefreshPlan {
   overview: boolean
   /** 需要重拉详情的机器人 id 列表（scope=bot 或带 botId 的 overview）。 */
   bots: string[]
-  /** 需要重拉的线程 id（'team' 或机器人 id；scope=thread 时按 botId 归位）。 */
+  /** 需要重拉的线程 id（机器人 id 或主题 id；scope=thread 时按 botId 归位）。 */
   threads: string[]
   /** 是否重拉已经展开过的账本详情（按需加载的缓存，见 hub-state 的 ledgers）。 */
   ledgers: boolean
@@ -36,6 +36,11 @@ export interface RefreshPlan {
   resource: boolean
   /** 是否重拉项目容器（V2-PH4-02）：项目/任务变化发 project scope 时定向刷项目页。 */
   project: boolean
+  /**
+   * P75k：是否重拉记忆页（以及当前对话，「已记住」行的状态挂在对话的消息上）。
+   * 只有 memory 范围才带这一项（其余范围的计划里没有这个字段），所以既有范围的计划形状不变。
+   */
+  memory?: true
 }
 
 const emptyPlan = (): RefreshPlan => ({ overview: false, bots: [], threads: [], ledgers: false, inbox: false, activity: false, settings: false, office: false, resource: false, project: false })
@@ -44,7 +49,8 @@ const emptyPlan = (): RefreshPlan => ({ overview: false, bots: [], threads: [], 
  * 按 M07 第 4 节的表计算刷新计划：
  * - overview：全局变化刷总览；单机器人变化（带 id）顺带刷它的详情。
  * - bot：交账/感知/议程/目标/关注/规矩/套路/生命周期/队列/回合 → 刷该机器人详情 + 总览。
- * - thread：机器人线程带 id，null 专指 team → 刷该线程 + 总览（未读汇总）。
+ * - thread：机器人线程带 id → 刷该线程 + 总览（未读汇总）；null 原指团队线程，
+ *   P71 团队全景下线后界面不再摆它，只刷总览，不再去拉那条线程。
  * - inbox：刷收件箱 + 总览数量。
  * - activity：刷活动流。
  * - settings：刷设置视图。
@@ -80,7 +86,7 @@ export function refreshPlan(scope: string, botId?: string | null): RefreshPlan {
       return plan
     case HUB_SCOPES.thread:
       plan.overview = true // 未读汇总在总览里
-      plan.threads.push(id ?? 'team')
+      if (id !== null) plan.threads.push(id)
       return plan
     case HUB_SCOPES.inbox:
       plan.inbox = true
@@ -95,6 +101,11 @@ export function refreshPlan(scope: string, botId?: string | null): RefreshPlan {
       return plan
     case HUB_SCOPES.office:
       plan.office = true
+      return plan
+    case HUB_SCOPES.memory:
+      // P75k：记忆变化（botId 固定为空）：刷记忆页和当前对话，并刷总览（P75k 时为了左栏与总管右侧栏的条数；P86 起这两处入口已删除，界面不再读 memoryCount，这一次总览刷新保留不动、无副作用）。
+      plan.overview = true
+      plan.memory = true
       return plan
     case HUB_SCOPES.project:
       // V2-PH4-02：项目与任务变化（core 第四期，botId 固定 null）→ 刷总览计数并

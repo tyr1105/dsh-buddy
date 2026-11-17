@@ -49,7 +49,7 @@ describe('tools/pre-execute 动作闸', () => {
     const next = vi.fn(async () => ({ kind: 'allow' }))
     const result = await made.fire('tools/pre-execute', botExec, next)[0]
     expect(result).toEqual({ kind: 'allow' })
-    expect(hub.guardToolCall).toHaveBeenCalledWith('bot-s', 'write', botExec.arguments)
+    expect(hub.guardToolCall).toHaveBeenCalledWith('bot-s', 'write', botExec.arguments, expect.objectContaining({ sandboxed: false }))
   })
   it('拒绝时返回 verified-T3 Q2-c 的 deny 形状，且不再 next', async () => {
     const hub = makeHub({ allow: false, message: '未批准的出站动作，请先走审批' })
@@ -138,7 +138,7 @@ describe('tools/pre-execute 禁用工具双保险（D03 先修项 A2）', () => 
     registerGuardHooks(made.ctx, { hub, isBotSession: isBot })
     const next = vi.fn(async () => ({ kind: 'allow' }))
     await made.fire('tools/pre-execute', { name: 'read', arguments: {}, agent: { id: 'bot-s', session: { header: {} } } }, next)[0]
-    expect(hub.guardToolCall).toHaveBeenCalledWith('bot-s', 'read', {})
+    expect(hub.guardToolCall).toHaveBeenCalledWith('bot-s', 'read', {}, expect.objectContaining({ sandboxed: false }))
   })
 })
 

@@ -17,3 +17,12 @@ export * from './topic-rounds.js';
 export * from './topics.js';
 // P65：主题里提的事项，主人处理后接着做的那一回合回到原主题。
 export * from './topic-followup.js';
+// P72a 约定：内容处理纯函数、建项目和主题、约定服务。
+export * from './agreement-content.js';
+export * from './agreement-home.js';
+export * from './agreements.js';
+// P72b：派活闸门与交账时发约定卡。
+export * from './agreement-gate.js';
+export * from './agreement-cards.js';
+// P72c：「定了」的三条途径。
+export * from './agreement-confirm.js';

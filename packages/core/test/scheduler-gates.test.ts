@@ -73,37 +73,40 @@ describe('九道闸逐条正反边界', () => {
     const { ctx, now, entry, snapshot } = setup(); const e = { ...entry, urgent: exemption === 'urgent', ownerInitiated: exemption === 'owner', reason: { ...entry.reason, kind: exemption === 'approval' ? 'approval_decided' as const : 'percept' as const } };
     expect(evaluateGates(e, bot(snapshot, { lastThinkAt: now }), now, ctx.settings)).toEqual({ pass: true });
   });
-  it('6 每日等级上限在边界拦截，主人回合豁免', () => {
-    const { ctx, now, entry, snapshot } = setup(); const s = { ...bot(snapshot, { autonomy: 'L0' }), todayTurns: 2 };
+  // P76c：员工自己发起的工作只剩一条上限（默认每天 2 个自己发起的回合）。原来的四条用例证明：「每日思考上限（按自主等级，L0 为 2）」
+  // 与「每日回合 / token / 每窗口回合（试岗减半）」各自在边界拦截、低于边界放行、主人回合豁免、urgent 不豁免、配置改了行为必须变。
+  // 现在的四条用例逐一对应：边界与豁免（同一组数字 2、1）、任何自主等级与试岗都是同一条线、urgent 不豁免、配置改了行为必须变。
+  // 每日 token、每窗口回合两条线已取消，对应的用例没有了（快照里已没有这两项）；它们不再拦截由 test/p76c-gates.test.ts 用真实账本验证。
+  it('6 每天上限在边界拦截（原因 daily_cap），主人回合豁免', () => {
+    const { ctx, now, entry, snapshot } = setup(); const s = { ...snapshot, selfTurnsToday: 2 };
+    expect(ctx.settings.botDailyTurnBudget).toBe(2);
     expect(evaluateGates(entry, s, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
-    expect(evaluateGates(entry, { ...s, todayTurns: 1 }, now, ctx.settings)).toEqual({ pass: true });
+    expect(evaluateGates(entry, { ...s, selfTurnsToday: 1 }, now, ctx.settings)).toEqual({ pass: true });
     expect(evaluateGates({ ...entry, ownerInitiated: true }, s, now, ctx.settings)).toEqual({ pass: true });
   });
-  it.each([{ todayTurns: 6 }, { todayTokens: 250000 }, { windowTurns: 3 }])('6 机器人预算 %# 拦截且低于边界放行', usage => {
-    const { ctx, now, entry, snapshot } = setup(); const s = { ...bot(snapshot, { autonomy: 'L3' }), ...usage };
-    expect(evaluateGates(entry, s, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
-    expect(evaluateGates(entry, { ...s, todayTurns: 5, todayTokens: 249999, windowTurns: 2 }, now, ctx.settings)).toEqual({ pass: true });
+  it.each(['L0', 'L1', 'L2', 'L3'] as const)('6 自主等级 %s 都是同一条线：到上限拦截、低一个放行（不再按等级分档）', autonomy => {
+    const { ctx, now, entry, snapshot } = setup(); const s = { ...bot(snapshot, { autonomy }), selfTurnsToday: 2 };
+    expect(evaluateGates(entry, s, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
+    expect(evaluateGates(entry, { ...s, selfTurnsToday: 1 }, now, ctx.settings)).toEqual({ pass: true });
   });
-  it('6 urgent 不豁免预算，试岗预算减半', () => {
+  it('6 urgent 不豁免每天上限，试岗不再减半', () => {
     const { ctx, now, entry, snapshot } = setup();
-    expect(evaluateGates({ ...entry, urgent: true }, { ...bot(snapshot, { lifecycle: 'probation' }), todayTurns: 3 }, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
+    const probation = bot(snapshot, { lifecycle: 'probation' });
+    expect(evaluateGates({ ...entry, urgent: true }, { ...probation, selfTurnsToday: 2 }, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
+    // 原用例：试岗上限减半，3 个就拦；现在试岗与在岗同线，1 个放行。
+    expect(evaluateGates({ ...entry, urgent: true }, { ...probation, selfTurnsToday: 1 }, now, ctx.settings)).toEqual({ pass: true });
   });
-  it('C05 行为探针：同一快照下改每日回合预算，拦截改放行；token 预算同口径（配置改了行为必须变）', () => {
+  it('C05 行为探针：同一快照下改每天上限，拦截改放行（配置改了行为必须变）', () => {
     const { ctx, now, entry, snapshot } = setup();
-    // 默认每队友每日 6 回合：正好到边界被 bot_budget 拦。
-    const atCap = { ...bot(snapshot, { autonomy: 'L3' }), todayTurns: 6, todayTokens: 0, windowTurns: 0 };
-    expect(evaluateGates(entry, atCap, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
-    // 主人在设置里把每日回合预算调到 8：同一场景立即放行（闸门每次读当前 Settings，无需重启）。
+    // 默认每队友每天 2 个自己发起的回合：正好到边界被 daily_cap 拦。
+    const atCap = { ...bot(snapshot, { autonomy: 'L3' }), selfTurnsToday: 2 };
+    expect(evaluateGates(entry, atCap, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
+    // 主人在设置里把每天上限调到 8：同一场景立即放行（闸门每次读当前 Settings，无需重启）。
     const looserTurns = { ...ctx.settings, botDailyTurnBudget: 8 };
     expect(evaluateGates(entry, atCap, now, looserTurns)).toEqual({ pass: true });
-    // 反过来收紧到 5：原本放得过的用量也被拦，证明不是改了个没人读的数字。
-    const tighterTurns = { ...ctx.settings, botDailyTurnBudget: 5 };
-    expect(evaluateGates(entry, { ...atCap, todayTurns: 5 }, now, tighterTurns)).toMatchObject({ by: 'bot_budget' });
-    // 每日 token 预算：到 25 万默认边界被拦，调到 40 万放行，且回合余量不变（证明是 token 单独生效）。
-    const tokenCap = { ...bot(snapshot, { autonomy: 'L3' }), todayTurns: 0, todayTokens: ctx.settings.botDailyTokenBudget, windowTurns: 0 };
-    expect(evaluateGates(entry, tokenCap, now, ctx.settings)).toMatchObject({ by: 'bot_budget' });
-    const looserTokens = { ...ctx.settings, botDailyTokenBudget: 400_000 };
-    expect(evaluateGates(entry, tokenCap, now, looserTokens)).toEqual({ pass: true });
+    // 反过来收紧到 1：原本放得过的用量也被拦，证明不是改了个没人读的数字。
+    const tighterTurns = { ...ctx.settings, botDailyTurnBudget: 1 };
+    expect(evaluateGates(entry, { ...atCap, selfTurnsToday: 1 }, now, tighterTurns)).toMatchObject({ by: 'daily_cap' });
   });
   it('7 yellow 非紧急节奏加倍，到点恢复；urgent 越过', () => {
     const { ctx, now, entry, snapshot } = setup(); const s = quota(bot(snapshot, { lastThinkAt: now - 60 * minute }), 'yellow');
@@ -122,7 +125,7 @@ describe('九道闸逐条正反边界', () => {
     const { ctx, now, entry, snapshot } = setup(); const s = quota(snapshot, 'red', { probeAllowed: true });
     expect(evaluateGates(entry, s, now, ctx.settings)).toEqual({ pass: true });
     expect(evaluateGates(entry, { ...s, authBlocked: true }, now, ctx.settings)).toMatchObject({ by: 'quota' });
-    expect(evaluateGates(entry, { ...s, todayTurns: 6 }, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
+    expect(evaluateGates(entry, { ...s, selfTurnsToday: 6 }, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
   });
   it('8 启动静默三分钟，主人豁免', () => {
     const { ctx, now, entry, snapshot } = setup(); const s = { ...snapshot, startedAt: now };

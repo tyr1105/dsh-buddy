@@ -31,7 +31,8 @@ describe('P48 状态口径与旧档兼容', () => {
     expect(botRosterState(at({ lifecycle: 'active', archivedAt: null }))).toBe('active');
     expect(botRosterState(at({ lifecycle: 'probation' }))).toBe('active');
     // 退役但未归档：仍在名单里，只是不唤醒。
-    expect(botRosterState(at({ lifecycle: 'retired', archivedAt: null }))).toBe('retired');
+    // P73a（5.1 第 4 类）：原预期 'retired'；新预期 'archived'。
+    expect(botRosterState(at({ lifecycle: 'retired', archivedAt: null }))).toBe('archived');
     // 归档标记优先：即使生命周期还是退役，也归入归档区。
     expect(botRosterState(at({ lifecycle: 'retired', archivedAt: 1_760_000_000_000 }))).toBe('archived');
     // 其余状态（草稿/暂停/隔离）属于非活跃，但不等于退役或归档。
@@ -47,14 +48,14 @@ describe('P48 归档与恢复', () => {
     // 先留一条历史消息，验证归档与恢复都不动线程。
     postThread(ctx, { thread: bot.id, from: bot.id, kind: 'reply', text: '我还在' });
 
+    // P73a（5.1 第 6 类）：原预期未退役的员工不能归档（要求先退役）；新预期在岗员工可直接通过归档检查，不再要求先退役。
     const blocked = okData(await api.archiveBotCheck(bot.id));
-    expect(blocked).toMatchObject({ botId: bot.id, canArchive: false, projectCount: 0, openTaskCount: 0 });
-    expect(blocked.reason).toContain('先退役');
-    const rejected = await api.archiveBot(bot.id);
-    expect(rejected.ok).toBe(false);
-    if (!rejected.ok) expect(rejected.error).toContain('先退役');
+    expect(blocked).toMatchObject({ botId: bot.id, canArchive: true, projectCount: 0, openTaskCount: 0 });
+    expect(blocked.reason).toBeNull();
 
-    okData(await api.lifecycleAction({ botId: bot.id, action: 'retire' }));
+    // P73r1（R2）：「退役」现在等同归档，一步就写归档时间。本用例测的是旧数据（已退役、没有归档时间）经旧入口补归档，
+    // 所以改为直接写成旧数据的样子；原来的断言不变。
+    ctx.store.table('bots').patch(bot.id, { lifecycle: 'retired' });
     const check = okData(await api.archiveBotCheck(bot.id));
     expect(check.canArchive).toBe(true);
     expect(check.reason).toBeNull();
@@ -77,16 +78,13 @@ describe('P48 归档与恢复', () => {
     expect(api.thread(bot.id).messages.map(message => message.text)).toContain('我还在');
     expect(ctx.store.log('audit').all().some(row => row.action === 'ui_archiveBot')).toBe(true);
 
-    // 恢复：回到「已退役、仍在名单里」，历史仍原样。
-    const restored = okData(await api.restoreArchivedBot(bot.id));
-    expect(restored.archivedAt).toBeNull();
-    expect(botRosterState(restored)).toBe('retired');
-    expect(api.overview().bots.find(row => row.id === bot.id)?.archived).toBe(false);
+    // P73r1（R6.1，原预期：恢复成功、archivedAt 清空、名册显示 archived 且 archived 标记为 false；
+    // 新预期：恢复一律拒绝，员工保持归档，历史仍原样）。
+    const restored = await api.restoreArchivedBot(bot.id);
+    expect(restored).toEqual({ ok: false, error: '归档后不能恢复为在岗；记录仍可查看' });
+    expect(ctx.store.table('bots').get(bot.id)?.archivedAt).toBe(ctx.clock.now());
+    expect(api.overview().bots.find(row => row.id === bot.id)?.archived).toBe(true);
     expect(api.thread(bot.id).messages.map(message => message.text)).toContain('我还在');
-    // 没归档时恢复要给中文错误，不能假装成功。
-    const again = await api.restoreArchivedBot(bot.id);
-    expect(again.ok).toBe(false);
-    if (!again.ok) expect(again.error).toContain('没有归档');
   });
 
   it('仍是项目成员或有未结任务时拒绝归档，并列出项目名与数量', async () => {
@@ -95,14 +93,19 @@ describe('P48 归档与恢复', () => {
     const task = okData(await api.saveTask({ projectId: project.id, title: '写周报', assigneeBotId: bot.id }));
     // saveTask 只建待办；直接 patch 成进行中，模拟队友已开工。
     ctx.store.table('projectTasks').patch(task.id, { status: 'doing' });
-    okData(await api.lifecycleAction({ botId: bot.id, action: 'retire' }));
+    // P73a：项目负责人另有一位，避免先撞上「负责人」这条规则；本用例检查的是未结事务。
+    const other = okData(await api.createBot({ name: '小搭', role: 'researcher', persona: '协助', aspirations: ['协助'] }));
+    okData(await api.saveProject({ id: project.id, name: '周报项目', memberBotIds: [bot.id, other.id], ownerBotId: other.id }));
+    // P73r1（R2）：退役等同归档，有未结事务时会被拒绝；本用例测旧入口对旧数据的检查，改为直接写成旧数据。
+    ctx.store.table('bots').patch(bot.id, { lifecycle: 'retired' });
 
     const check = okData(await api.archiveBotCheck(bot.id));
     expect(check).toMatchObject({ canArchive: false, projectCount: 1, openTaskCount: 1 });
     expect(check.projects).toEqual([{ projectId: project.id, projectName: '周报项目', member: true, openTaskCount: 1 }]);
     expect(check.reason).toContain('周报项目');
-    expect(check.reason).toContain('1 个未结任务');
-    expect(check.reason).toContain('还是 1 个项目的成员');
+    // P73a（5.1 第 6 类）：原预期文案「1 个未结任务」「还是 1 个项目的成员」（成员身份也拦归档）；新预期「1 件进行中或待验收的事务」，成员身份不拦。
+    expect(check.reason).toContain('1 件进行中或待验收的事务');
+    expect(check.reason).not.toContain('成员');
     const rejected = await api.archiveBot(bot.id);
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) expect(rejected.error).toContain('先交接');
@@ -124,7 +127,8 @@ describe('P48 归档与恢复', () => {
     // 成员被移走后仍有指派给他的任务：只剩任务这条约束。
     ctx.store.table('projectTasks').patch(task.id, { assigneeBotId: bot.id, status: 'done_pending_check' });
     okData(await api.archiveProject(archivedProject.id));
-    okData(await api.lifecycleAction({ botId: bot.id, action: 'retire' }));
+    // P73r1（R2）：同上，改为直接写成旧数据（已退役、有未结任务）。
+    ctx.store.table('bots').patch(bot.id, { lifecycle: 'retired' });
 
     const check = okData(await api.archiveBotCheck(bot.id));
     expect(check).toMatchObject({ canArchive: false, projectCount: 0, openTaskCount: 1 });
@@ -150,19 +154,19 @@ describe('P48 删除', () => {
     if (!early.ok) expect(early.error).toContain('先归档');
     expect(ctx.store.table('bots').get(bot.id)).not.toBeNull();
 
+    // P73r1（R2）：退役等同归档，已经写好归档时间；原来「先退役、再补归档」的第二步不再需要。
     okData(await api.lifecycleAction({ botId: bot.id, action: 'retire' }));
-    okData(await api.archiveBot(bot.id));
     expect((await api.deleteArchivedBot(bot.id)).ok).toBe(true);
 
     // 配置与档案删掉，历史一行不动。
     expect(ctx.store.table('bots').get(bot.id)).toBeNull();
     expect(ctx.store.table('botProfiles').get(bot.id)).toBeNull();
     const thread = api.thread(bot.id);
-    expect(thread.title).toBe('已删除的队友');
+    expect(thread.title).toBe('已删除的员工');
     // 退役时中心会追加一条系统消息；这里只核对删除前后原样保留的两条历史。
     expect(thread.messages.slice(0, 2).map(message => message.text)).toEqual(['系统记录', '队友原话']);
     expect(thread.messages[0]?.fromName).toBe('Agent 中心');
-    expect(thread.messages[1]?.fromName).toBe('已删除的队友');
+    expect(thread.messages[1]?.fromName).toBe('已删除的员工');
     expect(thread.messages.every(message => message.fromName !== bot.id)).toBe(true);
     expect(ctx.store.log('audit').all().some(row => row.action === 'ui_deleteArchivedBot')).toBe(true);
 

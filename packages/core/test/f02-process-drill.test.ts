@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { Bot, WakeTicket } from '../src/model/index.js';
-import { openLedgerForWake, recordDshToolAction, sealLedgerForWake } from '../src/ledger/service.js';
+import { appendLedgerAction, openLedgerForWake, recordDshToolAction, sealLedgerForWake } from '../src/ledger/service.js';
 import { wakeLedgerDetail } from '../src/api/ledger-views.js';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { botFixture } from './model-fixtures.js';
@@ -72,6 +72,35 @@ describe('F02 过程下钻', () => {
     });
     expect(view.entry.completeness).toBe('partial');
     expect(view.entry.missing).toContain('actions');
+  });
+
+  // P74r16a 第 4 节：返回文字在台账里的上限由 160 字改为 800 字；P74r16c 第 4 节：只对名字以 hub_ 开头的工具，其余回到 160 字。
+  it('P74r16a、P74r16c：hub_ 开头的工具，700 字的返回文字在台账里一字不少；超过 800 字截到 800 字', () => {
+    const { ctx } = seed();
+    const text = (n: number) => Array.from({ length: n }, (_, i) => String.fromCharCode(0x4e00 + i)).join('');
+    recordDshToolAction(ctx, wakeId, { name: 'hub_job_manage', args: { mode: 'answer' }, isError: false, resultText: text(700), callId: 'call-long' });
+    recordDshToolAction(ctx, wakeId, { name: 'hub_job_manage', args: { mode: 'answer' }, isError: false, resultText: text(900), callId: 'call-longer' });
+    const actions = wakeLedgerDetail(ctx, wakeId)!.actions;
+    expect(actions[0]!.detail).toBe(text(700));
+    // 反例：超出上限的仍然被截断（800 字，截断标记由账本的 truncated 字段体现）。
+    expect(Array.from(actions[1]!.detail)).toHaveLength(800);
+    expect(actions[1]!.detail).toBe(text(800));
+  });
+
+  it('P74r16c：其余工具（bash 等）的返回文字回到 160 字', () => {
+    const { ctx } = seed();
+    const text = (n: number) => Array.from({ length: n }, (_, i) => String.fromCharCode(0x4e00 + i)).join('');
+    recordDshToolAction(ctx, wakeId, { name: 'bash', args: { command: 'node test.js' }, isError: false, resultText: text(700), callId: 'call-bash' });
+    const detail = wakeLedgerDetail(ctx, wakeId)!.actions[0]!.detail;
+    expect(Array.from(detail)).toHaveLength(160);
+    expect(detail).toBe(text(160));
+  });
+
+  it('P74r16a：其他动作（hub 工具）的摘要上限不变，仍是 160 字', () => {
+    const { ctx } = seed();
+    appendLedgerAction(ctx, wakeId, { kind: 'hub_tool', name: 'hub_commit', target: null, outcome: 'error', source: 'observed', refId: null, detail: '错'.repeat(700), durationMs: 1 });
+    const detail = wakeLedgerDetail(ctx, wakeId)!.actions[0]!.detail;
+    expect(Array.from(detail).length).toBeLessThanOrEqual(160);
   });
 
   it('封存后不再追加；没有对应账本时不报错也不造记录', () => {

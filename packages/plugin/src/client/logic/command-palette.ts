@@ -36,7 +36,7 @@ export type CommandItem = CommandViewItem | CommandActionItem
  * 顺序和文案由静态契约测试固定，防止面板里出现和左栏不一样的叫法。
  */
 export const COMMAND_VIEWS: ReadonlyArray<CommandViewItem> = [
-  { kind: 'view', id: 'main', label: '队友', keywords: ['首页', '线程', '私聊'] },
+  { kind: 'view', id: 'main', label: '员工', keywords: ['首页', '线程', '私聊'] },
   { kind: 'view', id: 'office', label: '办公室', keywords: ['像素', '工位', '轨迹'] },
   { kind: 'view', id: 'inbox', label: '待你处理', keywords: ['待办', '待处理', '收件箱', '审批'] },
   { kind: 'view', id: 'activity', label: '动态', keywords: ['活动', '活动流'] },
@@ -47,7 +47,7 @@ export const COMMAND_VIEWS: ReadonlyArray<CommandViewItem> = [
 
 /** 常用动作：不换页也能做的事，保持短小，避免面板变成第二个设置页。 */
 export const COMMAND_ACTIONS: ReadonlyArray<CommandActionItem> = [
-  { kind: 'action', id: 'new-bot', label: '新建队友', keywords: ['新队友', '建队友', '创建'] },
+  { kind: 'action', id: 'new-bot', label: '新建员工', keywords: ['新员工', '建员工', '创建'] },
   { kind: 'action', id: 'refresh', label: '刷新数据', keywords: ['刷新', '重载', '同步'] },
 ]
 

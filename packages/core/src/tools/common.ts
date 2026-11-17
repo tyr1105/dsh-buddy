@@ -8,7 +8,23 @@ import type { Bot } from '../model/bot.js';
 import { newId } from '../util/ids.js';
 import { toolJsonSchema } from './json-schema.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
-export const requiredText = z.string({ error: '必须是文字' }).trim().min(1, '不能为空或只有空白');
+import { isReadonlySkillTurn } from '../skill/keys.js';
+import { recordCentralToolOk, type CentralToolKind } from '../commit/claim-evidence.js';
+import { recordOwnerTurnFromTool } from '../job/owner-turns.js';
+/**
+ * P85：这次成功的工具调用属于哪一种「中心办成了事」：约定提交、记忆的记住与删除与更正、派活与改派。
+ * 其余工具（含 hub_job_manage 的其他 mode）不算。
+ */
+function centralToolKindOf(name: string, args: unknown): CentralToolKind | null {
+    if (name === 'hub_agreement_submit') return 'agreement';
+    if (name === 'hub_memory') return 'memory';
+    if (name === 'hub_job_manage') {
+        const mode = (args as { mode?: unknown } | null)?.mode;
+        return mode === 'assign' || mode === 'reassign' ? 'job' : null;
+    }
+    return null;
+}
+export const requiredText =z.string({ error: '必须是文字' }).trim().min(1, '不能为空或只有空白');
 /** 用可信工具上下文核对机器人、会话和唤醒单归属，防止参数冒充其他身份。 */
 export function getToolBot(ctx: HubContext, input: ToolContext): Bot {
     const toolCtx = parseInput(ToolContextSchema, input, '工具身份');
@@ -59,19 +75,28 @@ export function defineTool<T>(name: string, description: string, schema: z.ZodTy
                         && (['running', 'delivering'].includes(w.status) || (w.status === 'committed' && w.endedAt === null)))
                         .sort((a, b) => b.startedAt - a.startedAt)[0];
                 const closing = ['paused', 'retired'].includes(bot.lifecycle) && wake?.endedAt === null
-                    && ['running', 'delivering', 'committed'].includes(wake.status) && ['hub_commit', 'hub_reflect_commit'].includes(name);
+                    && ['running', 'delivering', 'committed'].includes(wake.status) && name === 'hub_commit';
                 // P38 两个知识库工具只做只读实时检索/读取（仅追加审计，不改业务记录），
                 // 与产物读取同口径：停岗/交账后仍可调，反思回合也不受写工具限制。
                 const readOnly = ['hub_state_get', 'hub_artifact_read', 'hub_task_list',
                     'hub_knowledge_search', 'hub_knowledge_read'].includes(name);
                 if (!['active', 'probation'].includes(bot.lifecycle) && !readOnly && !closing)
                     throw new Error('机器人当前不在岗，不能修改事项');
-                if (wake && !readOnly && !['hub_commit', 'hub_reflect_commit'].includes(name) && (wake.commitId || !['running', 'delivering'].includes(wake.status)))
+                if (wake && !readOnly && name !== 'hub_commit' && (wake.commitId || !['running', 'delivering'].includes(wake.status)))
                     throw new Error('本轮已结束，不能在交账后继续修改事项');
-                const reflectionWrites = ['hub_agenda_upsert', 'hub_agenda_close', 'hub_watch_update', 'hub_watch_propose', 'hub_goal_upsert', 'hub_send', 'hub_handoff', 'hub_claim', 'hub_release', 'hub_task_update', 'hub_project_context_propose', 'hub_project_task_upsert', 'hub_project_background_update'];
-                if (wake?.variant === 'reflection' && reflectionWrites.includes(name))
-                    throw new Error('反思回合只读；关注调整请写进 hub_reflect_commit，其他事项留到下一回合');
-                return await run(ctx, toolCtx, args);
+                const reflectionWrites = ['hub_agenda_upsert', 'hub_agenda_close', 'hub_watch_update', 'hub_watch_propose', 'hub_goal_upsert', 'hub_send', 'hub_task_update', 'hub_project_context_propose', 'hub_project_task_upsert', 'hub_project_background_update', 'hub_project_put', 'hub_agreement_submit', 'hub_team_propose', 'hub_job_manage', 'hub_job_work', 'hub_memory'];
+                // P75r5c（H2）：学习回合同样只读（变体是复盘，或事项键是技能类的键）。
+                if (isReadonlySkillTurn(wake) && reflectionWrites.includes(name))
+                    throw new Error('反思回合只读；其他事项留到下一回合');
+                const result = await run(ctx, toolCtx, args);
+                // P85：本回合里办成了事的中心工具记一笔，交账时的完成声明核对据此放行对应的说法（不影响工具结果）。
+                if (result.ok && wake) {
+                    const kind = centralToolKindOf(name, args);
+                    if (kind) recordCentralToolOk(ctx, wake.id, kind);
+                    // P87：你发起的回合里总管办成了这件事的事，记进这件事的「你发起的总管回合」一栏（只给消耗文字用，出错只记日志）。
+                    recordOwnerTurnFromTool(ctx, wake, name, args);
+                }
+                return result;
             }
             catch (error) {
                 return { ok: false, error: error instanceof Error ? error.message : '工具执行失败，请稍后重试' };

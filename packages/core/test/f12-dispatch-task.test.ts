@@ -282,10 +282,10 @@ describe('F12 dispatchTask 反例', () => {
     const ctx = createTestContext();
     const { outsiderBot, project, task } = setup(ctx);
     expect(() => dispatchTask(ctx, { projectId: project.id, taskId: task.id, botId: 'b_0000000099' }))
-      .toThrow('队友不存在或已退役');
+      .toThrow('员工不存在或已归档');
     const retired = putBot(ctx, 'b_0000000005', '退役队友', 'retired');
     expect(() => dispatchTask(ctx, { projectId: project.id, taskId: task.id, botId: retired.id }))
-      .toThrow('队友不存在或已退役');
+      .toThrow('员工不存在或已归档');
     expect(() => dispatchTask(ctx, { projectId: project.id, taskId: task.id, botId: outsiderBot.id }))
       .toThrow('不是项目成员');
   });
@@ -296,7 +296,7 @@ describe('F12 dispatchTask 反例', () => {
     const paused = putBot(ctx, 'b_0000000005', '暂停队友', 'paused');
     ctx.store.table('projects').patch(project.id, { memberBotIds: [...project.memberBotIds, paused.id] });
     expect(() => dispatchTask(ctx, { projectId: project.id, taskId: task.id, botId: paused.id }))
-      .toThrow('只有在岗或试岗的队友能接活');
+      .toThrow('只有在岗或试岗的员工能接活');
   });
 
   it('议程上限：新派与改派被拦，催办（复用议程）不拦', () => {

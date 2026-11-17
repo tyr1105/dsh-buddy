@@ -2,21 +2,32 @@
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import type { HubContext } from './context.js';
 import type { Candidate } from '../appraisal/think.js';
-import { detectSleep, catchUpCandidates, maybeWriteHeartbeat, findStuckWakes, checkDeadman } from '../health/index.js';
+import { detectSleep, catchUpCandidates, maybeWriteHeartbeat, findStuckWakes, checkDeadman, stuckKindOf } from '../health/index.js';
+import { endChainTurn } from '../job/chain-turn-end.js';
 import { syncFileWatches, flushFileEvents, pollDueWatches, checkExpectations } from '../perception/index.js';
 import { collectTimeCandidates, expireWatches } from '../agenda/index.js';
 import { evaluateDrives } from '../drives/index.js';
 import { expireApprovals, executeReadyOutbox } from '../gate/index.js';
-import { expireInbox, maybeSendDigest, syncAlertItems } from '../outreach/index.js';
+import { expireInbox, syncAlertItems } from '../outreach/index.js';
 import { expireHandoffs, expireClaims, checkTeamSignals } from '../peer/index.js';
-import { shouldReflect } from '../reflect/trigger.js';
 import { checkTurnLimits, finishTurn } from '../turn/index.js';
-import { onDispatchOrTurnError } from '../scheduler/retry.js';
+import { onDispatchOrTurnError, retryCarry } from '../scheduler/retry.js';
 import { buildCandidate } from '../appraisal/think.js';
 import { refreshBotFiles } from '../memory/files.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
+import { flushPushQueue } from '../outreach/notify.js';
 import { localDateKey } from '../util/time.js';
 import { settleFailedTopicDelivery, sweepStuckTopics } from '../project/topics.js';
+import { sweepUnpostedAgreements } from '../project/agreement-cards.js';
+import { sweepTeamCards } from '../team/cards.js';
+import { sweepTeamSetup } from '../team/setup.js';
+import { refundJobTurn } from '../job/turns.js';
+import { sweepJobs } from '../job/sweep.js';
+import { checkDueRisk } from '../job/due-risk.js';
+import { sweepJobOutcomes } from '../job/after-accept.js';
+import { refundSkillTurn, sweepSkillRuns } from '../skill/run.js';
+import { sweepWeeklyTidy } from '../skill/tidy.js';
+import { parseSkillKey } from '../skill/keys.js';
 
 // 已清理日期仅作加速；新实例首次仍读取持久化审计，成功后才缓存。
 const prunedDays = new WeakMap<HubContext, string>();
@@ -48,19 +59,33 @@ async function checkHealth(ctx: HubContext, now: number, hooks: TickHooks): Prom
       if (wake.status === 'delivering') {
         const error = '投递超过两分钟仍未收到开始事件';
         ctx.store.table('wakes').patch(wake.id, { status: 'error', endedAt: now, lastEventAt: now, dispatchedAt: null, error });
+        // P74c：没有送达就不算一个回合；重试候选投递时再计数。
+        refundJobTurn(ctx, wake);
+        // P75r5b：技能类回合同样退还（回合数减一、参与者改回排队中），之后由兜底补排。
+        refundSkillTurn(ctx, wake);
         const result = onDispatchOrTurnError(ctx, wake.botId, error, now);
         if (result.action === 'retry') {
           const bot = ctx.store.table('bots').get(wake.botId)!;
           if (bot.activity === 'thinking') ctx.store.table('bots').patch(bot.id, { activity: 'watching', activityText: '投递失败，等待重排', updatedAt: now });
           // 主题回合不重试：这一棒已经跳过，讨论继续往下走，隔一会儿再叫它只会插错话。
-          if (!wake.topicId) hooks.offer(buildCandidate(ctx, { botId: wake.botId, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
-            evidence: [wake.id], summary: error, ownerSummary: '上次唤醒没有送达，稍后重新尝试', notBefore: result.retryAt!, now }));
+          // P76r2（R2）：技能类回合（含学习）不排通用重试：refundSkillTurn 已把参与者改回排队中，技能候选还在队列里，由技能记录的兜底负责。
+          if (!wake.topicId && parseSkillKey(wake.subjectKey ?? null) === null) hooks.offer(buildCandidate(ctx, { botId: wake.botId, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
+            evidence: [wake.id], summary: error, ownerSummary: '上次唤醒没有送达，稍后重新尝试', notBefore: result.retryAt!, now,
+            // P74c、P76r1：重试沿用原回合的归属（你发起、总管派出、主题、事情编号）。
+            ...retryCarry(wake, bot.role) }));
         }
         if (wake.topicId) settleFailedTopicDelivery(ctx, wake.topicId, wake.botId);
         return;
       }
+      // P74r13：按实际原因写事实。10 分钟没有任何事件：确实没有响应，照旧安排重试；总时长超过上限：回合一直在干活，不是没有响应。
+      // 一件事里的回合总时长超过上限（60 分钟）被结束后不再自动重试：这件事转受阻，由总管处理（job/chain-turn-end.ts）。
+      const kind = stuckKindOf(ctx, wake, now);
+      if (wake.jobId && kind === 'hard') { await endChainTurn(ctx, wake, now, 'overtime'); return; }
       try { if (wake.sessionId) await ctx.host.cancel(wake.sessionId); }
-      finally { await finishTurn(ctx, wake.id, now, 'timeout', '回合卡住，中心已停止等待并安排重试'); }
+      finally {
+        await finishTurn(ctx, wake.id, now, 'timeout', kind === 'idle' ? '回合没有响应，中心已停止等待并安排重试'
+          : `回合超过 ${Math.round(ctx.settings.turnHardTimeoutMs / 60000)} 分钟，中心已结束本回合并安排重试`);
+      }
     }, wake.botId);
   }
   for (const candidate of checkDeadman(ctx, now)) hooks.offer(candidate);
@@ -86,7 +111,6 @@ export async function runTick(ctx: HubContext, hooks: TickHooks): Promise<void> 
       await syncFileWatches(ctx);
       await hooks.safe('已批准出站', () => executeReadyOutbox(ctx));
     }],
-    ['日报', () => maybeSendDigest(ctx, now)],
     ['回合与健康检查', () => checkHealth(ctx, now, hooks)],
     ['试岗转正', () => promoteDue(ctx, now, hooks.safe)],
     ['保留期清理', async () => {
@@ -98,14 +122,31 @@ export async function runTick(ctx: HubContext, hooks: TickHooks): Promise<void> 
       prunedDays.set(ctx, day);
     }],
     ['调度放行', async () => {
-      for (const bot of ctx.store.table('bots').list()) await hooks.safe('反思检查', () => { shouldReflect(ctx, bot.id, now); }, bot.id);
+      // P75f：旧复盘的四类触发已下线（shouldReflect 删除）；复盘只在验收后按记录触发（P75g）。
       await hooks.safe('总管信号', () => { checkTeamSignals(ctx, now); });
       // P63：等待名单里的人既没排队也没在跑时按「没接上」处理，保证主题讨论不会永远卡住。
       await hooks.safe('主题讨论兜底', () => { sweepStuckTopics(ctx); });
+      // P72b：约定卡迟迟没发出（回合没走到交账路由）时补发。
+      await hooks.safe('约定补发', () => { sweepUnpostedAgreements(ctx, now); });
+      // P73c：组队卡的卡片或「待你处理」条目缺失时补发；三问答完却没生成组队卡的补生成。
+      await hooks.safe('组队卡补发', () => { sweepTeamCards(ctx); });
+      await hooks.safe('组队卡补生成', () => { sweepTeamSetup(ctx); });
+      // P74c：一件事的巡检（回合上限、兜底叫醒）。放在调度之前：到上限的事先停下并清掉候选，兜底排上的唤醒本 tick 就能放行。
+      await hooks.safe('一件事巡检', () => { sweepJobs(ctx, now); });
+      // P75b：验收后的同类任务记录没写成（出错只记日志）或升级前验收的事，补写一行；序号没变就不扫（见 job/after-accept.ts）。
+      await hooks.safe('同类任务记录兜底', () => sweepJobOutcomes(ctx));
+      // P75i：每周一 03:00 起，每位在岗员工建一条整理记录（先按规则收起，再对上周技能库有变化的员工排整理唤醒）。
+      await hooks.safe('每周整理', () => sweepWeeklyTidy(ctx, now));
+      // P75g：复盘记录的兜底（参与者掉队补排、过期补记、结束时落复盘小结）。
+      await hooks.safe('复盘兜底', () => sweepSkillRuns(ctx, now));
       hooks.collect(now);
       await hooks.pump();
     }],
   ];
   for (const [label, work] of stages) await hooks.safe(label, work);
   await hooks.safe('告警同步', () => syncAlertItems(ctx));
+  // P76h 第二段：额度红灯期间，会误了交付时间的事以总管名义提示一次并推送（见 job/due-risk.ts）。放在通知整理之前，同一个 tick 的推送一起处理。
+  await hooks.safe('误交付时间提示', () => checkDueRisk(ctx, now));
+  // P76h：最后整理一次通知队列：免打扰顺延的到点补发、10 分钟合并、发送失败的重试。放在告警同步之后，本 tick 新建的告警条目也能一起处理。
+  await hooks.safe('通知整理', () => flushPushQueue(ctx, now, { skipIfBusy: true }));
 }

@@ -20,7 +20,7 @@ export type SidebarGroupId = (typeof SIDEBAR_GROUP_ORDER)[number]
 /** 分组标题：组件直接取这里，不在 JSX 里写死第二份文案。 */
 export const SIDEBAR_GROUP_TITLES: Record<SidebarGroupId, string> = {
   office: '办公室',
-  teammates: '队友',
+  teammates: '员工',
   workspaces: '工作区',
 }
 

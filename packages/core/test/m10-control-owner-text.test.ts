@@ -4,7 +4,6 @@ import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { botFixture, goalFixture, modelFixtures } from './model-fixtures.js';
 import { createBotHome } from '../src/memory/files.js';
 import { createDispatcher } from '../src/engine/dispatch.js';
-import { shouldReflect } from '../src/reflect/trigger.js';
 import { setLifecycle } from '../src/api/bots.js';
 import { postThread, sendOwnerMessage } from '../src/outreach/thread.js';
 import { botView } from '../src/api/bot-view.js';
@@ -51,23 +50,7 @@ async function assertViews(ctx: Awaited<ReturnType<typeof setup>>['ctx'], botId:
 }
 
 describe('M10 控制候选给主人完整摘要', () => {
-  it.each([
-    ['correction', '按你的纠正做一次复盘'], ['no_commit', '连续两次没交账，做一次复盘'],
-    ['weekly', '本周例行复盘'], ['period', `目标周期结束：${goalFixture.title}`],
-  ] as const)('复盘 %s 的排队、唤醒与活动流都使用主人摘要', async (kind, expected) => {
-    const { ctx, bot } = await setup(kind === 'weekly' ? '2026-11-08T20:00:00+08:00' : undefined);
-    const now = ctx.clock.now();
-    if (kind === 'correction') postThread(ctx, { thread: bot.id, from: 'owner', kind: 'chat', text: '以后先核对原文', refId: null });
-    if (kind === 'no_commit') ctx.store.table('bots').patch(bot.id, { consecutiveNoCommit: ctx.settings.noCommitReflectionCount });
-    if (kind === 'period') ctx.store.table('goals').put({ ...goalFixture, periodEndsAt: now });
-    if (kind === 'weekly') for (let index = 0; index < ctx.settings.c03.reflectionWeekMinTurns; index++) {
-      ctx.store.table('wakes').put({ ...WakeTicketSchema.parse(modelFixtures.WakeTicket.valid), id: `w_00000000${String(index).padStart(2, '0')}`,
-        botId: bot.id, variant: 'regular', status: 'committed', startedAt: now - (index + 1) * 3_600_000, endedAt: now - 1 });
-    }
-    expect(shouldReflect(ctx, bot.id, now)?.reason.ownerSummary).toBe(expected);
-    await assertViews(ctx, bot.id, expected);
-  });
-
+  // P75f：旧复盘四类触发已下线，「复盘 %s 的排队、唤醒与活动流都使用主人摘要」整组测试随之删除。
   it('暂停期间留言在恢复后排队，状态与唤醒记录写继续处理你的消息', async () => {
     const { ctx, bot } = await setup();
     await setLifecycle(ctx, bot.id, 'paused');
@@ -142,7 +125,7 @@ describe('M10 宿主权限告警使用中文动作', () => {
       await onTurnEvent(ctx, { type: 'awaiting_approval', sessionId: bot.sessionId!, tool, summary, at: ticket.startedAt });
       const blocked = ctx.store.table('alerts').list(row => row.code === 'host_approval_blocked')[0]!;
       const waiting = ctx.store.table('alerts').list(row => row.code === 'host_approval_wait')[0]!;
-      expect(blocked.text.split('\n')[0]).toBe(`宿主权限拦截了${label}，本次动作未执行。请检查 DSH 会话权限；确认权限允许后再发消息让队友继续。中心未创建审批单，避免无效批准和反复重试。`);
+      expect(blocked.text.split('\n')[0]).toBe(`宿主权限拦截了${label}，本次动作未执行。请检查 DSH 会话权限；确认权限允许后再发消息让员工继续。中心未创建审批单，避免无效批准和反复重试。`);
       expect(waiting.text.split('\n')[0]).toBe(`${label}正在等待宿主权限确认。中心将在 5 分钟后取消回合。`);
       for (const alert of [blocked, waiting]) {
         expect(alert.text.split('\n')[0]).not.toContain(tool);

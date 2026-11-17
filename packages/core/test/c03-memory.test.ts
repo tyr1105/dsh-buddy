@@ -1,13 +1,11 @@
-/** C03 记忆与套路验收：真实内存文件读回，验证保护恢复、文件协议、有限摘要和教学证据。 */
+/** C03 记忆验收：真实内存文件读回，验证保护恢复、文件协议与教学证据。P75f：套路与教学入口已下线，相关测试移除。 */
 import { describe, expect, it } from 'vitest';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { botFixture, goalFixture, watchFixture, modelFixtures, id } from './model-fixtures.js';
-import { createBotHome, initRoot, refreshBotFiles, verifyProtectedFiles, appendJournal, readMemorySummary } from '../src/memory/files.js';
+import { createBotHome, initRoot, refreshBotFiles, verifyProtectedFiles, appendJournal } from '../src/memory/files.js';
 import { renderBotAgentsMd, renderRootAgentsMd } from '../src/memory/render.js';
 import { upsertRule } from '../src/memory/rules.js';
 import { needsRotation } from '../src/memory/rotation.js';
-import { saveRoutine, editRoutine, routineIndex } from '../src/routines/save.js';
-import { enqueueTeach } from '../src/routines/teach.js';
 import { CommitSchema, WakeTicketSchema } from '../src/model/wake.js';
 import { AgendaItemSchema } from '../src/model/bot.js';
 import { byteLength } from '../src/util/text.js';
@@ -38,7 +36,13 @@ describe('家目录与身份', () => {
     const text = renderBotAgentsMd(ctx, botFixture);
     for (const expected of ['研究员', '先核实再给结论', '持续理解公开事实', 'hub_commit', 'hub_send', 'mind/', 'memory/journal/', '一条消息只问一件事']) expect(text).toContain(expected);
   });
-  it('试岗明确强制L1，不展示原L3作为有效授权', () => { expect(renderBotAgentsMd(context(), { ...botFixture, lifecycle: 'probation', autonomy: 'L3' })).toContain('L1 建议（试岗强制 L1）'); });
+  // P75e：试岗仍按 L1 展示（取值逻辑不变），但不再写「（试岗强制 L1）」的说法。
+  it('试岗明确强制L1，不展示原L3作为有效授权', () => {
+    const text = renderBotAgentsMd(context(), { ...botFixture, lifecycle: 'probation', autonomy: 'L3' });
+    expect(text).toContain('L1 建议');
+    expect(text).not.toContain('L3 授权执行');
+    expect(text).not.toContain('试岗强制');
+  });
   it('长规则下机器人8KB、全体3KB仍保留固定协议', () => {
     const ctx = context(); ctx.store.table('rules').put({ id: id('ru'), scope: 'global', text: '全体长规则'.repeat(3000), redLine: true, source: 'owner', status: 'active', createdAt: ctx.clock.now() });
     expect(byteLength(renderBotAgentsMd(ctx, botFixture))).toBeLessThanOrEqual(8192); expect(byteLength(renderRootAgentsMd(ctx))).toBeLessThanOrEqual(3072);
@@ -75,8 +79,7 @@ describe('家目录与身份', () => {
     const ctx = context(); await createBotHome(ctx, botFixture); for (let n = 0; n < 3; n++) { await ctx.fs.writeTextAtomic(`${botFixture.homeDir}/AGENTS.md`, '篡改'); await verifyProtectedFiles(ctx, botFixture.id); }
     expect(ctx.store.table('bots').get(botFixture.id)?.lifecycle).toBe('quarantined');
   });
-  it('长期记忆摘要按UTF8截1.5KB', async () => { const ctx = context(); await createBotHome(ctx, botFixture); await ctx.fs.writeTextAtomic(`${botFixture.homeDir}/memory/MEMORY.md`, '中文'.repeat(2000)); const text = await readMemorySummary(ctx, botFixture); expect(byteLength(text)).toBeLessThanOrEqual(1536); expect(text).toContain('已截断'); });
-  it('不存在长期记忆返回可读说明', async () => expect(await readMemorySummary(context(), botFixture)).toContain('尚无长期记忆'));
+  // P75f：长期记忆摘要（readMemorySummary）与唤醒包「记忆摘要」段已删除，两条摘要测试随之删除。
   it('交账日志含理由、世界变化、证据、下次思考，重试不重复', async () => {
     const ctx = context(); await createBotHome(ctx, botFixture); const commit = { ...CommitSchema.parse(modelFixtures.Commit.valid), createdAt: ctx.clock.now(), worldChanges: [{ what: '产出报告', whoCanSee: 'owner' as const, where: 'work/report.md' }], evidence: ['work/report.md'] }; const wake = WakeTicketSchema.parse(modelFixtures.WakeTicket.valid);
     await appendJournal(ctx, botFixture, commit, wake); await appendJournal(ctx, botFixture, commit, wake);
@@ -97,35 +100,10 @@ describe('家目录与身份', () => {
   it('proposed规矩不渲染为已生效红线', async () => { const ctx = context(); await upsertRule(ctx, { scope: botFixture.id, text: '尚待批准的红线', redLine: true, status: 'proposed' }); expect(renderBotAgentsMd(ctx, botFixture)).not.toContain('尚待批准'); });
 });
 
-describe('轮换与套路', () => {
+describe('轮换', () => {
   it.each([6, 7])('会话%s天轮换边界', days => { const bot = { ...botFixture, sessionId: 's', sessionStartedAt: 1000 }; expect(needsRotation(bot, { exists: true, running: false, contextRatio: 0.1 }, 1000 + days * 86400000)).toBe(days === 7); });
   it.each([0.49, 0.5])('上下文比例%s轮换边界', ratio => expect(needsRotation({ ...botFixture, sessionId: 's', sessionStartedAt: 1000 }, { exists: true, running: false, contextRatio: ratio }, 2000)).toBe(ratio >= 0.5));
   it('不存在的宿主会话需轮换', () => expect(needsRotation({ ...botFixture, sessionId: 's' }, { exists: false, running: false, contextRatio: null }, 1000)).toBe(true));
-  it('套路文件和索引含标题、场景、编号步骤、来源和修订', async () => {
-    const ctx = context(); const result = await saveRoutine(ctx, botFixture.id, routine); const text = (await ctx.fs.readText(`${botFixture.homeDir}/playbooks/${result.slug}.md`))!;
-    for (const expected of ['事实核对', '遇到公开资料变化', '1. 打开原文', '2. 逐条核对', '主人教学', '修订记录']) expect(text).toContain(expected);
-    expect(routineIndex(ctx, botFixture.id)).toContain(`playbooks/${result.slug}.md`);
-  });
-  it('同名更新保存id与runs并追加修订', async () => {
-    const ctx = context(); const old = await saveRoutine(ctx, botFixture.id, routine); ctx.store.table('routines').patch(old.id, { runs: 5 }); ctx.clock.advance(60_000); const updated = await saveRoutine(ctx, botFixture.id, { ...routine, steps: ['先查来源'] });
-    expect(updated.id).toBe(old.id); expect(updated.runs).toBe(5); expect(ctx.store.table('routines').count()).toBe(1); expect((await ctx.fs.readText(`${botFixture.homeDir}/playbooks/${old.slug}.md`))?.match(/- 2026/g)).toHaveLength(2);
-  });
-  it('并发同名保存仍然只有一个套路并保留两次修订', async () => {
-    const ctx = context(); const [a, b] = await Promise.all([saveRoutine(ctx, botFixture.id, routine), saveRoutine(ctx, botFixture.id, { ...routine, steps: ['更新后的步骤'] })]);
-    expect(a.id).toBe(b.id); expect(ctx.store.table('routines').count()).toBe(1); const text = (await ctx.fs.readText(`${botFixture.homeDir}/playbooks/${a.slug}.md`))!;
-    expect(text).toContain('更新后的步骤'); expect(text.match(/- 2026/g)).toHaveLength(2);
-  });
-  it('不同名字相同slug不覆盖另一套路', async () => {
-    const ctx = context(); const a = await saveRoutine(ctx, botFixture.id, { ...routine, name: 'A/B' }); const b = await saveRoutine(ctx, botFixture.id, { ...routine, name: 'A B' }); expect(a.slug).not.toBe(b.slug); expect(await ctx.fs.readText(`${botFixture.homeDir}/playbooks/${a.slug}.md`)).toContain('# A/B');
-  });
-  it('主人编辑更新清单但不另建套路', async () => {
-    const ctx = context(); const old = await saveRoutine(ctx, botFixture.id, routine); const edited = await editRoutine(ctx, old.id, { steps: ['加一个人工检查'] }); expect(edited.id).toBe(old.id); expect((await ctx.fs.readText(`${botFixture.homeDir}/playbooks/${old.slug}.md`))).toContain('主人修订');
-  });
-  it.each([{ ...routine, name: '' }, { ...routine, steps: [] }, { ...routine, steps: [''] }])('套路输入无效拒绝 %j', async input => expect(saveRoutine(context(), botFixture.id, input)).rejects.toThrow());
-  it('教学入队含主人发起、teach变体及有界摘要证据', async () => {
-    const ctx = context(); ctx.host.digests.set('owner-session', '教学记录'.repeat(3000)); const entry = await enqueueTeach(ctx, botFixture.id, 'owner-session', '学会核对');
-    expect(entry).toMatchObject({ variant: 'teach', ownerInitiated: true, priority: 100 }); const audit = ctx.store.log('audit').all().find(row => row.id === entry!.reason.evidence[0])!;
-    expect(audit.action).toBe('teach_context'); expect(byteLength(JSON.parse(audit.detail).digest)).toBeLessThanOrEqual(3072); expect(ctx.host.calls[0]).toMatchObject({ method: 'readSessionDigest', args: ['owner-session', 3000] });
-  });
-  it('教学未知机器人拒绝且不读会话', async () => { const ctx = context(); await expect(enqueueTeach(ctx, 'missing', 's', '学')).rejects.toThrow('不存在'); expect(ctx.host.calls).toHaveLength(0); });
+  // P75f：套路保存（saveRoutine、editRoutine、routineIndex）与教学入队（enqueueTeach）已下线，
+  // 「套路文件和索引」「同名更新」「并发同名」「slug 不覆盖」「主人编辑」「输入无效」「教学入队」等测试随之删除。
 });

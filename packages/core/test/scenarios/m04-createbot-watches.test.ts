@@ -24,22 +24,21 @@ it('M04 新建时带 file 关注，文件变化经去抖产生感知并真实唤
     const watch = watches[0]!;
     expect(listen).toHaveBeenCalledTimes(1);
     expect(listen).toHaveBeenCalledWith('/sim-public', { recursive: false }, expect.any(Function));
-    expect(world.store.table('bots').get(bot.id)?.lifecycle).toBe('probation');
+    // P73a（5.1 第 1 类）：原预期新建员工 lifecycle 为 probation；新预期 active。
+    expect(world.store.table('bots').get(bot.id)?.lifecycle).toBe('active');
 
-    // 初始基线不应冒充变化；先让创建自动触发的试跑结束，并跨过启动静默。
+    // 初始基线不应冒充变化；跨过启动静默。P72h H3：创建不再自动试跑，此时没有任何回合。
     await advance(world, 3 * minute);
     expect(world.store.table('percepts').list(row => row.watchId === watch.id)).toEqual([]);
-    expect(world.store.table('wakes').list()).toEqual([expect.objectContaining({
-      botId: bot.id, variant: 'trial', status: 'committed', ownerInitiated: true,
-    })]);
-    expect(world.host.turns).toHaveLength(1);
+    expect(world.store.table('wakes').list()).toEqual([]);
+    expect(world.host.turns).toHaveLength(0);
 
     // 一次显著的体积变化足以达到紧急分档；去抖截止前仍然不能产生感知或新回合。
     const changedAt = world.clock.now();
     await world.fs.writeTextAtomic(target, '公开报告的新版本包含了需要核实的新增事实。'.repeat(20));
     await advance(world, world.settings.fileDebounceMs - 1);
     expect(world.store.table('percepts').list(row => row.watchId === watch.id)).toEqual([]);
-    expect(world.host.turns).toHaveLength(1);
+    expect(world.host.turns).toHaveLength(0);
 
     await advance(world, 1);
     const percepts = world.store.table('percepts').list(row => row.watchId === watch.id);
@@ -56,16 +55,16 @@ it('M04 新建时带 file 关注，文件变化经去抖产生感知并真实唤
       dispatchedAt: world.clock.now(), endedAt: world.clock.now() });
     expect(wake.reason.evidence).toContain(percept.id);
     expect(percept.consumedByWake).toBe(wake.id);
-    expect(world.host.turns).toHaveLength(2);
-    expect(world.host.turns[1]).toMatchObject({ botId: bot.id, status: 'ended', source: { wakeId: wake.id } });
-    expect(world.host.turns[1]!.packet).toContain(target);
+    expect(world.host.turns).toHaveLength(1);
+    expect(world.host.turns[0]).toMatchObject({ botId: bot.id, status: 'ended', source: { wakeId: wake.id } });
+    expect(world.host.turns[0]!.packet).toContain(target);
     expect(world.store.table('commits').list(row => row.wakeId === wake.id)).toHaveLength(1);
     expect(world.store.log('appraisals').all().some(row => row.decision === 'woke' && row.perceptIds.includes(percept.id))).toBe(true);
 
     // 相同文件不再变化时，已消费事件不会被后续 tick 重复唤醒。
     await advance(world, 5 * minute);
     expect(world.store.table('percepts').list(row => row.watchId === watch.id)).toHaveLength(1);
-    expect(world.host.turns).toHaveLength(2);
+    expect(world.host.turns).toHaveLength(1);
     expect(listen).toHaveBeenCalledTimes(1);
   } finally {
     await world.hub.stop();

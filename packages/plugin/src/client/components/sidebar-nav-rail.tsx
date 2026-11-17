@@ -51,7 +51,7 @@ export function CompactRail(props: CompactRailProps): ReactNode {
           {bot.unread > 0 ? <span className="ah-rail-dot" aria-hidden="true" /> : null}
         </button>
       ))}
-      <button type="button" className="ah-rail-btn" title="新建队友" aria-label="新建队友" onClick={props.onNewBot}>＋</button>
+      <button type="button" className="ah-rail-btn" title="新建员工" aria-label="新建员工" onClick={props.onNewBot}>＋</button>
       <div className="ah-rail-sep" role="presentation" />
       {props.workspaceProjects.map(project => (
         <button

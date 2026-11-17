@@ -111,11 +111,10 @@ describe('M08 所有可配置期望的入口', () => {
     expect(state.ctx.store.table('watches').count()).toBe(0);
   });
 
-  it('反思交账新增关注复用星期校验与规范化，旧 watch_update 不扩权', async () => {
-    const { ctx, tc, wake } = toolFixture();
-    ctx.store.table('wakes').patch(wake.id, { variant: 'reflection' });
-    expect(await runTool(ctx, tc, 'hub_reflect_commit', { summary: '只在应检查的星期核实资料', lessons: [], routineUpdates: [],
-      watchChanges: [{ ...watchInput, expectation: requestExpectation([5, 1, 5]) }] })).toMatchObject({ ok: true });
+  // P75f：旧复盘交账入口已下线；同样的校验经 hub_watch_propose 验证（与原来共用 validateWatchProposal）。
+  it('新增关注复用星期校验与规范化，旧 watch_update 不扩权', async () => {
+    const { ctx, tc } = toolFixture();
+    expect(await runTool(ctx, tc, 'hub_watch_propose', { ...watchInput, expectation: requestExpectation([5, 1, 5]) })).toMatchObject({ ok: true });
     expect(ctx.store.table('watches').list(row => row.target === watchInput.target)[0]?.expectation?.weekdays).toEqual([1, 5]);
     const update = buildTools(ctx).find(tool => tool.name === 'hub_watch_update')!;
     expect(update.jsonSchema.properties).not.toHaveProperty('expectation');

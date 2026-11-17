@@ -98,3 +98,47 @@ describe('fake-model-server 禁用工具探针（D03 先修项 A4）', () => {
     expect(isFirstTrialStep(withResult)).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// P74j（追加）：一件事的剧本接进原有逻辑之后，原有场景不受影响（对应 P74j 补充卡 J14）。
+// 剧本本身的用例在 p74j-fake-job.test.ts；这里只确认「识别不到时返回 null、原有剧本照旧」。
+// ---------------------------------------------------------------------------
+// @ts-expect-error 故意引用包外的 .mjs
+const jobPlanModule = await import('../../scripts/dev/fake-job-plan.mjs') as {
+  jobAction(input: { messages: unknown[]; tools: unknown[]; plan: Set<string>; memory: unknown }): unknown
+  parsePlan(value: string | undefined): Set<string>
+  createJobMemory(): unknown
+  PNG_BYTES: readonly number[]
+}
+
+describe('P74j 一件事的剧本不影响原有场景（J14）', () => {
+  /** 用某段唤醒文字问剧本：识别不到返回 null。 */
+  const jobActionFor = (text: string) => jobPlanModule.jobAction({
+    messages: [{ role: 'user', content: [{ type: 'text', text }] }], tools: [], plan: new Set(), memory: jobPlanModule.createJobMemory(),
+  })
+  it('原有暗号（【提问】【审批】【慢】）、普通唤醒、试跑唤醒：剧本都返回 null，nextAction 照旧', () => {
+    for (const text of [
+      '【中心通知】…\n## 主人对你说\n【提问】请问一下',
+      '【中心通知】…\n## 主人对你说\n【审批】发一下',
+      '【中心通知】…\n## 主人对你说\n【慢】等一下',
+      '【中心通知】常规唤醒',
+      '【中心通知】唤醒单 w_1（试跑）\n## 第一次试跑\n…',
+    ]) {
+      expect(jobActionFor(text), text).toBeNull()
+      expect(nextAction({ messages: [{ role: 'user', content: [{ type: 'text', text }] }] }).kind).toBe('tool')
+    }
+  })
+  it('有「你手上的事」段但是一览（没有执行者、核对人身份）：返回 null', () => {
+    expect(jobActionFor('【中心通知】\n\n## 你手上的事（中心维护）\n「会员定价页」（jobId 为 job_abc1234567）执行中，在等林舟')).toBeNull()
+  })
+  it('FAKE_JOB_PLAN 的解析：认五个取值，忽略空格和不认识的值；没有设置是空集合', () => {
+    expect([...jobPlanModule.parsePlan('wait_material, ask_once,wrong_text,review_fail_once,review_fail_always,乱写')].sort())
+      .toEqual(['ask_once', 'review_fail_always', 'review_fail_once', 'wait_material', 'wrong_text'])
+    expect(jobPlanModule.parsePlan(undefined).size).toBe(0)
+    expect(jobPlanModule.parsePlan('').size).toBe(0)
+  })
+  it('截图常量是合法 PNG 的字节（文件头加 IEND 结尾）', () => {
+    expect(jobPlanModule.PNG_BYTES.slice(0, 8)).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    expect(Buffer.from(jobPlanModule.PNG_BYTES.slice(-8, -4)).toString('latin1')).toBe('IEND')
+  })
+})

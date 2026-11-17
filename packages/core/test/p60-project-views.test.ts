@@ -10,6 +10,7 @@ import { FileStore } from '../src/store/index.js';
 import { projectView } from '../src/api/project-views.js';
 import { threadView } from '../src/api/feed-views.js';
 import { saveProjectContext } from '../src/project/context-service.js';
+import { ProjectTaskSchema } from '../src/model/project.js';
 import { lastPacket, openTopic, runningWake, speak, topicHub } from './p63-topic-fixtures.js';
 
 describe('P60 项目视图字段', () => {
@@ -26,13 +27,17 @@ describe('P60 项目视图字段', () => {
 
   it('事务直接给标题、跟进人名字、状态文案和主题 id', async () => {
     const fix = await topicHub();
-    const [owner, wang] = fix.bots;
+    const [, wang] = fix.bots;
     const topicId = await openTopic(fix, '开工');
-    const tool = fix.hub.tools().find(item => item.name === 'hub_project_task_upsert')!;
-    expect(await tool.handler(owner!.sessionId!, { projectId: fix.project.id, title: '写报告', assigneeBotId: wang!.id }))
-      .toMatchObject({ ok: true });
+    // P74b：总管不能再用 hub_project_task_upsert 把事务指派给别人（派活只有 hub_job_manage 一条路），
+    // 这条测的是视图字段，所以直接写入与原来工具产生的完全相同的一条事务（跟进人小王、执行中、归到当前主题）。
+    const now = fix.ctx.clock.now();
+    fix.ctx.store.table('projectTasks').put(ProjectTaskSchema.parse({
+      id: 'pt_0000000001', projectId: fix.project.id, title: '写报告', detail: '', assigneeBotId: wang!.id, status: 'doing',
+      wakeIds: [], artifactIds: [], topicId, createdAt: now, updatedAt: now, dueAt: null,
+    }));
     const task = fix.hub.api.projectView().projects[0]!.tasks[0]!;
-    expect(task).toMatchObject({ title: '写报告', assigneeName: '小王', statusLabel: '进行中', topicId });
+    expect(task).toMatchObject({ title: '写报告', assigneeName: '小王', statusLabel: '执行中', topicId });
     // 旧字段保留，界面重做前老代码还在读。
     expect(task.task.title).toBe('写报告');
     expect(task.assigneeBotName).toBe('小王');
@@ -149,7 +154,7 @@ describe('P60/P63 旧数据读取', () => {
 
   it('线程视图读不存在的主题时不抛错，沿用已删除的提示', () => {
     const ctx = createTestContext();
-    expect(threadView(ctx, 'ptp_0000000099').title).toBe('已删除的队友');
+    expect(threadView(ctx, 'ptp_0000000099').title).toBe('已删除的员工');
   });
 });
 

@@ -182,13 +182,25 @@ describe('详情面板', () => {
     expect(defaultDetailTemplate('product').name).toBe('工程师')
     expect(defaultDetailTemplate('growth').name).toBe('SEO 专员')
   })
-  it('卡片底部写执行风格、MBTI 和自主节奏', () => expect(templateMeta(template('engineer'))).toBe('执行 · ISTP · 听吩咐'))
+  // P73e：卡片底部改写「角色 · MBTI · 模型档位」（原为「执行风格 · MBTI · 自主节奏」），角色取模板的显示标签。
+  it('卡片底部写角色、MBTI 和模型档位', () => {
+    expect(templateMeta(template('engineer'))).toBe('执行 · ISTJ · 标准档')
+    expect(templateMeta(template('reviewer'))).toBe('评审 · ISTJ · 轻档')
+  })
+  it('反例：轻档不可用时，建议轻档的模板写标准档', () => {
+    expect(templateMeta(template('reviewer'), false)).toBe('评审 · ISTJ · 标准档')
+  })
+  // P73e：「MBTI」一行改带四句话；执行类固定听吩咐，去掉「自主节奏」一行，值守类等仍保留。
   it('详情就是表单里的那几项：对外角色的红线在员工说明里，技能按模板顺序显示中文名', () => {
     const rows = templateDetailRows(template('spokesperson'), options)
-    expect(rows.map(row => row.label)).toEqual(['执行风格', '性格', '说话风格', 'MBTI', '自主节奏', '岗位技能', '员工说明'])
+    expect(rows.map(row => row.label)).toEqual(['执行风格', '性格', '说话风格', 'MBTI', '岗位技能', '员工说明'])
     expect(rows.find(row => row.label === '员工说明')?.value).toContain('先经主人批准')
     expect(rows.find(row => row.label === '岗位技能')?.value).toBe('对外口径')
-    expect(rows.find(row => row.label === '自主节奏')?.value).toBe('听吩咐：你点名或派活才动')
+    expect(rows.find(row => row.label === 'MBTI')?.lines?.map(line => line.code)).toEqual(['E', 'N', 'F', 'J'])
+  })
+  it('值守类（不是固定听吩咐）仍显示自主节奏', () => {
+    const rows = templateDetailRows(template('inspector'), [])
+    expect(rows.find(row => row.label === '自主节奏')).toBeDefined()
   })
   it('反例：技能清单没加载时不显示技能行', () => {
     const rows = templateDetailRows(template('engineer'), [])
@@ -264,7 +276,7 @@ describe('批量添加', () => {
   it('提示文案：一位成功不用说，多位列名字，失败写原因', () => {
     expect(templateBatchNotice({ added: [{ botId: 'a', name: '工程师' }], failed: [], warnings: [] })).toBeUndefined()
     expect(templateBatchNotice({ added: [{ botId: 'a', name: '工程师' }, { botId: 'b', name: '评审员' }], failed: [], warnings: [] }))
-      .toBe('已添加 2 位队友：工程师、评审员。')
+      .toBe('已添加 2 位员工：工程师、评审员。')
     expect(templateBatchNotice({ added: [{ botId: 'a', name: '工程师' }], failed: [{ name: '评审员', error: '额度不够' }], warnings: [] }))
       .toBe('「评审员」没加上：额度不够')
     expect(templateBatchError({ added: [], failed: [{ name: '评审员', error: '额度不够' }], warnings: [] })).toBe('「评审员」没加上：额度不够')
@@ -288,8 +300,13 @@ describe('用真实 core 建一遍全部模板', () => {
     return { hub: parts.hub, rootDir, adapter: { command: (name, input) => facade.command(name, input), refreshOverview: () => undefined } }
   }
 
-  /** 名额是 6 位，15 个模板分三批建。 */
-  const batches: BotTemplate[][] = [BOT_TEMPLATES.slice(0, 6), BOT_TEMPLATES.slice(6, 12), BOT_TEMPLATES.slice(12)]
+  /**
+   * 名额是 6 位。P73c 起中心启动时自动建一位总管，占 1 个名额，而且总管最多 1 个，
+   * 所以「项目经理」模板不能再添加（它的配置由 core 自动建总管时使用，见 core 的 p73c 测试），
+   * 其余 14 个模板分三批建，每批最多 5 个。
+   */
+  const addable = BOT_TEMPLATES.filter(item => item.role !== 'chief')
+  const batches: BotTemplate[][] = [addable.slice(0, 5), addable.slice(5, 10), addable.slice(10)]
 
   it.each(batches.map((batch, index) => [index + 1, batch] as const))('第 %i 批全部建成，设定和模板一致', async (_index, batch) => {
     const { hub, rootDir, adapter } = await startEngine()
@@ -309,8 +326,10 @@ describe('用真实 core 建一遍全部模板', () => {
       expect(view.profile.mbti).toBe(item.mbti)
       expect(view.profile.autonomy).toBe('L1')
       const rhythm = RHYTHM_OPTIONS.find(option => option.value === item.rhythm)!
-      expect(view.profile.pace).toBe(rhythm.pace)
-      expect(view.profile.onDemand).toBe(rhythm.onDemand)
+      // P73a：core 对执行类（角色不是总管、值守）固定为听吩咐（quiet、onDemand）；总管、值守类仍按模板节奏。
+      const fixedByCore = item.role !== 'chief' && item.role !== 'sentinel'
+      expect(view.profile.pace).toBe(fixedByCore ? 'quiet' : rhythm.pace)
+      expect(view.profile.onDemand).toBe(fixedByCore ? true : rhythm.onDemand)
       expect(view.profile.presetSkillIds).toEqual([...item.presetSkillIds])
       // 技能真的写进了家目录，队友才读得到。
       for (const id of item.presetSkillIds) {
@@ -320,10 +339,11 @@ describe('用真实 core 建一遍全部模板', () => {
       const identity = await readFile(join(rootDir, 'bots', added.botId, 'AGENTS.md'), 'utf8')
       expect(identity).toContain(view.profile.persona)
       expect(identity).toContain(item.brief)
-      expect(identity.includes('听吩咐：'), item.name).toBe(rhythm.onDemand)
+      expect(identity.includes('听吩咐：'), item.name).toBe(fixedByCore ? true : rhythm.onDemand)
     }
     const overview = await hub.api.overview()
-    expect(overview.bots.map(row => row.name).sort()).toEqual(batch.map(item => item.name).sort())
+    // 名册里除了这一批，还有启动时自动建的总管。
+    expect(overview.bots.map(row => row.name).sort()).toEqual([...batch.map(item => item.name), '总管'].sort())
     // 头像色要覆盖 core 按角色给的默认色。
     for (const item of batch) expect(overview.bots.find(row => row.name === item.name)?.color).toBe(item.color)
   })
@@ -353,6 +373,8 @@ describe('用真实 core 建一遍全部模板', () => {
     const { hub, rootDir, adapter } = await startEngine()
     const result = await addTeammatesFromTemplates(adapter, [template('team-coach'), template('engineer')], [])
     const [coach, engineer] = result.added
+    // P72h H3：新建员工不再自动试跑，会话要等主人发话才创建；这里由主人给教练发一句话。
+    await adapter.command('pokeBot', { botId: coach!.botId })
     const coachView = await hub.api.bot(coach!.botId)
     const journal = join(rootDir, 'bots', engineer!.botId, 'memory/journal/2026-11-09.md')
     expect(hub.guardToolCall(coachView.profile.sessionId!, 'read_file', { path: journal }).allow).toBe(true)

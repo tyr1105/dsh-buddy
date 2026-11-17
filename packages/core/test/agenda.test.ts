@@ -9,6 +9,7 @@ import { resolveSettings } from '../src/config/defaults.js';
 import { AgendaItemSchema } from '../src/model/index.js';
 import type { AgendaItem, NextThink } from '../src/model/index.js';
 import { botFixture, modelFixtures, watchFixture } from './model-fixtures.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 
 const HOUR = 3_600_000;
 const DAY = HOUR * 24;
@@ -46,7 +47,9 @@ describe('议程紧迫度与时间候选', () => {
   });
   it('高疲劳拦普通候选但不拦轻复查', () => {
     const ctx = createTestContext(); ctx.store.table('bots').put({ ...botFixture, nextThinkAt: now, lightCheckAt: now });
-    for (let i = 0; i < 6; i += 1) ctx.store.log('ledger').append({ id: `le_${String(i).padStart(10, '0')}`, who: botFixture.id, wakeId: null, kind: 'turn', tokens: 1, at: now });
+    // P76c：疲劳改按「今天员工自己发起的回合数 / 每天上限（默认 2）」算；原用例写 6 行账本是按旧默认值 6 凑满疲劳，
+    // 现在写满上限所需的 2 张自己发起的唤醒单，证明的仍是「疲劳满时普通候选被拦、轻复查不拦」。
+    addSelfTurns(ctx, ctx.settings.botDailyTurnBudget, { startedAt: now - 1, dispatchedAt: now - 1 });
     expect(collectTimeCandidates(ctx, now).map(item => item.variant)).toEqual(['light_check']);
   });
   it('未到最长复查窗口不会因重复扫描滑动或提前生成候选', () => {

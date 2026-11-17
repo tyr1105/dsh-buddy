@@ -1,9 +1,8 @@
 /** 内驱触发台账：每天最多两次，同一种内驱触发后暂缓，避免一件挂起的事反复叫醒机器人。 */
 import type { HubContext } from '../engine/context.js';
 import type { DriveState } from '../model/index.js';
-import { botBudgetFor } from '../config/defaults.js';
 import { buildCandidate, type Candidate } from '../appraisal/think.js';
-import { botUsageToday } from '../quota/usage.js';
+import { selfWorkUsageToday } from '../quota/usage.js';
 import { localDateKey } from '../util/time.js';
 import { computeDrives, driveFacts } from './compute.js';
 
@@ -22,9 +21,10 @@ export function evaluateDrives(ctx: HubContext, now: number): Candidate[] {
     const inbox = allInbox.filter(item => item.botId === bot.id);
     const handoffs = allHandoffs.filter(item => item.from === bot.id);
     const commits = allCommits.filter(item => item.botId === bot.id);
-    const budget = botBudgetFor(bot.lifecycle, ctx.settings);
-    const used = botUsageToday(ctx, bot.id, now).turns;
-    const ratio = budget.dailyTurns > 0 ? used / budget.dailyTurns : 1;
+    // P76c：内驱的「今天已经用了多少」与闸门同一口径：今天员工自己发起的回合数 / 每天上限（上限为 0 时按 1）。
+    const budget = ctx.settings.botDailyTurnBudget;
+    const used = selfWorkUsageToday(ctx, bot.id, now).turns;
+    const ratio = budget > 0 ? used / budget : 1;
     const values = computeDrives(bot, goals, agenda, inbox, handoffs, commits, ratio, now, ctx.settings);
     const previous = ctx.store.table('drives').get(bot.id);
     const day = localDateKey(now, ctx.settings.timezone);

@@ -1,7 +1,24 @@
 /** 宿主写入前解析实际目标；新文件沿父目录解析，不能把符号链接目录当成普通家内路径。 */
 import { posix } from 'node:path';
 import type { FsIO, WriteBoundary } from '../io/interfaces.js';
-import { within } from './paths.js';
+import type { HubContext } from '../engine/context.js';
+import { samePlace, within } from './paths.js';
+
+/**
+ * P74r16a：中心启动时取一次中心根目录的真实路径，记进运行时上下文（不写进设置、不落盘）。
+ * 为什么：主人可能把数据目录放在符号链接后面；DSH 报来的工作目录是真实路径，闸门要靠它认出「这就是中心根目录」。
+ * 真实路径与设置里的写法相同（含 /var 与 /private/var 这类固定别名）时记为 null，不需要换算；
+ * 取真实路径失败时当作相同，只记一条日志，不影响启动。
+ */
+export async function detectRealRootDir(ctx: HubContext): Promise<void> {
+    try {
+        const real = (await ctx.fs.realpath(ctx.settings.rootDir)).replace(/\/+$/, '');
+        ctx.runtime.realRootDir = real && !samePlace(real, ctx.settings.rootDir) ? real : null;
+    } catch (error) {
+        ctx.runtime.realRootDir = null;
+        ctx.logger.warn('取不到中心根目录的真实路径，按与设置相同处理', String(error));
+    }
+}
 /** 不存在的尾部逐级补回；权限错误和循环链接不能被当作不存在而放行。 */
 export async function resolveRealTarget(fs: FsIO, path: string): Promise<string> {
     try { return await fs.realpath(path); }

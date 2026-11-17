@@ -3,9 +3,12 @@ import type {
   ArtifactHead, ArtifactVersion, ArtifactReview, ArtifactBatch, OfficeFrame,
   Bot, BotProfile, Aspiration, Goal, AgendaItem, Watch, Percept, DriveState, QueueEntry,
   WakeTicket, WakeLedgerEntry, ResultCheck, V2Config, Resource, Grant,
-  Project, ProjectTask, ProjectTopic, ProjectContextProposal, Commit, InboxItem,
+  Project, ProjectTask, ProjectTopic, ProjectContextProposal, Agreement, TeamSetup, TeamProposal, BotOrigin, Commit, InboxItem,
   Approval, OutboxAction, Routine, Mail, Handoff, Claim, Rule, QuotaState, Alert, Downtime,
   Settings, ThreadMessage, AppraisalLog, LedgerEntry, AuditEntry,
+  Job, JobSubmission, JobReview, JobEvent, ApprovalNote,
+  Skill, SkillVersion, SkillSource, SkillUpdate, SkillRun, JobOutcome, AgreementTag, Memory, Migration,
+  JobUsage, JobEstimate, JobNotice, QuotaPlan, PushQueueRow, OwnerPresence, JobOwnerTurns,
 } from '../model/index.js';
 
 /** 固定表名映射使调用者获得准确记录类型，避免混用各类 id 和字段。 */
@@ -39,6 +42,38 @@ export interface TableTypes {
   projectTopics: ProjectTopic;
   // P39：队友提交的上下文修改建议；只增不删，采纳/驳回后保留决策记录。
   projectContextProposals: ProjectContextProposal;
+  // P72a：约定（开工前对齐）；一份约定一条记录，版本内嵌；旧存档没有这张表时按空表读取。
+  agreements: Agreement;
+  // P73c：组队三问进度、组队卡、员工来历；旧存档没有这三张表时按空表读取，旧版本直接忽略它们。
+  teamSetups: TeamSetup;
+  teamProposals: TeamProposal;
+  botOrigins: BotOrigin;
+  // P74a：一件事、一次交回、一次核对、审批单的三行补充；旧存档没有这四张表时按空表读取，旧版本直接忽略它们。
+  jobs: Job;
+  jobSubmissions: JobSubmission;
+  jobReviews: JobReview;
+  approvalNotes: ApprovalNote;
+  // P75b：第四块（技能库与记忆）的九张表；永久保留（不进保留期表），旧存档没有这些表时按空表读取，旧版本直接忽略它们。
+  skills: Skill;
+  skillVersions: SkillVersion;
+  skillSources: SkillSource;
+  skillUpdates: SkillUpdate;
+  skillRuns: SkillRun;
+  jobOutcomes: JobOutcome;
+  agreementTags: AgreementTag;
+  memories: Memory;
+  migrations: Migration;
+  // P76b：第五块（进度、预算、通知）的六张表（用量、预计、停滞记号、额度窗口、通知队列、主人上次打开）；
+  // 不进保留期表（用量和预计要在 30 天之后仍然正确；通知队列由它自己的读写函数清理 30 天前已结束的行），
+  // 旧存档没有这些表时按空表读取，旧版本直接忽略它们。
+  jobUsage: JobUsage;
+  jobEstimates: JobEstimate;
+  jobNotices: JobNotice;
+  quotaWindows: QuotaPlan;
+  pushQueue: PushQueueRow;
+  ownerPresence: OwnerPresence;
+  // P87：一件事上「你发起的回合」（单列一栏，只用于消耗文字）；新表，旧存档没有按空表读取，旧版本直接忽略。
+  jobOwnerTurns: JobOwnerTurns;
   commits: Commit;
   inbox: InboxItem;
   approvals: Approval;
@@ -60,6 +95,8 @@ export interface LogTypes {
   appraisals: AppraisalLog;
   ledger: LedgerEntry;
   audit: AuditEntry;
+  // P74a：一件事里发生过的每个动作（只追加）；旧存档没有这条日志时按空读取。
+  jobEvents: JobEvent;
 }
 
 export const TABLE_NAMES = [
@@ -68,11 +105,14 @@ export const TABLE_NAMES = [
   'bots', 'botProfiles', 'aspirations', 'goals', 'agenda', 'watches', 'percepts', 'drives',
   'queue', 'wakes', 'wakeLedger', 'resultChecks', 'v2Config', 'resources', 'grants',
   'projects', 'projectTasks', 'projectTopics',
-  'projectContextProposals',
+  'projectContextProposals', 'agreements', 'teamSetups', 'teamProposals', 'botOrigins',
+  'jobs', 'jobSubmissions', 'jobReviews', 'approvalNotes',
+  'skills', 'skillVersions', 'skillSources', 'skillUpdates', 'skillRuns', 'jobOutcomes', 'agreementTags', 'memories', 'migrations',
+  'jobUsage', 'jobEstimates', 'jobNotices', 'quotaWindows', 'pushQueue', 'ownerPresence', 'jobOwnerTurns',
   'commits', 'inbox', 'approvals', 'outbox', 'routines',
   'mail', 'handoffs', 'claims', 'rules', 'quota', 'alerts', 'downtime', 'settings',
 ] as const satisfies readonly (keyof TableTypes)[];
-export const LOG_NAMES = ['thread', 'appraisals', 'ledger', 'audit'] as const;
+export const LOG_NAMES = ['thread', 'appraisals', 'ledger', 'audit', 'jobEvents'] as const;
 export type TableName = keyof TableTypes;
 export type LogName = keyof LogTypes;
 

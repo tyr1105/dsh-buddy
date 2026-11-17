@@ -46,7 +46,7 @@ function Tags(props: { row: ResourceViewRow }): ReactNode {
 function GrantChips(props: { row: ResourceViewRow }): ReactNode {
   if (props.row.resource.sensitivity !== 'restricted') return null
   if (props.row.grants.length === 0) {
-    return <p className="ah-res-hint">暂未选择队友，当前无阅读权限。</p>
+    return <p className="ah-res-hint">暂未选择员工，当前无阅读权限。</p>
   }
   return (
     <div className="ah-res-chips">
@@ -192,7 +192,7 @@ export function ResourcePage(props: {
       const saved = await props.run('saveResource', value.resource)
       if (!saved.ok) { setError(saved.error); return }
       const id = editing?.resource.id ?? (saved.data as { id?: string } | undefined)?.id
-      if (!id) throw new Error('资料已保存，但未取得编号。请刷新后在「编辑」中重新选择队友。')
+      if (!id) throw new Error('资料已保存，但未取得编号。请刷新后在「编辑」中重新选择员工。')
       const changes = grantChanges(editing, value.botIds)
       const failures: string[] = []
       for (const botId of changes.add) {
@@ -205,7 +205,7 @@ export function ResourcePage(props: {
       }
       setDialog(null)
       await props.onRefresh()
-      if (failures.length > 0) setPageError(`资料已保存，但有 ${failures.length} 位队友的读取权限未变更：${failures[0]}。请点击「编辑」重新保存。`)
+      if (failures.length > 0) setPageError(`资料已保存，但有 ${failures.length} 位员工的读取权限未变更：${failures[0]}。请点击「编辑」重新保存。`)
       else showSuccess(editing ? '修改已保存' : '资料已登记')
     } catch (e) {
       setDialog(null)
@@ -272,7 +272,7 @@ export function ResourcePage(props: {
         <ConfirmDialog title={`归档资料：${dialog.row.resource.name}`} busy={busy} error={error}
           onCancel={close} onConfirm={() => void submit('archiveResource', { id: dialog.row.resource.id }, '资料已归档')}
           confirmText="归档资料"
-          text={`归档后「${dialog.row.resource.name}」移入归档区，队友经中心无法读取；授权记录保留但不再生效，资料文件不会被删除。`} />
+          text={`归档后「${dialog.row.resource.name}」移入归档区，员工经中心无法读取；授权记录保留但不再生效，资料文件不会被删除。`} />
       ) : null}
     </section>
   )

@@ -145,7 +145,8 @@ describe('doorTarget / doorwayTarget：门口与总信箱', () => {
 
 describe('officeSummary', () => {
   it('汇总全部来自座位与门口本身', () => {
-    expect(officeSummary(fixtureOffice)).toEqual({ occupied: 3, waiting: 1, blocked: 0, doorTotal: 3 })
+    // P73f：样例办公室加了今天入职的林舟（第 4 位），在座人数由 3 变 4，其余不变。
+    expect(officeSummary(fixtureOffice)).toEqual({ occupied: 4, waiting: 1, blocked: 0, doorTotal: 3 })
   })
   it('受阻计数与等人分开统计', () => {
     const withBlocked = { ...fixtureOffice, seats: [seat(0, { light: 'blocked' }), seat(1), seat(2)] }

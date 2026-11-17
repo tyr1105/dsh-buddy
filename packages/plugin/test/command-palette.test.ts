@@ -30,7 +30,7 @@ describe('跳转面板清单', () => {
 
   it('视图文案稳定，与左栏主入口共用同一套中文名（3.2.4 一致标识）', () => {
     expect(COMMAND_VIEWS.map(item => item.label)).toEqual(
-      ['队友', '办公室', '待你处理', '动态', '资料', '项目', '设置'],
+      ['员工', '办公室', '待你处理', '动态', '资料', '项目', '设置'],
     )
   })
 
@@ -58,7 +58,7 @@ describe('跳转面板搜索', () => {
 
   it('动作可搜，多个词要同时命中', () => {
     expect(filterCommands('刷新').map(item => item.id)).toEqual(['refresh'])
-    expect(filterCommands('新建 队友').map(item => item.id)).toEqual(['new-bot'])
+    expect(filterCommands('新建 员工').map(item => item.id)).toEqual(['new-bot'])
   })
 
   it('没有匹配时返回空数组，不退回全部', () => {
@@ -134,7 +134,7 @@ describe('跳转面板挂载契约', () => {
   it('顶栏没有「跳转」和「新建队友」按钮，也不再接收这两个回调（P61）', () => {
     // 主人 2026-11-10 要求删除：顶栏只留标题、状态句和额度灯。
     expect(topBarSource).not.toContain('>跳转</button>')
-    expect(topBarSource).not.toContain('>新建队友</button>')
+    expect(topBarSource).not.toContain('>新建员工</button>')
     expect(topBarSource).not.toContain('onOpenPalette')
     expect(topBarSource).not.toContain('onNewBot')
     expect(topBarSource).not.toContain('aria-haspopup')
@@ -152,7 +152,7 @@ describe('跳转面板挂载契约', () => {
     const sidebarSource = readFileSync(new URL('components/team-sidebar.tsx', clientRoot), 'utf8')
     const groupSource = readFileSync(new URL('components/sidebar-teammates-group.tsx', clientRoot), 'utf8')
     expect(sidebarSource).toContain('props.hub.requestNewBot()')
-    expect(groupSource).toContain('aria-label="新建队友"')
+    expect(groupSource).toContain('aria-label="新建员工"')
   })
 
   it('顶栏不放任何页面切换，导航只留左栏一套（P61）', () => {

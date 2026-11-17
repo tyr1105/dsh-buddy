@@ -54,6 +54,8 @@ describe('M02 [0][2][6][25] 可恢复额度', () => {
   });
   it('旧窗口已用满个人三回合也能放恢复探针，待投递窗口不累计旧账', () => {
     const ctx = setup(); const now = ctx.clock.now(); ctx.runtime.startedAt -= hour;
+    // P76c：P76b 在这里显式设过每日回合 6（为了让「个人三回合」低于每日上限）。个人窗口回合上限已取消，回合数口径改数唤醒单，
+    // 这三笔用量只经 recordUsage 记账、没有唤醒单，不影响任何个人上限，显式设置去掉；用例证明的「旧窗口账不挡恢复探针」不变。
     for (let i = 0; i < 3; i++) recordUsage(ctx, { botId: botFixture.id, wakeId: `old-${i}`, tokens: 1, packetBytes: 0, steps: 1 });
     const red = onQuotaError(ctx, now); ctx.clock.set(red.redUntil!);
     expect(maybeAllowProbe(ctx, ctx.clock.now())).toBe(true);

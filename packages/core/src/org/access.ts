@@ -80,7 +80,7 @@ export function explainReadDenial(
   if (!resource || resource.archivedAt !== null) return '资料不存在或已归档，不能读取';
   if (!bot || !isBotOnTeam(bot)) {
     const state = bot ? `${bot.lifecycle}` : '不存在';
-    return `队友当前状态为 ${state}，不在岗，不能读取资料`;
+    return `员工当前状态为 ${state}，不在岗，不能读取资料`;
   }
   if (canRead(bot, resource, data, now)) return null;
   return `你没有资料「${resource.name}」的授权：这是受限资料，请主人授权后再读`;

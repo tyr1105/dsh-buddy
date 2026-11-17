@@ -114,19 +114,23 @@ describe('C03 守卫与宿主审批钩子', () => {
   it('无效输入返回错误而不抛给宿主', async () => {
     const { ctx } = setup(); expect((await guardToolCall(ctx, '', '', null)).allow).toBe(false);
   });
-  it('M02 反思允许 memory、套路与 work 写入，C 旧票仍不允许', async () => {
+  it('M02 反思允许 work 写入，技能库三处只读（P75e），C 旧票仍不允许', async () => {
     const { ctx, bot } = setup(); ctx.store.table('wakes').put({ ...(modelFixtures.WakeTicket.valid as WakeTicket), botId: bot.id, sessionId: 'bot-session', variant: 'reflection' });
-    expect((await guardToolCall(ctx, 'bot-session', 'write', { path: `${bot.homeDir}/memory/MEMORY.md` })).allow).toBe(true);
+    expect((await guardToolCall(ctx, 'bot-session', 'write', { path: `${bot.homeDir}/memory/MEMORY.md` })).allow).toBe(false);
     expect((await guardToolCall(ctx, 'bot-session', 'write', args)).allow).toBe(false);
-    expect((await guardToolCall(ctx, 'bot-session', 'exec', { command: 'touch work/x' })).allow).toBe(true);
+    // P75r6 同步（第 1 节第 5 条）：原来这里断言复盘回合可以写自己的 work（touch work/x 放行）；
+    // 现在技能类回合一律只读，写 work 也拒绝（不计越界）。原意「反思回合不因此被记越界」不变。
+    expect((await guardToolCall(ctx, 'bot-session', 'exec', { command: 'touch work/x' })).allow).toBe(false);
+    expect((await guardToolCall(ctx, 'bot-session', 'exec', { command: 'ls work' })).allow).toBe(true);
     expect(ctx.store.table('bots').get(bot.id)?.violations).toBe(0);
   });
 });
 
 describe('C03 出站四种执行', () => {
-  it('notify_owner 立即进入线程，重要时单推', async () => {
+  it('notify_owner 立即进入线程，重要时也不单推', async () => {
+    // P76h：原断言是「重要度 9 时单推一次」；现在 notify_owner 出站只落线程，不推送。
     const { ctx, bot } = setup(); const row = await submitOutbox(ctx, bot.id, { kind: 'notify_owner', payload: { text: '发现重要变化', importance: 9 }, why: '汇报' });
-    expect(row.status).toBe('done'); expect(ctx.store.log('thread').all()[0]?.text).toBe('发现重要变化'); expect(ctx.host.calls.some(c => c.method === 'notify')).toBe(true);
+    expect(row.status).toBe('done'); expect(ctx.store.log('thread').all()[0]?.text).toBe('发现重要变化'); expect(ctx.host.calls.some(c => c.method === 'notify')).toBe(false);
     expect(ctx.store.table('percepts').list()[0]).toMatchObject({ kind: 'outbox_done', salience: 0.5 });
   });
   it('低重要度汇报只进线程', async () => {
@@ -210,10 +214,11 @@ describe('C03 交账结束与单推失败边界', () => {
     expect((await guardToolCall(ctx, 'bot-session', 'exec', { command: 'touch work/late' })).allow).toBe(false);
     expect((await guardToolCall(ctx, 'bot-session', 'read', { path: `${bot.homeDir}/work/late` })).allow).toBe(true);
   });
-  it('汇报已进线程而单推失败时保留完成事实与失败原因', async () => {
+  it('汇报已进线程，宿主通知不可用也不影响完成事实（出站不再推送）', async () => {
+    // P76h：原断言是「单推失败时结果写『汇报已进入线程；单推失败』」；出站不再推送，也就没有单推失败这一支。
     const { ctx, bot } = setup(); ctx.host.notify = async () => { throw new Error('通知服务不可用'); };
     const row = await submitOutbox(ctx, bot.id, { kind: 'notify_owner', payload: { text: '重要交付', importance: 9 }, why: '汇报' });
-    expect(row.status).toBe('done'); expect(row.result).toContain('汇报已进入线程；单推失败');
+    expect(row.status).toBe('done'); expect(row.result).toBe('汇报已进入线程');
     await executeReadyOutbox(ctx); expect(ctx.store.log('thread').all()).toHaveLength(1);
   });
 });

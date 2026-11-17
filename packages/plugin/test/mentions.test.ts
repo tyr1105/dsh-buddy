@@ -20,6 +20,9 @@ function bot(id: string, patch: Partial<BotCard> = {}): BotCard {
     initials: id.slice(0, 1),
     lifecycle: 'active',
     lifecycleLabel: '在册',
+    staffStatus: 'on_duty',
+    staffStatusLabel: '在岗',
+    staffStatusReason: null,
     activity: 'resting',
     activityLabel: '待命',
     activityText: '',
@@ -57,7 +60,7 @@ describe('mentionMembers：项目成员 ∩ 在册队友', () => {
   it('反例：失效成员、已退役队友、不在册队友都不出现', () => {
     const list = mentionMembers(
       row([member('bot-gone', true), member('bot-retired'), member('bot-unknown'), member('bot-ok')]),
-      [bot('bot-retired', { lifecycle: 'retired' }), bot('bot-ok')],
+      [bot('bot-retired', { lifecycle: 'retired', staffStatus: 'archived', staffStatusLabel: '归档' }), bot('bot-ok')],
       'bot-self',
     )
     expect(list.map(m => m.botId)).toEqual(['bot-ok'])

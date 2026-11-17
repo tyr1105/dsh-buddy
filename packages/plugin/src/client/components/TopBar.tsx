@@ -12,22 +12,31 @@
  */
 import type { ReactNode } from 'react'
 import type { OverviewView } from '../../shared/views.js'
-import { quotaMeaning } from '../logic/quota.js'
+import { quotaMeaning, quotaUsedLine } from '../logic/quota.js'
 
 export function TopBar(props: {
   overview: OverviewView
 }): ReactNode {
   const o = props.overview
   // 额度灯不再显示「绿灯」：主人需要知道的是「还能不能让队友干活」，不是灯的颜色。
-  const quota = quotaMeaning(o.quota.light)
+  // P76j：新宿主读额度窗口视图（员工份额、红灯原因与恢复时间），旧宿主退回原来的四档文字。
+  // P76n：有窗口视图时，灯色与用量都改为读同一份视图；不再让顶栏的 6 / 40 与右栏的 18 / 18 各说一套。
+  const quotaWindow = o.quota.window ?? null
+  const quota = quotaMeaning(o.quota.light, quotaWindow)
+  const quotaLight = quotaWindow?.light ?? o.quota.light
+  // P86：顶栏恢复 token 数量：「员工已用约 8 回合（1.76M token），员工还可用约 32 回合」；
+  // 悬停提示里 token 写完整数字。视图没有 token 两项时（旧宿主）退回只写回合数的旧写法。
+  const usedText = quotaUsedLine(quotaWindow, o.quota.usedText, false)
+  const usedTitleText = quotaUsedLine(quotaWindow, o.quota.usedText, true)
   // U11 文案定稿（audit #01/#02）：页头副标题是一张状态条，先说人再说事。
   // 「在忙」与左栏办公室组同一个口径：activity === 'thinking' 的队友数；
   // 卡在主人这儿的件数取待你处理总数。免打扰时段目前没有「立即恢复」动作，
   // 只说提醒攒着、结束后一起给（定稿里的「立即恢复」入口尚未实现，见 questions.md）。
   const busyCount = o.bots.filter(bot => bot.activity === 'thinking').length
   const statusLine = o.quietNow
-    ? '免打扰开着。提醒先攒着，结束了一起给你。'
-    : `${busyCount} 个队友在忙。${o.inbox.total} 件事卡在你这儿。`
+    // P74i-m3（第 7 节）：两句都改为书面表达——「在忙」「卡在你这儿」「攒着」是口语或比喻。
+    ? '免打扰已开启。提醒暂存，结束后一并发给你。'
+    : `${busyCount} 位员工在工作，${o.inbox.total} 件事等你处理。`
   return (
     <header className="ah-topbar">
       <div className="ah-topbar-title">
@@ -36,14 +45,18 @@ export function TopBar(props: {
       </div>
       <div className="ah-topbar-status">
         <span
-          title={`${o.nowText} · ${quota.hint} · ${o.quota.usedText}`}
-          aria-label={`额度：${quota.label}，${o.quota.usedText}。${quota.hint}`}
-          className={`ah-quota ah-dot ah-dot-${o.quota.light === 'green' ? 'ok' : o.quota.light === 'yellow' ? 'warn' : 'danger'}`}
+          title={`${o.nowText} · ${quota.hint} · ${usedTitleText}`}
+          aria-label={`额度：${quota.label}，${usedText}。${quota.hint}`}
+          className={`ah-quota ah-dot ah-dot-${quotaLight === 'green' ? 'ok' : quotaLight === 'yellow' ? 'warn' : 'danger'}`}
         >
           <span className="ah-dot-circle" aria-hidden="true" />
           {/* 窄窗只收起文字、保留灯点（见 workspace.css 1100 容器断点）：
               「还能不能让队友干活」的状态信号不能在小窗口整条消失。 */}
-          <span className="ah-quota-text">{quota.label} · {o.quota.usedText}</span>
+          <span className="ah-quota-text">{quota.label} · {usedText}</span>
+          {/* P86r1：窄窗（插件区域不超过 1100）长文字收起后，灯点旁边只留视图给的 token 短文字（如「1.76M token」），
+              主人在常见窗口宽度下也能直接看到 token 数量；旧宿主的视图没有这段文字时不画，窄窗仍只剩灯点。
+              宽窗由样式隐藏这一段（长文字里已经有同一个数字）。悬停提示与无障碍标签仍是完整的一句。 */}
+          {quotaWindow?.staffUsedTokensText !== undefined ? <span className="ah-quota-short">{quotaWindow.staffUsedTokensText}</span> : null}
         </span>
       </div>
     </header>

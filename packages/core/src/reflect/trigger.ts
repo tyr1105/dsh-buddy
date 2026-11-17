@@ -1,78 +1,49 @@
-/** 反思只由四类可追溯事实触发；按本地日限制一次，不能靠每次 tick 反复唤醒。 */
-import { z } from 'zod';
-import type { HubContext } from '../engine/context.js';
-import { parseInput } from '../engine/validation.js';
-import { nonempty } from '../model/primitives.js';
-import { localDateKey, localParts, startOfLocalDay } from '../util/time.js';
-import { buildCandidate } from '../appraisal/think.js';
-import { enqueue } from '../scheduler/queue.js';
-import { auditTool } from '../tools/common.js';
-/** 检查周期结束、主人纠正、连续未交账和周复盘条件，满足日限额后只生成一次候选。 */
-export function shouldReflect(ctx: HubContext, botId: string, now: number) {
-    parseInput(z.strictObject({ botId: nonempty, now: z.number().int() }), { botId, now }, '反思检查');
-    const bot = ctx.store.table('bots').get(botId);
-    if (!bot || !['active', 'probation'].includes(bot.lifecycle))
-        return null;
-    // 绝大多数 tick 没有任何复盘触发条件；先看便宜的业务事实，再读取完整历史去重。
-    const partsNow = localParts(now, ctx.settings.timezone);
-    const periodDue = ctx.store.table('goals').count(g => g.botId === botId && ['active', 'blocked', 'done_pending_check'].includes(g.status)
-        && g.periodEndsAt !== null && g.periodEndsAt <= now) > 0;
-    const correction = ctx.store.log('thread').recent(1, m => m.from === 'owner' && m.createdAt <= now
-        && (m.thread === botId || m.thread === 'team') && /不对|别再|以后|记住/.test(m.text)).length > 0;
-    if (bot.consecutiveNoCommit < ctx.settings.noCommitReflectionCount && !periodDue && !correction
-        && !(partsNow.weekday === 0 && partsNow.hour >= ctx.settings.c03.reflectionHour)) return null;
-    const day = startOfLocalDay(now, ctx.settings.timezone);
-    const reflected = ctx.store.table('wakes').count(w => w.botId === botId && w.variant === 'reflection' && w.startedAt >= day && w.startedAt <= now);
-    const scheduled = ctx.store.log('audit').since(day, a => a.actor === botId && a.action === 'reflection_enqueued' && a.at <= now).length;
-    if (Math.max(reflected, scheduled) >= ctx.settings.c03.reflectionDailyCap)
-        return null;
-    if (ctx.store.table('queue').list(q => q.botId === botId && q.variant === 'reflection').length)
-        return null;
-    if (ctx.store.table('wakes').list(w => w.botId === botId && (['running', 'delivering'].includes(w.status) || (w.status === 'committed' && w.endedAt === null))).length)
-        return null;
-    const used = ctx.store.log('audit').all().filter(a => a.actor === botId && a.action === 'reflection_trigger').map(a => a.detail);
-    const goals = ctx.store.table('goals').list(g => g.botId === botId && ['active', 'blocked', 'done_pending_check'].includes(g.status) && g.periodEndsAt !== null && g.periodEndsAt <= now && !used.includes(`goal:${g.id}:${g.periodEndsAt}`));
-    const messages = ctx.store.log('thread').all().filter(m => m.from === 'owner' && m.createdAt <= now && (m.thread === botId || (m.thread === 'team' && ctx.store.table('percepts').list(p => p.botId === botId && p.kind === 'owner_message' && p.location === m.id).length > 0)) && /不对|别再|以后|记住/.test(m.text) && !used.includes(`message:${m.id}`));
-    let summary = '';
-    let ownerSummary = '';
-    let key = '';
-    const evidence: string[] = [];
-    if (bot.consecutiveNoCommit >= ctx.settings.noCommitReflectionCount) {
-        summary = '连续两次未交账，复盘收口方式';
-        ownerSummary = '连续两次没交账，做一次复盘';
-        key = `no_commit:${bot.lastThinkAt}`;
-        evidence.push(...ctx.store.table('wakes').list(w => w.botId === botId && w.status === 'no_commit').slice(-ctx.settings.noCommitReflectionCount).map(w => w.id));
-    }
-    else if (goals[0]) {
-        summary = `目标周期结束：${goals[0].title}`;
-        ownerSummary = `目标周期结束：${goals[0].title}`;
-        key = `goal:${goals[0].id}:${goals[0].periodEndsAt}`;
-        evidence.push(goals[0].id);
-    }
-    else if (messages[0]) {
-        summary = '主人提出纠正，请提炼教训';
-        ownerSummary = '按你的纠正做一次复盘';
-        key = `message:${messages[0].id}`;
-        evidence.push(messages[0].id);
-    }
-    else {
-        const parts = localParts(now, ctx.settings.timezone);
-        // 周日的本周从上周一开始；以当前本地日期回退，避免依赖服务器时区。
-        const start = day - ((parts.weekday + 6) % 7) * ctx.settings.c03.dayMs;
-        const turns = ctx.store.table('wakes').count(w => w.botId === botId && w.startedAt >= start && w.startedAt <= now && w.endedAt !== null);
-        if (parts.weekday === 0 && parts.hour >= ctx.settings.c03.reflectionHour && turns >= ctx.settings.c03.reflectionWeekMinTurns) {
-            summary = '本周已完成至少三轮，做一次周复盘';
-            ownerSummary = '本周例行复盘';
-            key = `week:${localDateKey(now, ctx.settings.timezone)}`;
-            evidence.push(...ctx.store.table('wakes').list(w => w.botId === botId && w.startedAt >= start && w.startedAt <= now && w.endedAt !== null).map(w => w.id));
-        }
-    }
-    if (!summary || used.includes(key))
-        return null;
-    const result = enqueue(ctx, buildCandidate(ctx, { botId, kind: 'reflection', variant: 'reflection', score: ctx.settings.c02.nextThinkScore, summary, ownerSummary, evidence, subjectKey: `reflection:${key}`, now }));
-    if (result?.variant === 'reflection') {
-        auditTool(ctx, botId, 'reflection_enqueued', localDateKey(now, ctx.settings.timezone));
-        auditTool(ctx, botId, 'reflection_trigger', key);
-    }
-    return result;
+/**
+ * 主人纠正的触发词表（P73r2 收窄，P75h 补一种写法，P75r5a 按独立审查的 M3 再收窄、再补全）。
+ * P75f 起 shouldReflect 的四类旧触发（连续未交账、目标周期结束、主人纠正、周日周复盘）全部下线，
+ * 复盘只在验收后按记录触发（P75g）；这张词表现在只给复盘判断「主人在主题里纠正过做法」用。
+ * 对外的判断入口是 isOwnerCorrection（按句切开，问句不参与）；CORRECTION_PATTERN 是其中对每一句使用的正则，继续导出。
+ *
+ * 为什么只认「以后」「下次」：技能只学「以后都适用」的做法。「不要」「别」开头、不带「以后」「下次」的要求，
+ * 多半只针对眼前这件事（「提示文字不要用感叹号」「按钮改成蓝色，感叹号去掉」），由这件事自己的返工处理，不进技能；
+ * 所以它们不算纠正（保持现状，不新增）。
+ *
+ * 命中的写法：
+ * - 「不对」「别再」「记住」，以及「以后」「下次」之后跟指令词（要、不要、别、都、记得、注意、必须、不能），
+ *   或者同一小句内（不隔逗号、句号、问号、叹号、分号、换行，最多 12 个字）出现 不要、别、必须、不能、记得、注意、一律。
+ *   「以后」「下次」之后可以紧跟一个逗号（「以后，提示文字别用感叹号」算）；逗号出现在更后面的照旧不算（「以后再说，不要紧」不算）。
+ * 不算的情形：
+ * - 「不对」：前面紧挨「对」（「对不对」）；后面紧跟 外、劲、称（「不对外」「不对劲」「不对称」）。
+ * - 「记住」：后面紧跟 了吗、了没、没（「你记住了吗」是问话）。
+ * - 「以后要是」「以后都可以」「以后都行」。
+ * - 「别」是常见字的组成部分，两种位置不算：前面紧挨 区、特、个、分、类、级、识、辨、差、告
+ *   （「区别」「特别」「个别」「分别」「类别」「级别」「识别」「辨别」「差别」「告别」），
+ *   或后面紧跟 人、的、处、名、称（「别人」「别的」「别处」「别名」「别称」）。
+ * - 以问号结尾的句子：一条消息可能有几句，按句号、叹号、问号、分号和换行切开，以问号结尾的句子不参与判断，其余句子任何一句命中就算。
+ */
+const WHEN = '(?:以后|下次)';
+/** 同一小句内的字：不含逗号、句号、问号、叹号、分号和换行。 */
+const CLAUSE = '[^，。？！；,.?!;\\n]';
+export const CORRECTION_PATTERN = new RegExp([
+  // 单独成立的写法：不对（对不对、不对外、不对劲、不对称除外）、别再、记住（记住了吗、记住了没、记住没除外）。
+  '(?<!对)不对(?![外劲称])|别再|记住(?!了吗|了没|没)',
+  // 「以后」「下次」（可紧跟一个逗号）之后紧跟指令词；「以后要是」「以后都可以」「以后都行」不算；「别」后面紧跟 人、的、处、名、称 的不算。
+  `${WHEN}[，,]?(?:不要|要(?!是)|别(?![人的处名称])|都(?!可以|行)|记得|注意|必须|不能)`,
+  // 「以后」「下次」之后、同一小句内（最多 12 个字）出现指令词；「别」前面紧挨 区、特、个、分、类、级、识、辨、差、告 的不算。
+  `${WHEN}[，,]?${CLAUSE}{0,12}?(?:不要|必须|不能|记得|注意|一律|(?<![区特个分类级识辨差告])别(?![人的处名称]))`,
+].join('|'));
+
+/**
+ * 主人的一条消息里有没有纠正：按句号、叹号、问号、分号和换行切成句子，以问号（全角或半角）结尾的句子不参与判断，
+ * 其余句子只要有一句命中 CORRECTION_PATTERN 就算。纯函数，不依赖时间和外部状态。
+ */
+export function isOwnerCorrection(text: string): boolean {
+  // 带括号的切分会把结尾符号也留在数组里：偶数位是句子，奇数位是它的结尾符号（最后一句可能没有结尾符号）。
+  const pieces = text.split(/([。！？；!?;\n])/);
+  for (let at = 0; at < pieces.length; at += 2) {
+    const ending = pieces[at + 1] ?? '';
+    if (ending === '？' || ending === '?') continue;
+    if (CORRECTION_PATTERN.test(pieces[at]!)) return true;
+  }
+  return false;
 }

@@ -9,19 +9,20 @@
  * core 的 OfficeView（纯投影）：每个座位就是一位在岗队友，没有空位与部门分组。
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import type { OfficeView, ProjectView, SeatView, WakeLedgerRow } from '../../shared/views.js'
+import type { OfficeView, ProjectView, QuotaWindowView, SeatView, WakeLedgerRow } from '../../shared/views.js'
 import { api } from '../api.js'
 import {
   deskTarget, doorTarget, doorwayTarget, officeLightTone, officeSummary, seatTarget,
 } from '../logic/office.js'
 import { Skeleton } from '../components/Ui.js'
+import { displayRoleLabel } from '../logic/agreement.js'
 import { CARD_TYPE_LABELS } from '../components/Cards.js'
 import { OfficeStart } from '../components/office-start.js'
 import { OfficePixelPage } from './office-pixel-page.js'
 import { OfficeTrailPanel } from '../components/office-trail-panel.js'
 
-/** 单个座位：灯、队友、桌上产出、门口与矛盾提示。 */
-function SeatCard(props: { seat: SeatView; onOpenBot: (botId: string, wakeId?: string, artifactId?: string) => void; onOpenInbox: (inboxId?: string) => void }): ReactNode {
+/** 单个座位：灯、队友、桌上产出、门口与矛盾提示（导出供测试直接渲染；页面内部仍只在这里用）。 */
+export function SeatCard(props: { seat: SeatView; onOpenBot: (botId: string, wakeId?: string, artifactId?: string) => void; onOpenInbox: (inboxId?: string) => void }): ReactNode {
   const { seat } = props
   const tone = officeLightTone(seat.light)
   const seatGo = seatTarget(seat)
@@ -40,7 +41,7 @@ function SeatCard(props: { seat: SeatView; onOpenBot: (botId: string, wakeId?: s
       <button type="button" className="ah-office-occupant ah-btn-reset" onClick={() => props.onOpenBot(occupant.botId)}>
         <span className="ah-avatar" style={{ background: occupant.color, color: 'var(--dsw-alias-text-on-accent)' }} aria-hidden="true">{occupant.initials}</span>
         <span className="ah-office-occupant-main">
-          <span className="ah-office-occupant-name">{occupant.name}<span className="ah-bot-row-role">{occupant.roleLabel}</span></span>
+          <span className="ah-office-occupant-name">{occupant.name}<span className="ah-bot-row-role">{displayRoleLabel(occupant)}</span></span>
           {/* 单行省略的活动句：全文经 title 可取，放大字距后省略更早发生也不丢内容（WCAG 1.4.12）。 */}
           <span className="ah-office-occupant-activity" title={occupant.activityText ?? occupant.activityLabel ?? '状态未知'}>{occupant.activityText ?? occupant.activityLabel ?? '状态未知'}</span>
         </span>
@@ -58,7 +59,7 @@ function SeatCard(props: { seat: SeatView; onOpenBot: (botId: string, wakeId?: s
             if (deskGo.kind === 'ledger') props.onOpenBot(deskGo.botId, deskGo.wakeId)
             else if (deskGo.kind === 'artifact') props.onOpenBot(deskGo.botId, undefined, deskGo.artifactId)
             else props.onOpenBot(deskGo.botId)
-          }} title={deskGo.kind === 'ledger' ? '打开这次唤醒的账本' : deskGo.kind === 'artifact' ? '打开产物面板' : '打开队友详情'}>
+          }} title={deskGo.kind === 'ledger' ? '打开这次唤醒的账本' : deskGo.kind === 'artifact' ? '打开产物面板' : '打开员工详情'}>
             {seat.desk.title}
           </button>
         )}
@@ -122,6 +123,11 @@ export function OfficePage(props: {
   loadProjects?: () => Promise<ProjectView>
   /** true=这是倒带回看的历史房间：动线的时间停在所选时刻，也不自动刷新。 */
   replaying?: boolean
+  /**
+   * P76k：额度窗口视图（总览里 core 已给）。像素视图据此画午休牌、窗口弧与挂钟下的一行小字；
+   * 倒带回看时不画（历史房间的额度状态不能拿现在的顶上）。
+   */
+  quotaWindow?: QuotaWindowView | null
 }): ReactNode {
   /** 房间的两种看法：像素是 P36 默认，列表保留 F03 的座位卡。 */
   const [mode, setMode] = useState<'pixel' | 'list'>('pixel')
@@ -154,6 +160,11 @@ export function OfficePage(props: {
   // 动线面板指向的座位必须仍在投影里；不在就当作没选，不打开一个不存在的队友。
   const trailSeat = trailBotId === null ? null : office.seats.find(seat => seat.botId === trailBotId) ?? null
   const loadTrail = props.loadTrail
+  // P76n：页头额度与顶栏、右栏读同一份额度窗口视图；没有窗口的旧宿主才退回办公室自己的健康字段。
+  const quotaLight = props.quotaWindow?.light ?? office.health.quotaLight
+  const quotaLabel = props.quotaWindow?.lightLabel ?? office.health.quotaLightLabel
+  // 窗口视图的绿灯叫「额度充足」，已经带了「额度」；旧健康字段只写「充足」，才补前缀。
+  const quotaText = quotaLabel.startsWith('额度') ? quotaLabel : `额度 ${quotaLabel}`
 
   return (
     <section className="ah-office" aria-label="办公室">
@@ -177,8 +188,8 @@ export function OfficePage(props: {
               aria-pressed={mode === 'list'} onClick={() => setMode('list')}>列表</button>
           </div>
           <div className="ah-office-health" title="额度、告警与沙箱状态">
-            <span className={`ah-dot ah-dot-${office.health.quotaLight === 'green' ? 'ok' : office.health.quotaLight === 'yellow' ? 'warn' : 'danger'}`}>
-              <span className="ah-dot-circle" aria-hidden="true" />额度 {office.health.quotaLightLabel}
+            <span className={`ah-dot ah-dot-${quotaLight === 'green' ? 'ok' : quotaLight === 'yellow' ? 'warn' : 'danger'}`}>
+              <span className="ah-dot-circle" aria-hidden="true" />{quotaText}
             </span>
             {office.health.openAlerts > 0 ? <span className="ah-office-alert">未恢复告警 {office.health.openAlerts}</span> : null}
             {office.health.sandboxOk ? null : <span className="ah-office-alert">沙箱不可用</span>}
@@ -195,10 +206,12 @@ export function OfficePage(props: {
           <div className="ah-office-pixel-layout">
             <OfficePixelPage office={office} selectedBotId={trailBotId}
               onSelectSeat={setTrailBotId} onOpenInbox={props.onOpenInbox}
+              quota={props.replaying === true ? null : props.quotaWindow ?? null}
+              timezone={props.timezone}
               guide={trailSeat !== null && loadTrail !== undefined ? null : (
                 // U01 第 37 轮（1.3.1）：引导块是 aside 互补地标，补可访问名，不再是未命名区域。
                 <aside className="ah-office-pixel-guide" aria-label="像素办公室引导">
-                  <strong>选择一位队友</strong>
+                  <strong>选择一位员工</strong>
                   <p>点击小人，右侧展开今日动线。</p>
                   {office.seats.length > 0 && loadTrail === undefined
                     ? <p className="ah-office-pixel-warn">动线暂时读不到，当前仅显示房间。</p>
@@ -237,7 +250,7 @@ export function OfficePage(props: {
               ))}
             </div>
           ) : props.showWelcome === false ? (
-            <p className="ah-office-empty">暂无在岗队友。可通过「新建队友」添加。</p>
+            <p className="ah-office-empty">暂无在岗员工。可通过「新建员工」添加。</p>
           ) : null}
         </div>
       )}

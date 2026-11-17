@@ -51,7 +51,7 @@ export function renderProjectContextMarkdown(project: Project, context: ProjectC
   const lines = [
     `# 项目共享上下文：${project.name}`,
     '',
-    '这份文件由 Agent 中心维护：队友只读，主人可在项目页编辑；队友的修改建议需主人采纳后才写入。',
+    '这份文件由 Agent 中心维护：员工只读，主人可在项目页编辑；员工的修改建议需主人采纳后才写入。',
     '',
     '## 背景',
     '',

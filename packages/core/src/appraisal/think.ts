@@ -2,13 +2,13 @@
 import { z } from 'zod';
 import type { HubContext } from '../engine/context.js';
 import { parseInput } from '../engine/validation.js';
-import { botBudgetFor, resolveSettings, thresholdFor } from '../config/defaults.js';
+import { resolveSettings, thresholdFor } from '../config/defaults.js';
+import { selfWorkUsageToday } from '../quota/usage.js';
 import { QueueEntrySchema } from '../model/wake.js';
 import type { AgendaItem, QueueEntry, Settings } from '../model/index.js';
 import { WakeKindSchema, VariantSchema } from '../model/enums.js';
 import { bool, nonempty, ratio, timestamp } from '../model/primitives.js';
 import { priorityFor } from '../scheduler/priority.js';
-import { startOfLocalDay } from '../util/time.js';
 import { roundScore } from './salience.js';
 import { ownerPerceptSummary } from '../util/owner-text.js';
 import { botMbti } from '../personality/profile.js';
@@ -23,8 +23,16 @@ const InputSchema = z.strictObject({
   agendaId: nonempty.optional(), driveName: nonempty.optional(), goalId: nonempty.nullable().optional(), messageId: nonempty.optional(), inboxId: nonempty.optional(),
   variant: VariantSchema.optional(), urgent: bool.optional(), ownerInitiated: bool.optional(), anomaly: bool.optional(), toOwner: bool.optional(),
   notBefore: timestamp.optional(), now: timestamp.optional(),
+  // P72l：总管在主人发起的回合里派出的活，只用于越过冷却和最短思考间隔两道闸（见 QueueEntrySchema）。
+  chiefDispatch: bool.optional(),
+  // P76r1：主人亲手作出决定之后的接续回合（审批结果、以及它的重试）；见 QueueEntrySchema。
+  ownerDecided: bool.optional(),
+  // P76r1 小修：重试候选沿用原回合「是不是自己发起」的结论（true 和 false 都带）。
+  retryOfSelfWork: bool.optional(),
   // P63：这次唤醒属于哪个项目主题；不属于主题的候选不带这一项。
   topicId: nonempty.optional(),
+  // P74：这次唤醒属于哪件事（执行链的唤醒带上）；不属于一件事的候选不带这一项。
+  jobId: nonempty.optional(),
 });
 export type CandidateInput = z.infer<typeof InputSchema>;
 
@@ -40,13 +48,16 @@ export function thinkScore(...scores: Array<number | readonly number[]>): number
   return Math.max(0, ...values.map(value => parseInput(ratio, value, '思考分')));
 }
 
-/** 主人发起回合不消耗自主预算；以已有唤醒单识别，未找到唤醒单的账项保守计入。 */
+/**
+ * 疲劳 = 今天员工自己发起的回合数 / 每天上限（P76c 起与闸门第 6 步同一口径）。
+ * 你发起的、一件事里的、总管为你派出的、技能类、教学、主题回合都不算，所以执行者做一件大事不会把自己累到不想自己开工。
+ * 每天上限为 0 时疲劳固定为 1。
+ */
 export function fatigueFor(ctx: HubContext, botId: string, now: number): number {
   const bot = ctx.store.table('bots').get(botId);
   if (!bot) throw new Error(`机器人不存在：${botId}`);
-  const budget = botBudgetFor(bot.lifecycle, ctx.settings).dailyTurns;
-  const turns = ctx.store.log('ledger').since(startOfLocalDay(now, ctx.settings.timezone), row => row.at <= now && row.who === botId && row.kind === 'turn')
-    .filter(row => !row.wakeId || !ctx.store.table('wakes').get(row.wakeId)?.ownerInitiated).length;
+  const budget = ctx.settings.botDailyTurnBudget;
+  const turns = selfWorkUsageToday(ctx, botId, now).turns;
   return budget === 0 ? 1 : Math.min(1, turns / budget);
 }
 
@@ -98,5 +109,9 @@ export function buildCandidate(ctx: HubContext, input: CandidateInput): Candidat
     subjectKey, urgent: ['percept', 'pile', 'peer_message', 'owner_message', 'inbox_reply', 'approval_decided'].includes(value.kind)
       && roundScore(value.score) >= ctx.settings.salienceUrgent && value.urgent !== false, ownerInitiated,
     priority: priorityFor({ ...value, anomaly, ownerInitiated }, ctx.settings), notBefore: value.notBefore ?? now,
-    ...(value.topicId ? { topicId: value.topicId } : {}) };
+    ...(value.topicId ? { topicId: value.topicId } : {}),
+    ...(value.jobId ? { jobId: value.jobId } : {}),
+    ...(value.chiefDispatch ? { chiefDispatch: true } : {}),
+    ...(value.ownerDecided ? { ownerDecided: true } : {}),
+    ...(value.retryOfSelfWork !== undefined ? { retryOfSelfWork: value.retryOfSelfWork } : {}) };
 }

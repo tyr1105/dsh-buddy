@@ -47,7 +47,7 @@ export function SpaceSwitch(props: {
     <div
       className={`ah-space-switch${props.compact ? ' ah-space-switch-compact' : ''}${props.className ? ` ${props.className}` : ''}`}
       role="group"
-      aria-label="切换对话或队友"
+      aria-label="切换对话或员工"
     >
       {SPACE_MODES.map(mode => {
         const active = props.mode === mode

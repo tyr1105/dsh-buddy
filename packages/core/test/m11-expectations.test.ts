@@ -33,13 +33,11 @@ const intervalError = 'weekdays 不为空时 everyMs 必须小于 24 小时；�
 /** 走四个真实入口，并核对拒绝后不会留下半份关注或新机器人。 */
 async function configure(entry: string, everyMs: number) {
   const expectation = { text: '日志出现', everyMs, weekdays };
-  if (entry === 'hub_watch_propose' || entry === '反思交账') {
-    const { ctx, tc, wake } = toolFixture();
-    if (entry === '反思交账') ctx.store.table('wakes').patch(wake.id, { variant: 'reflection' });
+  // P75f：旧复盘交账入口已下线，逐项用例删去「反思交账」（其余入口照旧）。
+  if (entry === 'hub_watch_propose') {
+    const { ctx, tc } = toolFixture();
     const before = ctx.store.table('watches').list();
-    const result = entry === 'hub_watch_propose'
-      ? await runTool(ctx, tc, entry, { ...watchInput, expectation })
-      : await runTool(ctx, tc, 'hub_reflect_commit', { summary: '修正日志检查', lessons: [], routineUpdates: [], watchChanges: [{ ...watchInput, expectation }] });
+    const result = await runTool(ctx, tc, entry, { ...watchInput, expectation });
     if (!result.ok) expect(ctx.store.table('watches').list()).toEqual(before);
     return result;
   }
@@ -64,7 +62,7 @@ function expectationLine(text: string): string | undefined {
 }
 
 describe('M11 星期间隔与到期归属', () => {
-  it.each(['hub_watch_propose', 'createBot', 'upsertWatch', '反思交账'])('%s 拒绝工作日 24h，边界内允许且错误含推荐写法', async entry => {
+  it.each(['hub_watch_propose', 'createBot', 'upsertWatch'])('%s 拒绝工作日 24h，边界内允许且错误含推荐写法', async entry => {
     expect(await configure(entry, 24 * hour)).toMatchObject({ ok: false, error: expect.stringContaining(intervalError) });
     expect(await configure(entry, 24 * hour - 1)).toMatchObject({ ok: true });
   });
@@ -88,13 +86,17 @@ describe('M11 星期间隔与到期归属', () => {
     const late = world.store.table('percepts').list(row => row.watchId === watch.id && row.kind === 'expectation_missed');
     expect(late).toHaveLength(2);
     expect(late[1]).toMatchObject({ createdAt: local('2026-11-10 00:01'), dueAt: local('2026-11-09 12:00') });
+    // P76c：日报不再由 tick 生成并存进审计。原来被断言的是 08:30 的 tick 生成的日报；现在在同样的两个时刻（2026-11-10 08:30 与
+    // 2026-11-11 08:30，各自 tick 之后）直接用 buildDigest 拼出日报正文并按日期记下，期望行的断言原样保留（引擎侧的满足、落空事实仍经真实 tick 产生）。
+    const digests: Record<string, string> = {};
     for (const at of ['2026-11-10 08:10', '2026-11-10 20:00']) {
       world.clock.set(local(at)); await world.fs.appendText(target, `${at} 更新\n`);
       await world.hub.tick(); world.clock.advance(120_000); await world.hub.tick(); await world.host.settle();
-      if (at.endsWith('08:10')) await tickAt('2026-11-10 08:30');
+      if (at.endsWith('08:10')) { await tickAt('2026-11-10 08:30'); digests['2026-11-10'] = buildDigest(world as never, world.clock.now()); }
     }
     await tickAt('2026-11-11 08:30');
-    const digest = (day: string) => world.store.log('thread').all().find(row => row.refId === `digest:${day}`)!.text;
+    digests['2026-11-11'] = buildDigest(world as never, world.clock.now());
+    const digest = (day: string) => digests[day]!;
     expect(expectationLine(digest('2026-11-10'))).toBe(`期望「日志出现，工作日，每 12 小时」：【未出现】（${target}）`);
     expect(expectationLine(digest('2026-11-11'))).toBe(`期望「日志出现，工作日，每 12 小时」：已出现（${target}）`);
     await world.hub.stop();
@@ -223,13 +225,15 @@ describe('M11 文件满足属于真实发生时刻', () => {
     ctx.clock.set(local('2026-11-07 09:00'));
     if (mode === '重启') process = await open();
     await process.hub.tick(); await process.host.settle();
-    const digest = process.store.log('thread').all().find(row => row.refId === 'digest:2026-11-07')!;
+    // P76c：日报不再由 tick 生成；在同一时刻（周六 09:00 的 tick 之后）直接用 buildDigest 拼出日报正文，期望行断言原样保留。
+    const digest = { text: buildDigest({ ...ctx, store: process.store }, ctx.clock.now()) };
     expect(expectationLine(digest.text)).toBe(`期望「早盘日志出现，工作日每天 08:20 前」：${written ? '已出现' : '【未出现】'}（${target}）`);
     expect(process.store.table('watches').get(watch.id)?.expectation?.lastSatisfiedAt)
       .toBe(local(written ? '2026-11-06 08:10' : '2026-11-05 08:10'));
     expect(process.store.log('audit').all().filter(row => row.action === 'expectation_satisfied').map(row => row.at))
       .toEqual([local('2026-11-05 08:10'), ...(written ? [local('2026-11-06 08:10')] : [])]);
-    expect(process.host.notifications.filter(row => row.title === '团队日报 2026-11-07')).toHaveLength(1);
+    // 原来这里断言「2026-11-07 的日报通知恰好发出 1 次」；日报不再推送，改为断言没有日报通知。
+    expect(process.host.notifications.filter(row => row.title === '团队日报 2026-11-07')).toHaveLength(0);
     await process.hub.stop();
   });
 
@@ -266,10 +270,13 @@ describe('M11 文件满足属于真实发生时刻', () => {
     ctx.clock.set(local('2026-11-06 08:10')); await ctx.fs.appendText(target, '周五日志\n');
     ctx.clock.set(local('2026-11-07 09:00'));
     const reopened = await open(); await reopened.hub.tick(); await reopened.host.settle();
+    // P76c：日报不再由 tick 生成；在原来生成日报的两个时刻（各自 tick 之后）直接用 buildDigest 拼出正文，期望行断言原样保留。
+    const digests: Record<string, string> = { '2026-11-07': buildDigest({ ...ctx, store: reopened.store }, ctx.clock.now()) };
     expect(reopened.store.table('percepts').list(row => row.watchId === watch.id && row.kind === 'expectation_missed'))
       .toEqual([expect.objectContaining({ createdAt: local('2026-11-07 09:00'), dueAt: local('2026-11-07 08:20') })]);
     ctx.clock.set(local('2026-11-08 08:30')); await reopened.hub.tick(); await reopened.host.settle();
-    const digest = (day: string) => reopened.store.log('thread').all().find(row => row.refId === `digest:${day}`)!.text;
+    digests['2026-11-08'] = buildDigest({ ...ctx, store: reopened.store }, ctx.clock.now());
+    const digest = (day: string) => digests[day]!;
     expect(expectationLine(digest('2026-11-07'))).toBe(`期望「早盘日志出现」：已出现（${target}）`);
     expect(expectationLine(digest('2026-11-08'))).toBe(`期望「早盘日志出现」：【未出现】（${target}）`);
     await reopened.hub.stop();

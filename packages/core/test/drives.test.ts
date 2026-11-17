@@ -7,6 +7,7 @@ import { resolveSettings } from '../src/config/defaults.js';
 import { AgendaItemSchema, CommitSchema, HandoffSchema, InboxItemSchema } from '../src/model/index.js';
 import type { AgendaItem, Commit, Goal, Handoff, InboxItem } from '../src/model/index.js';
 import { botFixture, goalFixture, modelFixtures } from './model-fixtures.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -117,7 +118,9 @@ describe('内驱触发与暂缓', () => {
   });
   it('高疲劳使低分内驱不消耗次数', () => {
     const ctx = setup(); ctx.store.table('goals').put(goal());
-    for (let i = 0; i < 6; i += 1) ctx.store.log('ledger').append({ id: `le_${String(i).padStart(10, '0')}`, who: botFixture.id, wakeId: null, kind: 'turn', tokens: 1, at: now });
+    // P76c：疲劳改按「今天员工自己发起的回合数 / 每天上限（默认 2）」算；原用例写 6 行账本是按旧默认值 6 凑满疲劳，
+    // 现在写满上限所需的唤醒单，证明的仍是「疲劳满时低分内驱不触发、不消耗当天次数」。
+    addSelfTurns(ctx, ctx.settings.botDailyTurnBudget, { startedAt: now - 1, dispatchedAt: now - 1 });
     expect(evaluateDrives(ctx, now)).toEqual([]);
     expect(ctx.store.table('drives').get(botFixture.id)).toMatchObject({ fatigue: 1, firedToday: 0 });
   });

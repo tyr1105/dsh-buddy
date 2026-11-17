@@ -48,6 +48,8 @@ export const CreateBotSchema = z.strictObject({
   // P40：只接受内置清单里的 id（存在性在 createBot 里统一校验）；默认不勾选任何一项。
   presetSkillIds: z.array(nonempty).max(8, '预置 skill 最多选 8 个').optional(),
   watches: z.array(WatchProposeInputSchema).optional(), goals: z.array(InitialGoalSchema).optional(),
+  // P73c：从模板库添加时带模板 id，中心据此写来历并落旁白；模板是否存在在 createBot 里校验。
+  templateId: nonempty.optional(),
 });
 export const RuleInputSchema = RuleSchema.pick({ scope: true, text: true }).extend({ id: RuleSchema.shape.id.optional(),
   redLine: RuleSchema.shape.redLine.optional(), status: RuleSchema.shape.status.optional() });

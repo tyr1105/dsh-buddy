@@ -43,7 +43,8 @@ describe('M06 空回复与汇报', () => {
     expect(await processCommit(ctx, toolCtx, commitArgs({ reply, report, importance: 9 }))).toMatchObject({ ok: true });
     expect(ctx.store.log('thread').all().map(row => row.text)).toEqual([reply, report]);
     expect(ctx.store.table('commits').list()[0]).toMatchObject({ reply, report });
-    expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(1);
+    // P76h：原断言是「重要度 9 的汇报推送 1 次」；汇报不再推送。
+    expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(0);
   });
 
   it('日报先排除历史空交账与出站汇报，再选三条重点，空通知不再次露出', async () => {

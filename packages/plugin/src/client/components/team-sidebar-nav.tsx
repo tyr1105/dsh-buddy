@@ -25,6 +25,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { BotCard, OverviewView, ProjectView } from '../../shared/views.js'
 import type { PageView } from '../hub-state.js'
+import { isSettingsPageView } from '../logic/settings-sections.js'
 import {
   SIDEBAR_GROUP_TITLES,
   buildWorkspaceProjects,
@@ -39,12 +40,13 @@ import {
 import { Chevron, GearIcon, OfficeIcon } from './sidebar-nav-parts.js'
 import {
   BotArchiveDialog,
-  type ArchiveCheckInfo,
   type ArchiveDialogRequest,
 } from './bot-archive-dialog.js'
 import { CompactRail } from './sidebar-nav-rail.js'
 import { SidebarSessionForm, type SidebarFormState } from './sidebar-session-form.js'
 import { TeammatesGroup } from './sidebar-teammates-group.js'
+import { chiefFirst } from '../logic/agreement.js'
+import { isArchivedBot } from '../logic/lifecycle.js'
 import { WorkspacesGroup } from './sidebar-workspaces-group.js'
 
 /** 新建会话的入参：父层据此开主题。text 就是第一条消息，队友行加号进来时已经带上 @名字。 */
@@ -85,17 +87,16 @@ export interface TeamSidebarNavProps {
    */
   onOpenTopicDraft?: (projectId: string) => void
   /**
-   * P48 归档链路：先校验再执行，父层只负责发命令与刷新。
-   * 校验失败时返回中文字符串；成功返回受影响项目与任务数（canArchive 为 false 时界面拦截）。
+   * 删除已归档员工，返回中文错误，null 表示成功。
+   * P73f：归档只在编辑员工弹窗里做（先检查、二次确认），已归档区不再有「恢复」，所以这里只剩删除。
    */
-  onCheckArchive?: (botId: string) => Promise<ArchiveCheckInfo | string>
-  /** 归档 / 恢复 / 删除都返回中文错误，null 表示成功。 */
-  onArchiveBot?: (botId: string) => Promise<string | null>
-  onRestoreArchivedBot?: (botId: string) => Promise<string | null>
   onDeleteArchivedBot?: (botId: string) => Promise<string | null>
 }
 
 export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
+  // P86：「关于你的记忆」收进设置页的一个分区，不再有左栏常驻入口；页面停在记忆分区（内部视图 memory）时，
+  // 左栏选中的是「设置」，与资料分区（视图 resource）同一个处理办法。
+  const inSettingsPage = isSettingsPageView(props.view)
   const [collapsedGroups, setCollapsedGroups] = useState<SidebarGroupId[]>([])
   /** undefined 表示按默认规则（有会话就展开），用户点过之后才变成显式集合。 */
   const [expandedProjectIds, setExpandedProjectIds] = useState<string[] | undefined>(undefined)
@@ -127,19 +128,22 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
   const overviewBots = props.overview.bots
   const q = query.trim().toLowerCase()
   /** 搜索命中的全部队友；下面再按「是否归档」分成在名单与折叠区两段。 */
+  // P72：未退役的总管永远排第一（只改展示顺序，不改 core 数据）；其余员工保持原顺序。
+  const orderedBots = useMemo(() => chiefFirst(overviewBots), [overviewBots])
   const matchedBots = useMemo(
-    () => overviewBots.filter(bot => `${bot.name} ${bot.roleLabel}`.toLowerCase().includes(q)),
-    [overviewBots, q],
+    () => orderedBots.filter(bot => `${bot.name} ${bot.roleLabel}`.toLowerCase().includes(q)),
+    [orderedBots, q],
   )
-  const activeBots = useMemo(() => matchedBots.filter(bot => bot.archived !== true), [matchedBots])
-  const archivedBots = useMemo(() => matchedBots.filter(bot => bot.archived === true), [matchedBots])
+  // P73f：归档以员工状态为准（isArchivedBot 优先读 staffStatus，旧形状的数据退回归档标记）。
+  const activeBots = useMemo(() => matchedBots.filter(bot => !isArchivedBot(bot)), [matchedBots])
+  const archivedBots = useMemo(() => matchedBots.filter(bot => isArchivedBot(bot)), [matchedBots])
   /**
    * 收起态图标列的队友名单（U01 第 46 轮修 P53 遗留）：
    * rail 里没有搜索框，展开态搜索框里残留的词不能带进来——否则搜过一个名字再收起，
    * 图标列就只剩命中的人（搜无命中词时一个都不剩），而收起态没有任何地方清除搜索词，
    * 主人会以为队友丢了。所以 rail 永远列全部在岗队友，口径与组头计数一致，已归档不进 rail。
    */
-  const railBots = useMemo(() => overviewBots.filter(bot => bot.archived !== true), [overviewBots])
+  const railBots = useMemo(() => orderedBots.filter(bot => !isArchivedBot(bot)), [orderedBots])
   /** 组头计数只算在名单的队友；已归档另有折叠区计数，避免同一个名字被算两次。 */
   const activeTotalBots = railBots.length
   const sidebarProjects = useMemo(() => collectSidebarProjects(props.project), [props.project])
@@ -209,7 +213,7 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
     // U11 #12：说清缺什么。这句话就是第一条消息，所以不用另外起名字。
     if (text === '') { setFormError('还差一句话。写清这条会话做什么，再点「新建会话」。'); return }
     if (form.projectId === '') { setFormError('未选择项目。请先选择项目。'); return }
-    if (props.onCreateSession === undefined) { setFormError('这里建不了。先去项目页，把队友加进成员。'); return }
+    if (props.onCreateSession === undefined) { setFormError('这里建不了。先去项目页，把员工加进成员。'); return }
     setBusy(true)
     setFormError(null)
     // 从队友行加号进来：第一句话点名这位队友，它会先接话，而不是默认发给负责人。
@@ -227,25 +231,6 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
    * 归档链路（P48）：先向服务端要校验结果，再决定弹确认框还是拦截框。
    * 归档成功自动展开已归档区；恢复成功后收起区保留在原位，主人可以继续操作。
    */
-  const beginArchive = (bot: BotCard): void => {
-    if (props.onCheckArchive === undefined) { setTeammateNotice('暂不可归档队友。请稍后重试。'); return }
-    setTeammateNotice(null)
-    setArchiveError(null)
-    void props.onCheckArchive(bot.id).then(result => {
-      if (typeof result === 'string') {
-        setArchiveRequest({ kind: 'blocked', botName: bot.name,
-          info: { canArchive: false, reason: result, projectCount: 0, openTaskCount: 0, projects: [] } })
-        return
-      }
-      setArchiveRequest(result.canArchive
-        ? { kind: 'archive', botId: bot.id, botName: bot.name }
-        : { kind: 'blocked', botName: bot.name, info: result })
-    }).catch((error: unknown) => setTeammateNotice(error instanceof Error ? error.message : String(error)))
-  }
-  const beginRestore = (bot: BotCard): void => {
-    setArchiveError(null)
-    setArchiveRequest({ kind: 'restore', botId: bot.id, botName: bot.name })
-  }
   const beginDelete = (bot: BotCard): void => {
     setArchiveError(null)
     setArchiveRequest({ kind: 'delete', botId: bot.id, botName: bot.name })
@@ -257,8 +242,7 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
   }
   const confirmArchiveDialog = (): void => {
     if (archiveRequest === null || archiveRequest.kind === 'blocked' || archiveBusy) return
-    const action = archiveRequest.kind === 'archive' ? props.onArchiveBot
-      : archiveRequest.kind === 'restore' ? props.onRestoreArchivedBot : props.onDeleteArchivedBot
+    const action = archiveRequest.kind === 'delete' ? props.onDeleteArchivedBot : undefined
     if (action === undefined) { setArchiveError('暂不可执行该操作。请稍后重试。'); return }
     const request = archiveRequest
     setArchiveBusy(true)
@@ -267,8 +251,6 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
       if (error !== null) { setArchiveError(error); return }
       setArchiveRequest(null)
       setTeammateNotice(null)
-      // 归档成功后展开折叠区，让主人马上看到它移到了哪里。
-      if (request.kind === 'archive') setArchivedOpen(true)
     }).catch((error: unknown) => {
       setArchiveError(error instanceof Error ? error.message : String(error))
     }).finally(() => setArchiveBusy(false))
@@ -406,7 +388,6 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
         totalBots={activeTotalBots}
         query={query}
         onQueryChange={setQuery}
-        team={props.overview.team}
         view={props.view}
         selectedThread={props.selectedThread}
         bots={activeBots}
@@ -414,8 +395,6 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
         archivedOpen={archivedOpen}
         onToggleArchived={() => setArchivedOpen(prev => !prev)}
         notice={teammateNotice}
-        onBeginArchive={beginArchive}
-        onBeginRestore={beginRestore}
         onBeginDelete={beginDelete}
         onSelectBot={props.onSelectBot}
         onNewBot={props.onNewBot}
@@ -458,8 +437,8 @@ export function TeamSidebarNav(props: TeamSidebarNavProps): ReactNode {
         </button>
         <button
           type="button"
-          className={`ah-nav-item ah-nav-settings${props.view === 'settings' || props.view === 'resource' ? ' ah-selected' : ''}`}
-          aria-current={props.view === 'settings' || props.view === 'resource' ? 'page' : undefined}
+          className={`ah-nav-item ah-nav-settings${inSettingsPage ? ' ah-selected' : ''}`}
+          aria-current={inSettingsPage ? 'page' : undefined}
           onClick={props.onOpenSettings}
         >
           <GearIcon />

@@ -24,6 +24,7 @@ import {
   collectProjectIssues, sortProjectsForView, sortTasksForView, summarizeProject,
 } from '../project/project-summary.js';
 import { shortTime } from './common.js';
+import { jobRowsForProject } from './job-topic-views.js';
 import type {
   ProjectContextProposalView, ProjectContextRevisionView, ProjectCriterionView, ProjectMemberView,
   ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView, ProjectTopicView, ProjectView, ProjectViewRow,
@@ -65,7 +66,7 @@ function topicViews(ctx: HubContext, topics: readonly ProjectTopic[], digests: M
       lastMessageText: shortTime(ctx, topic.lastMessageAt),
       unread: digest?.unread ?? 0,
       lastMessagePreview: last ? previewOf(last.text) : null,
-      lastMessageFrom: last === null ? null : last.from === 'owner' ? '主人' : last.from === 'hub' ? 'Agent 中心' : bots.get(last.from)?.name ?? '已删除的队友',
+      lastMessageFrom: last === null ? null : last.from === 'owner' ? '主人' : last.from === 'hub' ? 'Agent 中心' : bots.get(last.from)?.name ?? '已删除的员工',
     };
   });
 }
@@ -77,7 +78,7 @@ function backgroundView(ctx: HubContext, project: Project, background: string, b
   return {
     text: background,
     updatedBy,
-    updatedByName: updatedBy === null ? null : updatedBy === 'owner' ? '主人' : bots.get(updatedBy)?.name ?? '已删除的队友',
+    updatedByName: updatedBy === null ? null : updatedBy === 'owner' ? '主人' : bots.get(updatedBy)?.name ?? '已删除的员工',
     updatedAt,
     updatedText: shortTime(ctx, updatedAt),
   };
@@ -169,7 +170,7 @@ function taskView(
 }
 
 /**
- * 展开共享上下文的修改留痕：最新在前，编辑者翻译成人话（队友查不到时只说「已删除的队友」）。
+ * 展开共享上下文的修改留痕：最新在前，编辑者翻译成人话（队友查不到时只说「已删除的员工」）。
  * 内部 id 仍留在 revision 里供悬停排障，但不出现在编辑者名字里。
  */
 function contextRevisionViews(
@@ -179,8 +180,8 @@ function contextRevisionViews(
     .sort((a, b) => b.at - a.at)
     .map(revision => ({
       revision,
-      editorName: revision.editorKind === 'owner' ? '主人' : (bots.get(revision.editorId)?.name ?? '已删除的队友'),
-      editorKindLabel: revision.editorKind === 'owner' ? '主人' : '队友',
+      editorName: revision.editorKind === 'owner' ? '主人' : (bots.get(revision.editorId)?.name ?? '已删除的员工'),
+      editorKindLabel: revision.editorKind === 'owner' ? '主人' : '员工',
       sourceLabel: PROJECT_CONTEXT_SOURCE_LABELS[revision.source],
       timeText: shortTime(ctx, revision.at),
       hashShort: revision.hash.slice(0, 8),
@@ -281,6 +282,8 @@ export function projectView(ctx: HubContext): ProjectView {
       background: backgroundView(ctx, project, context.background, bots),
       path: { workspaceDir: project.sharedDir, sharedDir: project.sharedDir },
       topics: topicViews(ctx, allTopics.filter(topic => topic.projectId === project.id), digests, bots),
+      // P74a：项目里的「一件事」，受阻和待你验收在前。
+      jobRows: jobRowsForProject(ctx, project.id),
     };
   });
 

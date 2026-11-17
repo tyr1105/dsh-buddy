@@ -116,14 +116,15 @@ describe('M02 [3][20][27][29][31] 补课与规则证据', () => {
     const s = buildSnapshot(ctx, botFixture.id, now);
     const cases: Record<string, [Partial<GateSnapshot>, string]> = {
       '4/5': [{ subjectWakeAt: new Map([[entry.subjectKey, now]]), bot: { ...s.bot!, lastThinkAt: now } }, 'cooldown'],
-      '5/6': [{ bot: { ...s.bot!, lastThinkAt: now }, todayTurns: 6 }, 'pace_min'],
-      '6/7': [{ todayTurns: 6, quota: { ...s.quota, light: 'red' } }, 'daily_cap'],
+      // P76c：快照字段 todayTurns 改名为 selfTurnsToday（只数员工自己发起的回合）；这里只要超过上限即可，数字 6 不变。
+      '5/6': [{ bot: { ...s.bot!, lastThinkAt: now }, selfTurnsToday: 6 }, 'pace_min'],
+      '6/7': [{ selfTurnsToday: 6, quota: { ...s.quota, light: 'red' } }, 'daily_cap'],
       '7/8': [{ quota: { ...s.quota, light: 'orange' }, startedAt: now }, 'quota'],
       '8/9': [{ startedAt: now, retryAt: now + hour }, 'startup_quiet'],
     };
     const [patch, by] = cases[pair]!;
     expect(evaluateGates(entry, { ...s, ...patch }, now, ctx.settings)).toMatchObject({ by });
-    expect(evaluateGates(entry, { ...s, todayTurns: 6 }, now, ctx.settings)).toMatchObject({ until: Date.parse('2026-11-06T00:00:00+08:00') });
+    expect(evaluateGates(entry, { ...s, selfTurnsToday: 6 }, now, ctx.settings)).toMatchObject({ until: Date.parse('2026-11-06T00:00:00+08:00') });
     expect(evaluateGates(entry, { ...s, quota: { ...s.quota, light: 'orange' } }, now, ctx.settings)).toMatchObject({ until: now + 5 * hour });
   });
 });

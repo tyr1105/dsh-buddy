@@ -17,6 +17,7 @@ import { FileStore } from '../src/store/file-store.js';
 import { nextLocalTime } from '../src/util/time.js';
 import { InboxItemSchema, PerceptSchema, WakeTicketSchema, type Percept } from '../src/model/index.js';
 import { botFixture, modelFixtures } from './model-fixtures.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -32,10 +33,13 @@ function fixture() {
   return { ctx, now, entry };
 }
 
-/** 每笔用量有独立身份，便于分别触发日预算、窗口预算和疲劳门槛。 */
+/**
+ * 每个回合有独立身份，便于分别触发每天上限和疲劳门槛。
+ * P76c：「今天用了多少」改数唤醒单口径的「员工自己发起的回合」，所以这里写自己发起的唤醒单（原来写账本行）；
+ * 回合开始时刻取 at 往前 1 分钟，落在今天且不晚于 now。
+ */
 function addUsage(ctx: ReturnType<typeof fixture>['ctx'], count: number, at = ctx.clock.now()) {
-  for (let n = 0; n < count; n++) ctx.store.log('ledger').append({ id: `le_${String(n + 1).padStart(10, '0')}`,
-    who: botFixture.id, wakeId: null, tokens: 0, kind: 'turn', at });
+  addSelfTurns(ctx, count, { startedAt: at - minute, dispatchedAt: at - minute });
 }
 
 /** 生成明确的外部事实，待处理与无关数据在同一表中同时验证。 */
@@ -47,12 +51,12 @@ function percept(ctx: ReturnType<typeof fixture>['ctx'], index: number, patch: P
 }
 
 describe('M03 死人开关只报告真实漏醒', () => {
-  it.each(['bot_budget', 'window_budget', 'daily_cap', 'quota', 'cooldown', 'pace_min', 'startup_quiet',
+  // P76c：原清单里的 bot_budget（每日回合、token）与 window_budget（每窗口回合）两条拦截已取消，只剩 daily_cap 一条每天上限，
+  // 对应的两个参数化用例没有对象了，删除；daily_cap 用例由「L0 + 2 个回合」改为默认上限 2 个自己发起的回合（自主等级不再影响）。
+  it.each(['daily_cap', 'quota', 'cooldown', 'pace_min', 'startup_quiet',
     'dispatch_gap', 'concurrency', 'retry_backoff'] as const)('%s 有意拦截顺延期限，不造告警或重试', reason => {
     const { ctx, now, entry } = fixture();
-    if (reason === 'bot_budget') addUsage(ctx, 6);
-    if (reason === 'window_budget') { getQuotaState(ctx, now); addUsage(ctx, 3); }
-    if (reason === 'daily_cap') { ctx.store.table('bots').patch(botFixture.id, { autonomy: 'L0' }); addUsage(ctx, 2); }
+    if (reason === 'daily_cap') addUsage(ctx, 2);
     if (reason === 'quota') ctx.store.table('quota').put({ ...getQuotaState(ctx, now), light: 'red', redUntil: now + hour });
     if (reason === 'cooldown') ctx.store.table('wakes').put({ ...WakeTicketSchema.parse(modelFixtures.WakeTicket.valid),
       status: 'committed', endedAt: now - minute, startedAt: now - minute, dispatchedAt: now - minute, subjectKey: entry.subjectKey });
@@ -64,7 +68,7 @@ describe('M03 死人开关只报告真实漏醒', () => {
       botId: `other-${n}`, status: 'running', startedAt: now, lastEventAt: now });
     if (reason === 'retry_backoff') ctx.store.table('bots').patch(botFixture.id, { retryAt: now + hour });
     const gate = evaluateGates(entry, buildSnapshot(ctx, botFixture.id, now), now, ctx.settings);
-    expect(gate).toMatchObject({ pass: false, by: reason === 'window_budget' ? 'bot_budget' : reason });
+    expect(gate).toMatchObject({ pass: false, by: reason });
     expect(checkDeadman(ctx, now)).toEqual([]);
     expect(ctx.store.table('alerts').list()).toEqual([]);
     const until = !gate.pass ? gate.until ?? now + ctx.settings.tickMs : now;
@@ -85,7 +89,8 @@ describe('M03 死人开关只报告真实漏醒', () => {
     const { ctx, now } = fixture();
     ctx.store.table('queue').list().forEach(q => ctx.store.table('queue').remove(q.id));
     ctx.store.table('bots').patch(botFixture.id, { nextThinkAt: now - hour });
-    addUsage(ctx, 5);
+    // P76c：疲劳按「今天自己发起的回合 / 每天上限（默认 2）」算；原来写 5 笔账本是按旧上限 6 凑出高疲劳，现在写满 2 个回合即疲劳为 1。
+    addUsage(ctx, 2);
     expect(checkDeadman(ctx, now)).toEqual([]);
     expect(ctx.store.table('alerts').list()).toEqual([]);
     expect(ctx.store.table('bots').get(botFixture.id)?.expectedBy)

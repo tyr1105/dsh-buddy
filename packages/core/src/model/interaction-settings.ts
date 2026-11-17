@@ -16,9 +16,9 @@ export const InteractionSettingsSchema = z.strictObject({
   botDueAgendaCap: integer, // 机器人自主创建带到期时间议程的上限
   handoffExpiryMs: positive, // 交接单未完成的过期时长
   stateMaxBytes: integer, // 自我状态概览的字节上限
-  reflectionWeekMinTurns: integer, // 周日自动复盘要求本周至少多少回合
-  reflectionHour: z.number().int().min(0).max(23), // 周日自动复盘的本地小时
-  reflectionDailyCap: integer, // 每天复盘次数上限
+  reflectionWeekMinTurns: integer, // 周日自动复盘要求本周至少多少回合（P75 起不再使用：旧复盘触发已下线）
+  reflectionHour: z.number().int().min(0).max(23), // 周日自动复盘的本地小时（P75 起不再使用：旧复盘触发已下线）
+  reflectionDailyCap: integer, // 每天复盘次数上限（P75 起不再使用：旧复盘触发已下线）
   blockedChiefAfterMs: positive, // 机器人受阻多久后提醒总管
   reviewBackoffMultiplier: positive, // 无变化复查议程的间隔倍率
   teachDigestMaxChars: integer, // 教学时原会话摘要的字符上限

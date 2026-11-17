@@ -10,7 +10,7 @@
  * 校验和拼装仍在 logic/settings.ts；切走再回来时用暂存恢复未保存的修改。
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import type { KnowledgeConnectionState } from '@agent-hub/core'
+import type { KnowledgeConnectionState, WeeklyUsageView } from '@agent-hub/core'
 import type { OverviewView, SettingsView } from '../../shared/views.js'
 import { RetryBox, Skeleton } from './Ui.js'
 import {
@@ -25,12 +25,17 @@ import { KnowledgeSection, NotifySection, StatusSection, UsageSection } from './
 export function SettingsPane(props: {
   settings: SettingsView | null
   overview: OverviewView | null
+  /** P76k：最近 7 天的用量表；旧宿主没有这个接口时为 null（那块不显示）。 */
+  weeklyUsage: WeeklyUsageView | null
+  weeklyUsageError?: string | null
   /** 设置视图拉取失败的原因：与「连不上」分开显示。 */
   loadError?: string | null
   loading: boolean
   onRetry: () => void
   /** 运行状态（总览）读不出来时的重试（U11 #28）：与设置本身的重试分开。 */
   onRetryOverview?: () => void
+  /** P76k：用量表读不出来时的重试（与设置本身的重试分开）。 */
+  onRetryWeeklyUsage?: () => void
   onSave: (patch: Record<string, unknown>) => Promise<string | null>   // 返回错误文案或 null
   onPauseAll: () => Promise<string | null>
   onResumeAll: () => Promise<string | null>
@@ -41,6 +46,8 @@ export function SettingsPane(props: {
   onOpenSection?: (id: SettingsSectionId) => void
   /** 资料分区的内容，由父层组装好传入。 */
   resources: ReactNode
+  /** P86：「关于你的记忆」分区的内容（整页的记忆页，由父层组装好传入）；这一分区没有保存栏。 */
+  memory: ReactNode
 }): ReactNode {
   const [section, setSection] = useState<SettingsSectionId>(props.requestedSection ?? 'notify')
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
@@ -124,12 +131,14 @@ export function SettingsPane(props: {
       return props.loading ? <Skeleton rows={4} /> : <RetryBox message={`设置读取失败${props.loadError ? `：${props.loadError}` : ''}。点击「重试」。`} onRetry={props.onRetry} />
     }
     if (section === 'notify') return <NotifySection draft={draft} set={set} settings={props.settings} />
-    if (section === 'usage') return <UsageSection draft={draft} set={set} settings={props.settings} overview={props.overview} loadError={props.loadError} onRetry={props.onRetry} />
+    if (section === 'usage') return <UsageSection draft={draft} set={set} settings={props.settings} weeklyUsage={props.weeklyUsage}
+      weeklyUsageError={props.weeklyUsageError ?? null} onRetryWeeklyUsage={() => props.onRetryWeeklyUsage?.()} />
     if (section === 'knowledge') return <KnowledgeSection draft={draft} set={set} onTest={props.onTestKnowledge} />
     return <StatusSection overview={props.overview} rootDir={props.settings.settings.rootDir} onRetry={props.onRetryOverview} onPauseAll={props.onPauseAll} onResumeAll={props.onResumeAll} />
   }
 
-  const showBar = count > 0 || error !== null
+  // P86：记忆分区没有需要保存的设置项，不显示保存条（其他分区里的未保存修改回到那些分区时仍在，导航圆点照旧）。
+  const showBar = section !== 'memory' && (count > 0 || error !== null)
   return (
     <section className="ah-set" aria-label="设置">
       {saved ? <div className="ah-save-toast" role="status">已保存。</div> : null}
@@ -149,7 +158,7 @@ export function SettingsPane(props: {
         ))}
       </nav>
       <div className="ah-set-main">
-        {section === 'resources' ? props.resources : (
+        {section === 'resources' ? props.resources : section === 'memory' ? props.memory : (
           <div className="ah-set-scroll">
             <div className="ah-set-body">
               <header className="ah-set-head">

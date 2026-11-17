@@ -20,6 +20,9 @@ export const BotSchema = z.strictObject({
   homeDir: nonempty, // 机器人家目录 <root>/bots/<id>
   sessionId: nonempty.nullable(), // 宿主会话 id；空值表示尚未绑定会话
   sessionStartedAt: timestamp.nullable(), // 当前宿主会话开始时间（Unix 毫秒）
+  // P74r10：当前会话建立时交给宿主的模型（取值范围同 model，null 表示当时跟随宿主默认）。
+  // 缺省表示不知道（升级前建的会话）；与 model 不一致时下一次叫醒重建会话，见 memory/rotation.ts。
+  sessionModel: ModelChoiceSchema.optional(),
   createdAt: timestamp, // 创建时间（Unix 毫秒）
   probationStartedAt: timestamp.optional(), // 实际开始试岗的时间；旧档案缺省时兼容使用创建时间
   probationEndsAt: timestamp.nullable(), // 试岗结束时间；空值表示不在试岗
@@ -60,6 +63,7 @@ export type Bot = z.infer<typeof BotSchema>;
  * - inactive：草稿、暂停、隔离，仍在名单里，但不接活。
  * 归档标记优先：只要 archivedAt 有值就视为归档，不受 lifecycle 影响。
  */
+// P73a：'retired' 保留为类型成员以兼容旧调用方，但退役与归档已合并，botRosterState 不再产生它。
 export type BotRosterState = 'active' | 'retired' | 'archived' | 'inactive';
 
 /** 是否已归档；旧档案缺字段时返回 false，读取不报错。 */
@@ -67,12 +71,33 @@ export function botIsArchived(bot: Pick<Bot, 'archivedAt'>): boolean {
   return bot.archivedAt != null;
 }
 
-/** 名册状态：归档优先，其次按生命周期分成活跃、退役、非活跃。 */
-export function botRosterState(bot: Pick<Bot, 'lifecycle' | 'archivedAt'>): BotRosterState {
-  if (botIsArchived(bot)) return 'archived';
-  if (bot.lifecycle === 'retired') return 'retired';
-  if (bot.lifecycle === 'probation' || bot.lifecycle === 'active') return 'active';
-  return 'inactive';
+/**
+ * P73a 员工状态投影（纯函数）：把存储用的六种 lifecycle 合并显示为在岗、停用、归档三种。
+ * 为什么只做投影不改存储：调度、权限、额度等约 50 处判断仍按 lifecycle 读取，改存储风险大；
+ * 投影让主人看到的状态简单，旧版本插件也仍能读懂数据。
+ * - draft、probation、active -> 在岗；
+ * - paused -> 停用（原因：你停用的）；quarantined -> 停用（原因：系统因连续出错停用）；
+ * - retired -> 归档；archivedAt 有值而 lifecycle 不是 retired 的旧数据（防御）也按归档。
+ */
+export function staffStatus(bot: Pick<Bot, 'lifecycle' | 'archivedAt' | 'quarantineReason'>):
+  { status: e.StaffStatus; label: string; reason: string | null } {
+  let status: e.StaffStatus;
+  let reason: string | null = null;
+  if (bot.lifecycle === 'retired' || botIsArchived(bot)) status = 'archived';
+  else if (bot.lifecycle === 'paused') { status = 'suspended'; reason = '你停用的'; }
+  else if (bot.lifecycle === 'quarantined') { status = 'suspended'; reason = `连续出错，系统已停用：${bot.quarantineReason ?? '安全保护'}`; }
+  else status = 'on_duty';
+  return { status, label: e.STAFF_STATUS_LABELS[status], reason };
+}
+
+/** 名册状态：基于员工状态投影；在岗为 active，停用为 inactive，归档为 archived。 */
+export function botRosterState(bot: Pick<Bot, 'lifecycle' | 'archivedAt'> & { quarantineReason?: string | null }): BotRosterState {
+  const { status } = staffStatus({ quarantineReason: null, ...bot });
+  if (status === 'archived') return 'archived';
+  // 草稿虽然显示为在岗，但从未上岗、不接活；既有测试（p48）要求它仍是 inactive，保持不变。现有代码不再产生草稿。
+  if (bot.lifecycle === 'draft') return 'inactive';
+  if (status === 'suspended') return 'inactive';
+  return 'active';
 }
 
 /** 校验长期志向及批准状态，保留目标的共同方向。 */

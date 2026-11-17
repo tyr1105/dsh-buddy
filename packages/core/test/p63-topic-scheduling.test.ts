@@ -109,7 +109,8 @@ describe('P63 subjectKey 与闸门', () => {
     const entry = queued(ctx, owner.id, topicId)!;
     const now = ctx.clock.now();
     ctx.store.table('bots').patch(owner.id, { lastThinkAt: now });
-    const snapshot = { ...buildSnapshot(ctx, owner.id, now), todayTurns: 100, windowTurns: 100 };
+    // P76c：快照字段 todayTurns、windowTurns 合并为 selfTurnsToday。
+    const snapshot = { ...buildSnapshot(ctx, owner.id, now), selfTurnsToday: 100 };
     expect(evaluateGates(entry, snapshot, now, ctx.settings)).toEqual({ pass: true });
     const ordinary = { ...entry, ownerInitiated: false, urgent: false };
     expect(evaluateGates(ordinary, snapshot, now, ctx.settings).pass).toBe(false);
@@ -168,8 +169,8 @@ describe('P63 额度', () => {
     await openTopic(fix, '开工');
     await speak(fix, owner!, '收到');
     const snapshot = buildSnapshot(fix.ctx, owner!.id, fix.ctx.clock.now());
-    expect(snapshot.todayTurns).toBe(0);
-    expect(snapshot.windowTurns).toBe(0);
+    // P76c：快照里「今天用了多少」只剩 selfTurnsToday（员工自己发起的回合）；每窗口回合（windowTurns）的概念已取消，对应一行删除。
+    expect(snapshot.selfTurnsToday).toBe(0);
   });
 
   it('服务商真报额度错误时红灯暂停：消息保留，主题里有说明，恢复前不投递', async () => {

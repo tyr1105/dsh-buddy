@@ -1,4 +1,8 @@
-/** 交接单保留文件副本与议程联系；先检查全部来源再复制，避免把家目录外资料带入共享区。 */
+/**
+ * 交接单保留文件副本与议程联系；先检查全部来源再复制，避免把家目录外资料带入共享区。
+ * P74b 起 hub_handoff 不再注册为工具（派活只走 hub_job_manage）；创建函数保留给旧测试和内部调用，
+ * 过期、接收、关闭等处理仍在用，旧数据照常处理。
+ */
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { posix as path } from 'node:path';
 import { z } from 'zod';
@@ -42,7 +46,7 @@ function resolveRecipient(ctx: HubContext, from: string, explicitTo?: string): B
     throw new Error('to：未指定收件人，也没有在岗总管，请显式指定 to');
 }
 /** 检查交接文件边界并复制到共享目录，同时建立接收方议程和可追溯的交接感知。 */
-export async function createHandoff(ctx: HubContext, from: string, input: z.infer<typeof HandoffInputSchema>): Promise<Handoff> {
+export async function createHandoff(ctx: HubContext, from: string, input: z.infer<typeof HandoffInputSchema>, opts: { chiefDispatch?: boolean; report?: { queued: boolean } } = {}): Promise<Handoff> {
     const args = parseInput(HandoffInputSchema, input, '交接');
     const recipient = resolveRecipient(ctx, from, args.to);
     const sender = peerBot(ctx, from);
@@ -140,8 +144,13 @@ export async function createHandoff(ctx: HubContext, from: string, input: z.infe
     const handoff = HandoffSchema.parse({ id, from, to: recipient.id, task: args.task, files, status: 'offered', agendaId: agenda.id, createdAt: now, updatedAt: now });
     ctx.store.table('handoffs').put(handoff);
     ctx.store.table('agenda').put(agenda);
-    postThread(ctx, { thread: 'team', from, kind: 'handoff', text: `交给 ${recipient.name}：${args.task}\n原因：${args.why}\n文件：${files.join('、') || '无'}${references ? `\n固定产物：${references}` : ''}`, refId: id });
-    enqueuePeerPercept(ctx, recordHandoff(ctx, { botId: recipient.id, id, summary: `${sender.name} 交接：${args.task}；议程 ${agenda.id}；文件 ${files.join('、') || '无'}${references ? `；固定产物：${references}` : ''}`, at: now }));
+    // P71：团队全景已下线，交接记录落在发起交接的队友自己的私聊里。
+    postThread(ctx, { thread: from, from, kind: 'handoff', text: `交给 ${recipient.name}：${args.task}\n原因：${args.why}\n文件：${files.join('、') || '无'}${references ? `\n固定产物：${references}` : ''}`, refId: id });
+    // P73r3 S1：指名交给这位员工，入队时不看思考门槛（directed）；入队结果写进 report，工具据此决定怎么回话。
+    const queued = enqueuePeerPercept(ctx, recordHandoff(ctx, { botId: recipient.id, id, summary: `${sender.name} 交接：${args.task}；议程 ${agenda.id}；文件 ${files.join('、') || '无'}${references ? `；固定产物：${references}` : ''}`, at: now }),
+        // P72l：给主人看的是短句，不含交接全文和议程编号；模型看的感知摘要不变。
+        { ownerSummary: `${sender.name}交来一件事，等待开工`, chiefDispatch: opts.chiefDispatch === true, directed: true });
+    if (opts.report) opts.report.queued = queued !== null;
     await refreshBotFiles(ctx, recipient.id);
     ctx.emit(HUB_EVENT_SCOPES.bot, recipient.id);
     ctx.emit(HUB_EVENT_SCOPES.activity, from);
@@ -166,8 +175,10 @@ export function closeHandoffForAgenda(ctx: HubContext, botId: string, agendaId: 
     const recipient = peerBot(ctx, botId);
     ctx.store.table('handoffs').patch(row.id, { status: status === 'done' ? 'done' : 'declined', updatedAt: now });
     const summary = `${recipient.name} ${status === 'done' ? '完成了' : '拒绝了'}交接：${row.task}`;
-    postThread(ctx, { thread: 'team', from: botId, kind: 'handoff', text: summary, refId: row.id });
-    enqueuePeerPercept(ctx, recordPeerMessage(ctx, { botId: row.from, id: `${row.id}:${status}`, summary, at: now }));
+    // P71：完成或拒绝是接收方说的话，落在接收方自己的私聊里；发起方另有感知通知。
+    postThread(ctx, { thread: botId, from: botId, kind: 'handoff', text: summary, refId: row.id });
+    // P73r3 复核裁定：这是系统指名通知交接发起人（做完了、被拒了），不看思考门槛（directed）。
+    enqueuePeerPercept(ctx, recordPeerMessage(ctx, { botId: row.from, id: `${row.id}:${status}`, summary, at: now }), { directed: true });
     ctx.emit(HUB_EVENT_SCOPES.bot, row.from);
     ctx.emit(HUB_EVENT_SCOPES.activity, row.from);
 }
@@ -183,7 +194,7 @@ export async function expireHandoffs(ctx: HubContext, now: number): Promise<void
                 await refreshBotFiles(ctx, row.to);
                 ctx.emit(HUB_EVENT_SCOPES.bot, row.to);
             }
-            enqueuePeerPercept(ctx, recordPeerMessage(ctx, { botId: row.from, id: `${row.id}:expired`, summary: `交接「${row.task}」已过期`, at: now }));
+            enqueuePeerPercept(ctx, recordPeerMessage(ctx, { botId: row.from, id: `${row.id}:expired`, summary: `交接「${row.task}」已过期`, at: now }), { directed: true });
         }
         else if (row.status === 'offered' && now - row.createdAt >= ctx.settings.handoffWaitingMs) {
             if (!ctx.store.log('audit').all().some(a => a.action === 'handoff_waiting' && a.detail === row.id))

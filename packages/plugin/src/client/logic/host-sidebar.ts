@@ -21,7 +21,7 @@ export function openHubPanel(ctx: unknown, navigate: () => void): boolean {
     navigate()
     return true
   } catch (error) {
-    console.error('[agent-hub] 打开队友面板失败:', error)
+    console.error('[agent-hub] 打开员工面板失败:', error)
     return false
   }
 }

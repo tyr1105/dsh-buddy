@@ -1,6 +1,9 @@
 /**
- * 设置页的校验与拼装（纯函数）：免打扰时段、日报时间、推送渠道、单推上限、
- * 每个队友的每日回合/token 预算（C05）、默认模型、公共知识库连接（P38）。
+ * 设置页的校验与拼装（纯函数）：免打扰时段、通知方式、默认模型、
+ * 给你自己留出（员工份额）、员工自己发起的工作（每日回合上限）、公共知识库连接（P38）。
+ *
+ * P76k 按方案 7.10.1 精简：日报时间、全队与每位的通知条数上限、每位每天的 token 上限
+ * 都已取消（对应的机制在 P76c、P76h 里删掉了），设置页不再显示这些项，草稿与 patch 里也不再带。
  * 界面先校验再 POST updateSettings；非法值给中文提示、不能保存。
  */
 import type { KnowledgeBaseConfig, Settings } from '@agent-hub/core'
@@ -24,13 +27,31 @@ const KB_DEFAULTS: KnowledgeBaseConfig = {
   readOnly: true, maxBytes: KB_DEFAULT_MAX_BYTES,
 }
 
-/** C05 每队友每日自主回合预算的界面上下限（core 默认 6；收紧到 1 防误填 0 导致队友全天不自醒）。 */
+/**
+ * P76k「员工自己发起的工作」的界面上下限（core 迁移后默认 2）：1 到 10。
+ * 上限 10 是方案 7.10.3 给的新界面上限；下限 1 防止误填 0 让员工全天不自己开工。
+ */
 export const BOT_DAILY_TURN_MIN = 1
-export const BOT_DAILY_TURN_MAX = 50
-/** C05 每队友每日 token 预算的界面上下限（core 默认 250000），输入步长 1 万。 */
-export const BOT_DAILY_TOKEN_MIN = 10_000
-export const BOT_DAILY_TOKEN_MAX = 2_000_000
-export const BOT_DAILY_TOKEN_STEP = 10_000
+export const BOT_DAILY_TURN_MAX = 10
+
+/**
+ * P76k「给你自己留出」三档：显示的是一成、三成、五成，写回的是员工份额 botQuotaShare。
+ * 三成是默认（员工用七成，与你留出的三成对应）。
+ */
+export interface QuotaShareChoice { value: number; label: string; isDefault: boolean }
+export const QUOTA_SHARE_CHOICES: readonly QuotaShareChoice[] = [
+  { value: 0.9, label: '一成', isDefault: false },
+  { value: 0.7, label: '三成', isDefault: true },
+  { value: 0.5, label: '五成', isDefault: false },
+]
+
+/**
+ * 当前值不在三档里时，额外一项的显示文字：「{百分数}（自定义）」。
+ * 百分数说的是「给你自己留出」的比例（1 − botQuotaShare），与三档同一口径。
+ */
+export function customShareLabel(share: number): string {
+  return `${Math.round((1 - share) * 100)}%（自定义）`
+}
 
 /** HH:mm 校验（5 分钟为单位由输入控件 step 保证，这里只查形状）。 */
 export function validateClockTime(value: string, field: string): string | null {
@@ -41,12 +62,11 @@ export function validateClockTime(value: string, field: string): string | null {
 export interface SettingsDraft {
   quietStart: string
   quietEnd: string
-  digestAt: string
   pushChannel: string
-  dailyPushCap: number | string   // 字符串是输入框原样，保存前转数字
-  botDailyPushCap: number | string
-  botDailyTurnBudget: number | string   // C05 每队友每日自主回合上限
-  botDailyTokenBudget: number | string  // C05 每队友每日 token 上限
+  /** P76k「给你自己留出」写回的员工份额（0.9、0.7、0.5，或旧设置里的自定义值）。 */
+  botQuotaShare: number | string
+  /** P76k「员工自己发起的工作」：每位每天最多几个自己发起的回合。 */
+  botDailyTurnBudget: number | string
   defaultModel: string            // '' = 跟随 DSH 默认
   // P38 公共知识库（可选、默认关）；kbMaxBytes 输入框期间允许字符串。
   kbEnabled: boolean
@@ -64,12 +84,9 @@ export function draftFromSettings(settings: Settings): SettingsDraft {
   return {
     quietStart: settings.quietHours.start,
     quietEnd: settings.quietHours.end,
-    digestAt: settings.digestAt,
     pushChannel: settings.pushChannel,
-    dailyPushCap: String(settings.dailyPushCap),
-    botDailyPushCap: String(settings.botDailyPushCap),
+    botQuotaShare: String(settings.botQuotaShare),
     botDailyTurnBudget: String(settings.botDailyTurnBudget),
-    botDailyTokenBudget: String(settings.botDailyTokenBudget),
     defaultModel: settings.defaultModel === null ? '' : JSON.stringify(settings.defaultModel),
     kbEnabled: kb.enabled,
     kbEndpoint: kb.endpoint,
@@ -86,21 +103,13 @@ export function validateSettingsDraft(draft: SettingsDraft): string | null {
   if (start !== null) return start
   const end = validateClockTime(draft.quietEnd, '免打扰结束')
   if (end !== null) return end
-  const digest = validateClockTime(draft.digestAt, '日报时间')
-  if (digest !== null) return digest
   if (!['dsh', 'macos', 'none'].includes(draft.pushChannel)) return '通知方式：请选择 macOS 通知、DSH 内通知或不发通知。'
-  const whole = Number(draft.dailyPushCap)
-  if (!Number.isInteger(whole) || whole < 0 || whole > 10) return '全队每天最多通知：请填写 0 到 10 的整数。'
-  const perBot = Number(draft.botDailyPushCap)
-  if (!Number.isInteger(perBot) || perBot < 0 || perBot > 3) return '每位队友每天最多通知：请填写 0 到 3 的整数。'
-  if (perBot > whole) return '每位队友的通知上限不得超过全队上限。'
+  // 「给你自己留出」照三档写回；旧设置里的自定义值原样保留（>0 且 <1 才算合法份额）。
+  const share = Number(draft.botQuotaShare)
+  if (!Number.isFinite(share) || share <= 0 || share >= 1) return '给你自己留出：请选择一成、三成或五成。'
   const turns = Number(draft.botDailyTurnBudget)
   if (!Number.isInteger(turns) || turns < BOT_DAILY_TURN_MIN || turns > BOT_DAILY_TURN_MAX) {
-    return `每位队友每天最多自己开工：请填写 ${BOT_DAILY_TURN_MIN} 到 ${BOT_DAILY_TURN_MAX} 的整数（如需全天暂停，请使用「暂停」）。`
-  }
-  const tokens = Number(draft.botDailyTokenBudget)
-  if (!Number.isInteger(tokens) || tokens < BOT_DAILY_TOKEN_MIN || tokens > BOT_DAILY_TOKEN_MAX) {
-    return `每位队友每天最多使用的 token：请填写 ${BOT_DAILY_TOKEN_MIN} 到 ${BOT_DAILY_TOKEN_MAX} 的整数（默认 250000）。`
+    return '员工自己发起的工作：请填写 1 到 10 的整数。'
   }
   return validateKnowledgeDraft(draft)
 }
@@ -179,8 +188,9 @@ export function modelSelectOptions(current: ModelChoice | undefined, options: Re
 // 做法与新建向导一致：编辑中把草稿落 localStorage，重新挂载时若「基线设置」没变就恢复，
 // 保存成功后清掉。基线变了（设置在别处被改过）则丢弃旧草稿，避免把新设置覆盖回旧值。
 
-// v2：P38 新增知识库六个草稿字段；v1 暂存缺这些字段，读到一律作废旧草稿。
-const SETTINGS_DRAFT_KEY = 'dsh-buddy:settings-draft:v2'
+// v3（P76k）：删去日报时间、两个通知上限与每位每天 token 上限，新增 botQuotaShare；
+// v1、v2 的暂存缺这些字段，读到一律作废旧草稿（沿用权限字段变化时的写法）。
+const SETTINGS_DRAFT_KEY = 'dsh-buddy:settings-draft:v3'
 
 /** 可注入的持久层（默认浏览器 localStorage；测试传内存版）。 */
 type SettingsDraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -201,20 +211,19 @@ function draftSignature(draft: SettingsDraft): string {
 
 /** 暂存里的数据形状（version 字段留给以后字段变更时丢弃旧草稿）。 */
 interface StashedSettingsDraft {
-  version: 2
+  version: 3
   baseSignature: string
   draft: SettingsDraft
 }
 
-/** 校验读回的对象确实是一份完整草稿（文本字段为字符串、开关为布尔、字节上限为数字或数字串），坏数据一律当没有。 */
+/** 校验读回的对象确实是一份完整草稿（文本字段为字符串、开关为布尔、数字项为数字或数字串），坏数据一律当没有。 */
 function isSettingsDraft(value: unknown): value is SettingsDraft {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
-  const textKeys = ['quietStart', 'quietEnd', 'digestAt', 'pushChannel', 'dailyPushCap', 'botDailyPushCap',
-    'botDailyTurnBudget', 'botDailyTokenBudget', 'defaultModel', 'kbEndpoint', 'kbAuthRef', 'kbProtocol', 'kbScope']
+  const textKeys = ['quietStart', 'quietEnd', 'pushChannel', 'defaultModel', 'kbEndpoint', 'kbAuthRef', 'kbProtocol', 'kbScope']
   return textKeys.every(key => typeof v[key] === 'string')
     && typeof v.kbEnabled === 'boolean'
-    && ['string', 'number'].includes(typeof v.kbMaxBytes)
+    && ['botQuotaShare', 'botDailyTurnBudget', 'kbMaxBytes'].every(key => ['string', 'number'].includes(typeof v[key]))
 }
 
 /**
@@ -227,7 +236,7 @@ export function stashSettingsDraft(draft: SettingsDraft, base: SettingsDraft, st
       store?.removeItem(SETTINGS_DRAFT_KEY)
       return
     }
-    const payload: StashedSettingsDraft = { version: 2, baseSignature: draftSignature(base), draft }
+    const payload: StashedSettingsDraft = { version: 3, baseSignature: draftSignature(base), draft }
     store?.setItem(SETTINGS_DRAFT_KEY, JSON.stringify(payload))
   } catch { /* 存不进去就算了，绝不能挡主人改设置 */ }
 }
@@ -246,7 +255,7 @@ export function restoreSettingsDraft(base: SettingsDraft, store: SettingsDraftSt
   if (raw === null) return null
   try {
     const value = JSON.parse(raw) as Partial<StashedSettingsDraft>
-    if (value.version !== 2 || !isSettingsDraft(value.draft) || value.baseSignature !== draftSignature(base)) {
+    if (value.version !== 3 || !isSettingsDraft(value.draft) || value.baseSignature !== draftSignature(base)) {
       store?.removeItem(SETTINGS_DRAFT_KEY)
       return null
     }
@@ -266,18 +275,15 @@ export function dropSettingsDraft(store: SettingsDraftStorage | null = settingsS
 /**
  * 拼成 updateSettings 的 patch（只带会改的字段；rootDir 不允许从这里改）。
  * D07 第 7 条：defaultModel 只在与加载值不同时才放进 patch——core 对带这个键的
- * 更新会按宿主目录重新校验，默认模型已下架时「只改推送渠道」也会被拒。
+ * 更新会按宿主目录重新校验，默认模型已下架时「只改通知方式」也会被拒。
  */
 export function buildSettingsPatch(draft: SettingsDraft, loaded?: SettingsDraft): Record<string, unknown> {
   const patch: Record<string, unknown> = {
     quietHours: { start: draft.quietStart.trim(), end: draft.quietEnd.trim() },
-    digestAt: draft.digestAt.trim(),
     pushChannel: draft.pushChannel,
-    dailyPushCap: Number(draft.dailyPushCap),
-    botDailyPushCap: Number(draft.botDailyPushCap),
-    // C05：预算每次都带当前值（输入框始终渲染，不存在缺键场景）；core 闸门下一次判定即读新值。
+    botQuotaShare: Number(draft.botQuotaShare),
+    // 每次带当前值（输入框始终渲染，不存在缺键场景）；core 闸门下一次判定即读新值。
     botDailyTurnBudget: Number(draft.botDailyTurnBudget),
-    botDailyTokenBudget: Number(draft.botDailyTokenBudget),
   }
   if (loaded === undefined || loaded.defaultModel !== draft.defaultModel) {
     if (draft.defaultModel === '') patch.defaultModel = null
@@ -286,7 +292,7 @@ export function buildSettingsPatch(draft: SettingsDraft, loaded?: SettingsDraft)
     }
   }
   // P38：知识库配置只有相对已加载值发生变化时才进 patch（与 defaultModel 同口径），
-  // 只改推送渠道这类无关操作不重写知识库配置。形状由 core schema 最终校验。
+  // 只改通知方式这类无关操作不重写知识库配置。形状由 core schema 最终校验。
   if (loaded === undefined
     || JSON.stringify(knowledgeConfigFromDraft(loaded)) !== JSON.stringify(knowledgeConfigFromDraft(draft))) {
     patch.knowledgeBase = knowledgeConfigFromDraft(draft)

@@ -67,14 +67,16 @@ const officePage = read('pages/OfficePage.tsx')
 const inboxPane = read('components/InboxPane.tsx')
 const commandPalette = read('components/command-palette.tsx')
 // 第 39 轮登记六个真实弹窗挂载点；P48 队友归档新增 bot-archive-dialog（其拦截态
-// BlockedDialog 自带原生 role="dialog"，其余三态复用 ConfirmDialog），挂载点增至七个
+// BlockedDialog 自带原生 role="dialog"，其余三态复用 ConfirmDialog），挂载点增至七个；
+// P74i 截图大图改为模态弹窗（EvidenceList），挂载点增至八个；
+// P75k 删除「教它技能」弹窗（要员工学某段会话的做法改为对总管说），挂载点减为七个
 // （use-drawer-focus.ts 里的 role="dialog" 只是注释示例）。
 const newBotWizard = read('components/NewBotWizard.tsx')
-const teachDialog = read('components/TeachDialog.tsx')
 const confirmDialog = read('components/confirm-dialog.tsx')
 const prjDialogShell = read('components/prj-dialog-shell.tsx')
 const resourceDialogs = read('components/resource-dialogs.tsx')
 const botArchiveDialog = read('components/bot-archive-dialog.tsx')
+const evidenceList = read('components/EvidenceList.tsx')
 // U10：P44 新左栏三组导航与其宿主挂载逻辑。
 // U01 第 45 轮：左栏拆成主组件 + 共享零件 + 图标列 + 内联表单 + 两个分组共六个文件，
 // 整组源码拼接后跑同一套静态契约；组顺序等组合根专属断言另读主组件，rail 断言读图标列文件。
@@ -339,10 +341,10 @@ const headingLevels = (text: string): number[] => {
 describe('WCAG 4.1.2 对话框：模态声明与显式命名一个都不能少', () => {
   const tags = collectDialogTags()
 
-  it('全客户端恰有七个真实弹窗挂载点（新增弹窗需在本契约登记）', () => {
+  it('全客户端恰有七个真实弹窗挂载点（新增弹窗需在本契约登记；P75k 起没有教学弹窗）', () => {
     expect(tags.map(t => t.file).sort()).toEqual([
+      'components/EvidenceList.tsx',
       'components/NewBotWizard.tsx',
-      'components/TeachDialog.tsx',
       'components/bot-archive-dialog.tsx',
       'components/command-palette.tsx',
       'components/confirm-dialog.tsx',
@@ -361,19 +363,20 @@ describe('WCAG 4.1.2 对话框：模态声明与显式命名一个都不能少',
 describe('WCAG 1.3.1 弹窗是独立表面：标题从 h2 起且不跳级', () => {
   const dialogSources: Array<{ name: string; text: string }> = [
     { name: 'NewBotWizard.tsx', text: newBotWizard },
-    { name: 'TeachDialog.tsx', text: teachDialog },
     { name: 'confirm-dialog.tsx', text: confirmDialog },
     { name: 'prj-dialog-shell.tsx', text: prjDialogShell },
     { name: 'resource-dialogs.tsx', text: resourceDialogs },
     // P48：拦截态 BlockedDialog 自带 h2 表面，同样受「标题从 h2 起且不跳级」约束。
     { name: 'bot-archive-dialog.tsx', text: botArchiveDialog },
     { name: 'command-palette.tsx', text: commandPalette },
+    // P74i：截图大图弹窗（EvidenceList）刻意不设标题（图片优先，名称靠 aria-label）。
+    { name: 'EvidenceList.tsx', text: evidenceList },
   ]
 
-  it('六个带标题弹窗：恰一个标题且为 h2；命令面板刻意无标题（搜索优先，名称靠 aria-label）', () => {
+  it('六个带标题弹窗：恰一个标题且为 h2；命令面板与截图大图刻意无标题（名称靠 aria-label）', () => {
     for (const src of dialogSources) {
       const levels = headingLevels(src.text)
-      if (src.name === 'command-palette.tsx') {
+      if (src.name === 'command-palette.tsx' || src.name === 'EvidenceList.tsx') {
         expect(levels, src.name).toEqual([])
       } else {
         expect(levels, src.name).toEqual([2])
@@ -381,13 +384,10 @@ describe('WCAG 1.3.1 弹窗是独立表面：标题从 h2 起且不跳级', () =
     }
   })
 
-  it('向导与教学弹窗的 h2 包在 ah-wizard-head 里，不允许退回 h3', () => {
+  it('向导弹窗的 h2 包在 ah-wizard-head 里，不允许退回 h3（P75k 起没有教学弹窗）', () => {
     expect(newBotWizard).toContain('<header className="ah-wizard-head">')
-    expect(newBotWizard).toContain('<h2>新建队友</h2>')
+    expect(newBotWizard).toContain('<h2>新建员工</h2>')
     expect(newBotWizard).not.toContain('<h3>')
-    expect(teachDialog).toContain('<header className="ah-wizard-head">')
-    expect(teachDialog).toContain('<h2>教 {props.botName} 技能</h2>')
-    expect(teachDialog).not.toContain('<h3>')
   })
 
   it('三个 DialogShell 系列弹窗：h2 直接渲染 props.title，名称与可见标题同源', () => {
@@ -462,9 +462,9 @@ describe('U10 新左栏：每个可点项有中文可读名，点击区 ≥24×2
 
   it('关键控件的中文名称逐一在册（办公室/新建队友/新建会话/待你处理/展开项目）', () => {
     expect(teamSidebarNav).toContain('aria-label="办公室"')
-    expect(teamSidebarNav).toContain('aria-label="新建队友"')
+    expect(teamSidebarNav).toContain('aria-label="新建员工"')
     expect(teamSidebarNav).toContain('aria-label="待你处理"')
-    expect(teamSidebarNav).toContain('aria-label="搜索队友"')
+    expect(teamSidebarNav).toContain('aria-label="搜索员工"')
     expect(teamSidebarNav).toContain('aria-label={`给${bot.name}新建会话`}')
     expect(teamSidebarNav).toContain('aria-label={`在${project.name}新建会话`}')
     expect(teamSidebarNav).toContain('aria-label={project.expanded ? `收起${project.name}` : `展开${project.name}`}')
@@ -515,5 +515,126 @@ describe('U10 新左栏：每个可点项有中文可读名，点击区 ≥24×2
     const block = declBlock(workspaceCss, '.ah-nav-dot-check')
     expect(block).toContain('color-mix(')
     expect(block).not.toContain('background: var(--dsw-alias-warning, var(--dsw-alias-accent));')
+  })
+})
+
+// ---------- U10 复验（P76o）：P74–P76 新增的左栏入口 ----------
+const sidebarTeammates = read('components/sidebar-teammates-group.tsx')
+const sidebarWorkspaces = read('components/sidebar-workspaces-group.tsx')
+
+/** 取声明块里的 opacity；没写就是 1。 */
+const opacityOf = (block: string): number => {
+  const match = block.match(/opacity:\s*([\d.]+)/)
+  return match === null ? 1 : Number(match[1])
+}
+
+describe('U10 复验：P74–P76 新增的左栏入口也在同一套键盘与对比度契约里', () => {
+  it('模板库、记忆、归档折叠、删除、设置、待你处理都有中文可读名', () => {
+    // 队友组：新建/搜索/行内加号/归档折叠/删除/模板库/记忆入口。
+    expect(sidebarTeammates).toContain('aria-label="新建员工"')
+    expect(sidebarTeammates).toContain('aria-label="搜索员工"')
+    expect(sidebarTeammates).toContain('aria-label={`给${bot.name}新建会话`}')
+    expect(sidebarTeammates).toContain('已归档（')
+    expect(sidebarTeammates).toContain('aria-label={`删除${bot.name}`}')
+    expect(sidebarTeammates).toContain('从模板库添加')
+    // P86：记忆入口已收进设置页分区，左栏员工列表里不再有这一行（对应的可达名断言改为设置页导航里的分区按钮，见下一条用例）。
+    expect(sidebarTeammates).not.toContain('memoryEntryText')
+    // 工作区组：新建项目、项目行加号、展开/收起。
+    expect(sidebarWorkspaces).toContain('aria-label="新建项目"')
+    expect(sidebarWorkspaces).toContain('aria-label={`在${project.name}新建会话`}')
+    expect(sidebarWorkspaces).toContain('aria-label={project.expanded ? `收起${project.name}` : `展开${project.name}`}')
+    // 组合根：办公室入口、待你处理、设置。
+    expect(teamSidebarNavMain).toContain('进入办公室')
+    expect(teamSidebarNavMain).toContain('aria-label="待你处理"')
+    expect(teamSidebarNavMain).toContain('设置')
+  })
+
+  it('P86r1：总管右侧栏的修改按钮、被取代约定的折叠行可点高度不小于 24；办公室小人热区窄宽度下可点宽度不小于 24', () => {
+    expect(declBlock(workspaceCss, '.ah-team-edit')).toContain('min-height: 24px')
+    expect(declBlock(workspaceCss, '.ah-agr-fold-row')).toContain('min-height: 24px')
+    // 小人热区：按钮本身随画布缩放，可点宽度由居中的伪元素补到至少 24。
+    const figureAfter = declBlock(workspaceCss, '.ah-office-pixel-figure::after')
+    expect(figureAfter, '缺少小人热区的伪元素声明块').not.toBe('')
+    expect(figureAfter).toContain('width: max(100%, 24px)')
+  })
+
+  it('P86：设置页导航里的「关于你的记忆」是带中文可读名的按钮；旧的两处常驻入口样式已删除', () => {
+    expect(settingsPane).toContain('<nav className="ah-set-nav" aria-label="设置分区">')
+    expect(settingsPane).toContain('SETTINGS_SECTIONS.map')
+    expect(workspaceCss).not.toContain('.ah-nav-memory-entry')
+    expect(workspaceCss).not.toContain('.ah-right-memory-entry')
+  })
+
+  it('新增入口的点击区都不小于 24×24', () => {
+    // P86：.ah-nav-memory-entry 随左栏入口一并删除（记忆入口改为设置页导航里的分区按钮，沿用已有的 .ah-set-nav-item 样式）。
+    for (const selector of ['.ah-nav-archived-toggle', '.ah-nav-library-entry']) {
+      const block = declBlock(workspaceCss, selector)
+      expect(block, `${selector} 缺少声明块`).not.toBe('')
+      expect(block, `${selector} 高度不足 24px`).toContain('min-height: 24px')
+    }
+    // 删除文字按钮：高度 24px，宽度由「删除」两字加内边距保证。
+    const deleteBlock = declBlock(workspaceCss, '.ah-nav-row-text')
+    expect(deleteBlock).toContain('height: 24px')
+    expect(deleteBlock).toContain('padding: 0 6px')
+  })
+
+  it('行尾加号的非文字对比度不再低于 3:1，删除文字不再被透明度压到 4.5:1 以下', () => {
+    // 55% 透明度在浅色侧栏底上实测约 2.1:1；0.8 起约 3.2:1。
+    expect(opacityOf(declBlock(workspaceCss, '.ah-nav-row-add'))).toBeGreaterThanOrEqual(0.8)
+    // 11px 文字按正文 4.5:1 判，透明度必须回到 1。
+    expect(opacityOf(declBlock(workspaceCss, '.ah-nav-row-text'))).toBe(1)
+  })
+})
+
+// ---------- U07 复验（P76o）：P74–P81 新表面纳入既有体验契约 ----------
+// 运行时探针逐页覆盖团队主页、办公室、项目、待你处理、设置、记忆、新建向导；
+// 这里锁住运行时不易发现的结构与动效规则，防止新表面在后续重构里悄悄掉队。
+const currentSurfacePages: Array<{ file: string; text: string; root: string; label: string }> = [
+  { file: 'pages/ProjectPage.tsx', text: read('pages/ProjectPage.tsx'), root: '<section className="ah-prj" aria-label="项目">', label: '项目' },
+  { file: 'pages/OfficePage.tsx', text: read('pages/OfficePage.tsx'), root: '<section className="ah-office" aria-label="办公室">', label: '办公室' },
+  { file: 'components/InboxPane.tsx', text: read('components/InboxPane.tsx'), root: 'aria-label="待你处理"', label: '待你处理' },
+  { file: 'components/SettingsPane.tsx', text: read('components/SettingsPane.tsx'), root: '<section className="ah-set" aria-label="设置">', label: '设置' },
+  { file: 'pages/MemoryPage.tsx', text: read('pages/MemoryPage.tsx'), root: 'className="ah-memory-page" aria-label={page.title}', label: '记忆' },
+]
+
+describe('U07 复验：新页面的地标名与标题层级', () => {
+  it('每个页面根都有中文可访问名，正文标题从 h2 起', () => {
+    for (const page of currentSurfacePages) {
+      expect(page.text, `${page.file} 缺少页面根的可访问名`).toContain(page.root)
+      expect(page.text, `${page.file} 缺少 h2 标题`).toContain('<h2')
+      expect(page.text, `${page.file} 不应出现 h1`).not.toContain('<h1')
+    }
+  })
+})
+
+describe('U07 复验：新动效全部有 reduced-motion 规则，canvas 对比度豁免有标记', () => {
+  it('四类新增动效都有 prefers-reduced-motion 关闭规则', () => {
+    expect(workspaceCss).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.ah-job-cost-turns \{ animation: none; \}\s*\}/)
+    expect(workspaceCss).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.ah-memory-entry-focus \{ animation: none; \}\s*\}/)
+    expect(workspaceCss).toContain('@media (prefers-reduced-motion: reduce) {\n  .ah-agr-seal.is-anim { animation: none; }')
+    expect(workspaceCss).toContain('@media (prefers-reduced-motion: reduce) {\n  .ah-skill-tick-fresh { animation: none; }')
+    // 全局兜底规则必须同时罩住 toast（它在 .ah-page 之外挂载）。
+    expect(workspaceCss).toContain('.ah-page *, .ah-host-botlist *, .ah-toast { animation: none; transition: none; }')
+  })
+
+  it('像素气泡的 canvas 底不在 DOM 里，豁免必须有显式标记而不是静默跳过', () => {
+    expect(read('pages/office-pixel-page.tsx')).toContain('data-contrast-on-canvas="bubble"')
+  })
+})
+
+describe('U07 复验：本轮修掉的对比度与点击区缺陷不回退', () => {
+  it('筛选项计数不再用透明度压文字', () => {
+    expect(opacityOf(declBlock(workspaceCss, '.ah-filter-tabs .ah-btn span'))).toBe(1)
+  })
+
+  it('「查看原始命令」补到 24px 高；审批风险句用混合色达到 4.5:1', () => {
+    expect(declBlock(css, '.ah-approval-toggle')).toContain('min-height: 24px')
+    expect(declBlock(css, '.ah-approval-risk')).toContain('color-mix(')
+  })
+
+  it('模板「推荐」标签用 accent-text；不可选模板卡不再整卡降低透明度', () => {
+    expect(declBlock(workspaceCss, '.ah-template-recommend')).toContain('color: var(--dsw-alias-accent-text)')
+    expect(opacityOf(declBlock(css, '.ah-wizard-role-disabled'))).toBe(1)
+    expect(declBlock(css, '.ah-wizard-role-disabled')).toContain('border-style: dashed')
   })
 })

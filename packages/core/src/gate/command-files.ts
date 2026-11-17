@@ -64,7 +64,8 @@ export async function captureCommandFiles(ctx: HubContext, botId: string,
   if (!bot) throw new Error('出站命令所属机器人不存在');
   const gate = { ...gateContextFor(ctx, bot), cwd: payload.cwd };
   const realHome = await resolveFixedRoot(ctx.fs, bot.homeDir);
-  const realGate: GateContext = { ...gate, homeDir: realHome,
+  // realRootDir 置空：这份上下文里的各目录已经是真实路径，不能再把真实路径换回设置里的写法。
+  const realGate: GateContext = { ...gate, realRootDir: undefined, homeDir: realHome,
     rootDir: await resolveRealTarget(ctx.fs, gate.rootDir),
     sharedDir: await resolveFixedRoot(ctx.fs, gate.sharedDir),
     workDataPaths: await Promise.all((gate.workDataPaths ?? []).map(path => resolveRealTarget(ctx.fs, resolveGatePath(path, { ...gate, cwd: undefined })))) };

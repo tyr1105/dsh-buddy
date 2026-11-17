@@ -14,6 +14,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.js'
 import { ProjectFormDialog } from '../components/project-dialogs.js'
 import { useToastPlacement } from '../components/use-toast-placement.js'
 import { buildSaveBackgroundInput, buildSaveProjectInput, type ProjectFormValues } from '../logic/project-form.js'
+import { toneClass } from '../logic/job.js'
 import {
   PROJECT_BACKGROUND_EMPTY_TEXT, PROJECT_EMPTY_TEXT, PROJECT_MEMBERS_EMPTY_TEXT, PROJECT_TASKS_EMPTY_TEXT,
   backgroundMetaText, botOptions, canManageProject, canOpenTopic, projectMemberRows, projectPathRows, projectPickRows, projectTaskRows,
@@ -23,8 +24,12 @@ import {
 /** 成功轻提示停留时长（与办公室/资料页一致 2.2 秒）。 */
 const SUCCESS_TOAST_MS = 2200
 
-/** 一行路径：完整显示，旁边一个复制按钮。复制失败时说一句，路径本身可以手动选中。 */
-function PathRow(props: { row: ProjectPathRow }): ReactNode {
+/**
+ * 一行路径（U05）：正文只显示目录名，完整路径收进悬停提示，旁边一个复制按钮
+ * 仍拷贝完整路径；没设置时写「未设置」，不挂悬停、不给复制按钮。
+ * 复制失败时说一句，路径本身可以手动选中。导出是为了单独测这一行，页面本身只在这个文件里用它。
+ */
+export function PathRow(props: { row: ProjectPathRow }): ReactNode {
   const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle')
   const copy = (): void => {
     void Promise.resolve()
@@ -34,10 +39,12 @@ function PathRow(props: { row: ProjectPathRow }): ReactNode {
   return (
     <div className="ah-prj-path">
       <span className="ah-prj-path-label">{props.row.label}</span>
-      <code className="ah-prj-path-value">{props.row.value}</code>
-      <button type="button" className="ah-btn ah-btn-ghost" aria-label={`复制${props.row.label}`} onClick={copy}>
-        {state === 'done' ? '已复制' : state === 'failed' ? '没复制上，请手动选中' : '复制'}
-      </button>
+      <code className="ah-prj-path-value" title={props.row.title}>{props.row.display}</code>
+      {props.row.title === undefined ? null : (
+        <button type="button" className="ah-btn ah-btn-ghost" aria-label={`复制${props.row.label}`} onClick={copy}>
+          {state === 'done' ? '已复制' : state === 'failed' ? '没复制上，请手动选中' : '复制'}
+        </button>
+      )}
     </div>
   )
 }
@@ -50,8 +57,8 @@ export function ProjectBoard(props: { row: ProjectViewRow; onOpenTopic: (topicId
   const backgroundMeta = backgroundMetaText(row.background)
   return (
     <div className="ah-prj-board">
-      <section className="ah-prj-block" aria-label="有哪些队友">
-        <h3>有哪些队友</h3>
+      <section className="ah-prj-block" aria-label="有哪些员工">
+        <h3>有哪些员工</h3>
         {members.length === 0 ? <p className="ah-prj-note">{PROJECT_MEMBERS_EMPTY_TEXT}</p> : (
           <ul className="ah-prj-members-list">
             {members.map(member => (
@@ -67,13 +74,32 @@ export function ProjectBoard(props: { row: ProjectViewRow; onOpenTopic: (topicId
 
       <section className="ah-prj-block" aria-label="当前事务清单">
         <h3>当前事务清单</h3>
-        {tasks.length === 0 ? <p className="ah-prj-note">{PROJECT_TASKS_EMPTY_TEXT}</p> : (
-          <ul className="ah-prj-items">
+        {/* P74i：这个项目里的「一件事」（jobRows，core 算好：受阻和待你验收在前）排在旧事务前面；
+            每件事一行：标题、执行者、状态小标签（按 stateTone 着色）、交付时间，点击进入这件事的主题。 */}
+        {row.jobRows !== undefined && row.jobRows.length > 0 ? (
+          <ul className="ah-prj-items ah-prj-task-grid ah-prj-job-items">
+            {row.jobRows.map(job => (
+              <li key={job.jobId}>
+                <button type="button" className="ah-prj-item ah-prj-item-link" onClick={() => props.onOpenTopic(job.topicId)}>
+                  <span className="ah-prj-item-title">{job.title}</span>
+                  <span className="ah-prj-note">{job.executorName}</span>
+                  <span className={`ah-tag ${toneClass(job.stateTone)}`}>{job.stateLabel}</span>
+                  <span className="ah-prj-note">{job.dueText}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {tasks.length === 0 && (row.jobRows === undefined || row.jobRows.length === 0) ? <p className="ah-prj-note">{PROJECT_TASKS_EMPTY_TEXT}</p> : (
+          <ul className="ah-prj-items ah-prj-task-grid">
             {tasks.map(task => {
+              // P74i-m1（走查 S-5）：旧事务没有交付时间，补一个空的时间格，让新旧两种行的
+              // 执行者、状态、时间三列在同一张清单里对齐（网格列宽由 ah-prj-task-grid 统一）。
               const body = <>
                 <span className="ah-prj-item-title">{task.title}</span>
                 <span className="ah-prj-note">{task.assignee}</span>
                 <span className="ah-tag">{task.statusLabel}</span>
+                <span className="ah-prj-note" aria-hidden="true" />
               </>
               // 有主题的事务点一下进那条讨论；没有主题的就是一行文字，不做成点了没反应的按钮。
               return (

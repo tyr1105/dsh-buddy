@@ -14,7 +14,9 @@ function deferred<T>() {
 }
 
 it.each(['sessionInfo', 'createSession', 'deliver'] as const)('M07 %s 已结算的迟到 continuation 不复活主人取消的回合', async method => {
-  const { ctx, bot } = await apiFixture();
+  const { ctx, bot, api } = await apiFixture();
+  // P72h H3：新建员工不再自动试跑，由主人发一句话让它排上一轮回合。
+  okData(await api.pokeBot(bot.id));
   if (method !== 'createSession') {
     ctx.store.table('bots').patch(bot.id, { sessionId: 'old-session', sessionStartedAt: ctx.clock.now() });
     ctx.host.sessions.set('old-session', { exists: true, running: false, contextRatio: null });
@@ -43,6 +45,8 @@ it('M07 ended 在保护文件核对期间被打断，不得再写 syntheticCommi
   const ctx = createTestContext();
   const hub = createHub(ctx); await hub.start();
   const bot = okData(await hub.api.createBot({ name: '并发收尾', role: 'researcher', persona: '核实', aspirations: ['观察公开变化'] }));
+  // P72h H3：新建员工不再自动试跑，由主人发一句话叫醒它。
+  okData(await hub.api.pokeBot(bot.id));
   const wake = ctx.store.table('wakes').list()[0]!;
   const called = deferred<void>(), blocked = deferred<string | null>();
   const read = ctx.fs.readText.bind(ctx.fs);
@@ -66,11 +70,13 @@ it('M07 创建会话绑定前到来的 interrupted 排队等待身份，不被�
   const hub = createHub(ctx); await hub.start();
   const called = deferred<void>(), blocked = deferred<{ sessionId: string }>();
   vi.spyOn(ctx.host, 'createSession').mockImplementationOnce(() => { called.resolve(); return blocked.promise; });
-  const creation = hub.api.createBot({ name: '提前事件', role: 'researcher', persona: '核实', aspirations: ['观察公开变化'] });
+  const bot = okData(await hub.api.createBot({ name: '提前事件', role: 'researcher', persona: '核实', aspirations: ['观察公开变化'] }));
+  // P72h H3：新建员工不再自动试跑，创建会话这一步由主人发话触发。
+  const creation = hub.api.pokeBot(bot.id);
   await called.promise;
   const interrupted = hub.onTurnEvent({ type: 'interrupted', sessionId: 'just-created', at: ctx.clock.now(), by: 'owner' });
   blocked.resolve({ sessionId: 'just-created' });
-  const bot = okData(await creation);
+  okData(await creation);
   await interrupted;
   expect(ctx.store.table('wakes').list()[0]).toMatchObject({ sessionId: 'just-created', status: 'canceled', canceledBy: 'owner' });
   expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ consecutiveNoCommit: 0, consecutiveErrors: 0, activity: 'watching' });

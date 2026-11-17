@@ -24,9 +24,20 @@ export const QueueEntrySchema = z.strictObject({
   ownerInitiated: bool, // 是否由主人亲自发起
   subjectKey: nonempty, // 同一事项的稳定标识，用于冷却与等待主人去重
   notBefore: timestamp, // 不早于此时间放行
+  // P72l：总管在主人发起的回合里用 hub_send（P74b 起还有 hub_job_manage 的派活与改派）派出的活。只越过「同一事项冷却」和「最短思考间隔」两道闸，
+  // 不影响优先级、预算等其他任何规则；旧候选没有这一项，一律当作 false。
+  chiefDispatch: bool.optional(),
+  // P76r1：这条候选是主人亲手作出决定（批准或拒绝审批）之后的接续回合；重试候选沿用原回合的这一项。
+  // 只在唤醒原因是审批结果或重试时才有意义（quota/usage.ts 的 isSelfWork）；审批被中心按到期处理的不带。旧候选没有这一项，一律当作 false。
+  ownerDecided: bool.optional(),
+  // P76r1 小修：重试候选记下「原回合按 isSelfWork 判断是不是自己发起」（true 和 false 都带）；只在唤醒原因是重试时才有意义。
+  // 旧候选没有这一项，当作未知（照 isSelfWork 的常规规则判断）。
+  retryOfSelfWork: bool.optional(),
   enqueuedAt: timestamp, // 进入队列的时间
   // P63：这次唤醒属于哪个项目主题；旧候选没有这一项，一律当作 null（不属于主题）。
   topicId: recordId('ptp').nullable().optional(),
+  // P74：这次唤醒属于哪件事；旧数据没有这一项，一律当作 null。
+  jobId: recordId('job').nullable().optional(),
 });
 export type QueueEntry = z.infer<typeof QueueEntrySchema>;
 /** 校验一次唤醒从投递到结束的事实，支持幂等交账和故障核对。 */
@@ -38,6 +49,13 @@ export const WakeTicketSchema = z.strictObject({
   reason: WakeReasonSchema, // 为什么需要思考，包含分数、门槛和证据
   subjectKey: nonempty.optional(), // C02：精确保留本次事项键；旧唤醒单兼容缺省，读取时从证据恢复。
   topicId: recordId('ptp').nullable().optional(), // P63：回复要落到哪个项目主题；旧唤醒单没有这一项，一律当作 null。
+  jobId: recordId('job').nullable().optional(), // P74：这次唤醒属于哪件事；旧数据没有这一项，一律当作 null。
+  // P76b：总管在主人发起的回合里派出的活，由队列候选带过来；旧唤醒单没有这一项，一律当作 false。
+  // 用途：区分「员工自己发起的回合」与「总管为主人派出的回合」（selfWorkUsageToday）。
+  chiefDispatch: bool.optional(),
+  ownerDecided: bool.optional(), // P76r1：主人亲手作出决定之后的接续回合，由队列候选带过来；旧唤醒单没有这一项，一律当作 false。
+  retryOfSelfWork: bool.optional(), // P76r1 小修：重试的原回合是不是自己发起的，由队列候选带过来；旧唤醒单没有这一项，当作未知。
+  quotaInterrupted: bool.optional(), // P76r2：这个回合是被额度用完的报错打断的（回合结束时写）；技能记录数「第几次没有提交」时跳过这样的回合。旧唤醒单没有这一项，当作 false。
   dispatchedAt: timestamp.nullable().optional(), // null 明确表示尚未成功投递；缺省兼容旧记录。C04 投递成功时写入真实时刻。
   ownerDirect: bool.optional(), // 是否由已有宿主会话中的主人直聊触发；缺省兼容旧记录
   tokensKnown: bool.optional(), // 宿主是否已经提供实际 token 用量，缺省兼容旧记录

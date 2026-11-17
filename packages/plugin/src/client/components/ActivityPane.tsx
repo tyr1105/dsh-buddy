@@ -3,17 +3,24 @@
  * 每行：时间、头像、文字；按队友与类型筛选；向下「加载更多」。
  */
 import { useState, type ReactNode } from 'react'
-import type { ActivityRow, ActivityView, BotCard } from '../../shared/views.js'
+import type { ActivityView, BotCard } from '../../shared/views.js'
 import { Avatar, EmptyHint, RetryBox, Skeleton } from './Ui.js'
-import { ACTIVITY_KIND_LABELS, activityLine, filterActivity } from '../logic/feeds.js'
+import { ACTIVITY_KIND_LABELS, activityLine, filterActivity, type DrawableActivityKind, type DrawableActivityRow } from '../logic/feeds.js'
 
-function RowView(props: { row: ActivityRow }): ReactNode {
+export function RowView(props: { row: DrawableActivityRow }): ReactNode {
   const r = props.row
   return (
     <li className={`ah-activity-row ah-activity-${r.kind}`}>
       <span className="ah-activity-time">{r.timeText}</span>
       {r.botName ? <Avatar color={r.botColor} initials={r.botName.slice(0, 1)} size={22} /> : <span className="ah-avatar ah-avatar-team" aria-hidden="true">中</span>}
-      <span className="ah-activity-text"><span className="ah-activity-kind">{ACTIVITY_KIND_LABELS[r.kind]}</span>{r.botName ? `${r.botName}：` : ''}{activityLine(r.kind, r.text)}</span>
+      {/* P75k：技能库记录的句子由 core 生成（已带员工名字等），界面原样显示，不再加「{名字}：」前缀；整理一组的细项（lines）在下面逐行缩进显示。 */}
+      <span className="ah-activity-text"><span className="ah-activity-kind">{ACTIVITY_KIND_LABELS[r.kind]}</span>{r.botName && r.kind !== 'skill' ? `${r.botName}：` : ''}{activityLine(r.kind, r.text)}
+        {r.lines !== undefined && r.lines.length > 0 ? (
+          <ul className="ah-activity-lines">
+            {r.lines.map((line, index) => <li key={index}>{line}</li>)}
+          </ul>
+        ) : null}
+      </span>
     </li>
   )
 }
@@ -29,7 +36,7 @@ export function ActivityPane(props: {
   initialBotId?: string | null
 }): ReactNode {
   const [botId, setBotId] = useState(props.initialBotId ?? '')
-  const [kind, setKind] = useState<ActivityRow['kind'] | ''>('')
+  const [kind, setKind] = useState<DrawableActivityKind | ''>('')
   // U01 第 32 轮（3.2.3/3.2.4）：①首屏加载失败时页内给一句原因加「重试」按钮——
   // 旧版只有「刷新试试」一句话，筛选条在本态不渲染，键盘和鼠标都没有出口；
   // ②这块区域的名字与顶栏导航统一叫「动态」，同一目的地不出现两个名字。
@@ -52,7 +59,7 @@ export function ActivityPane(props: {
       <header className="ah-pane-heading"><h2>动态</h2><p>全队唤醒、交账、审批、告警与交接的时间线。</p></header>
       <div className="ah-activity-filters">
         <label>
-          队友
+          员工
           <select value={botId} onChange={e => setBotId(e.target.value)}>
             <option value="">全部</option>
             {props.bots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -60,9 +67,9 @@ export function ActivityPane(props: {
         </label>
         <label>
           类型
-          <select value={kind} onChange={e => setKind(e.target.value as ActivityRow['kind'] | '')}>
+          <select value={kind} onChange={e => setKind(e.target.value as DrawableActivityKind | '')}>
             <option value="">全部</option>
-            {(Object.keys(ACTIVITY_KIND_LABELS) as Array<ActivityRow['kind']>).map(k => (
+            {(Object.keys(ACTIVITY_KIND_LABELS) as DrawableActivityKind[]).map(k => (
               <option key={k} value={k}>{ACTIVITY_KIND_LABELS[k]}</option>
             ))}
           </select>

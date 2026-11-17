@@ -1,22 +1,27 @@
 /**
- * 设置页各分区的内容（P51）：打扰与日报、模型与用量、公共知识库、运行状态。
+ * 设置页各分区的内容（P51；P76k 按方案 7.10.1 精简）。
  *
  * 版式统一成「左边写这一项是什么，右边放控件」的一行一项，取值范围和影响写在说明里，
  * 不再塞进字段名。草稿由 SettingsPane 统一持有，这里只负责显示和上报修改。
  * 知识库的连接测试、全队暂停这些立刻发生的动作，状态留在各自分区内。
+ *
+ * P76k：第一区只剩免打扰与通知方式；第二区只剩默认模型、给你自己留出（三档）、
+ * 员工自己发起的工作（1 到 10），下方是只读的「最近 7 天的用量」表。
+ * 日报时间、两个通知条数上限、每位每天的 token 上限都随机制一起删掉了。
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import type { KnowledgeConnectionState } from '@agent-hub/core'
+import type { KnowledgeConnectionState, WeeklyUsageView } from '@agent-hub/core'
 import type { ModelChoice, OverviewView, SettingsView } from '../../shared/views.js'
 import {
-  BOT_DAILY_TOKEN_MAX, BOT_DAILY_TOKEN_MIN, BOT_DAILY_TOKEN_STEP,
-  BOT_DAILY_TURN_MAX, BOT_DAILY_TURN_MIN, KB_DEFAULT_MAX_BYTES,
-  knowledgeConfigFromDraft, modelSelectOptions, type SettingsDraft,
+  BOT_DAILY_TURN_MAX, BOT_DAILY_TURN_MIN, KB_DEFAULT_MAX_BYTES, QUOTA_SHARE_CHOICES,
+  customShareLabel, knowledgeConfigFromDraft, modelSelectOptions, type SettingsDraft,
 } from '../logic/settings.js'
 import { quotaMeaning } from '../logic/quota.js'
-import { CostMeter } from './cost-meter.js'
 import { ConfirmDialog } from './confirm-dialog.js'
 import { EmptyHint, RetryBox } from './Ui.js'
+
+/** P86：「模型额度」一行在有额度窗口视图时写在数字前的时间范围（登记在 docs/copy/strings.json，编号 SET-71）。 */
+const STATUS_WINDOW_PREFIX = '本窗口全队合计（含你发起的对话，不含项目主题） '
 
 const PUSH_CHANNEL_LABELS: Readonly<Record<string, string>> = { macos: 'macOS 通知', dsh: 'DSH 内通知', none: '不发通知' }
 
@@ -29,8 +34,8 @@ function parseModel(serialized: string): ModelChoice | undefined {
   try { return JSON.parse(serialized) as ModelChoice } catch { return undefined }
 }
 
-/** 一行设置：左边标题和说明，右边控件。窄屏时控件换到下一行。 */
-function Row(props: { label: string; hint?: ReactNode; htmlFor?: string; children: ReactNode }): ReactNode {
+/** 一行设置：左边标题和说明，右边控件。窄屏时控件换到下一行。导出给测试用（测试环境不执行子组件）。 */
+export function Row(props: { label: string; hint?: ReactNode; htmlFor?: string; children: ReactNode }): ReactNode {
   return (
     <div className="ah-set-row">
       <div className="ah-set-row-text">
@@ -46,82 +51,121 @@ export function NotifySection(props: { draft: SettingsDraft; set: SetDraft; sett
   const { draft, set } = props
   return (
     <div className="ah-set-rows">
-      <Row label="免打扰时段" hint="这段时间队友不发通知，紧急告警除外。">
+      <Row label="免打扰时段" hint="这段时间产生的通知，到点后再发。">
         <div className="ah-set-inline" role="group" aria-label="免打扰时段">
           <input aria-label="免打扰开始" type="time" step={300} value={draft.quietStart} onChange={e => set({ quietStart: e.target.value })} />
           <span>到</span>
           <input aria-label="免打扰结束" type="time" step={300} value={draft.quietEnd} onChange={e => set({ quietEnd: e.target.value })} />
         </div>
       </Row>
-      <Row label="日报时间" hint="每天此时间汇总前一天的情况。" htmlFor="ah-set-digest">
-        <input id="ah-set-digest" type="time" step={300} value={draft.digestAt} onChange={e => set({ digestAt: e.target.value })} />
-      </Row>
-      <Row label="通知方式" htmlFor="ah-set-channel">
+      <Row label="通知方式" hint="只有四类事会通知你：要你确认的约定改动；花钱、对外发布、不可撤销的动作；三轮核对不过或做不下去；长时间没有进展。" htmlFor="ah-set-channel">
         <select id="ah-set-channel" value={draft.pushChannel} onChange={e => set({ pushChannel: e.target.value })}>
           {props.settings.pushChannelOptions.map(channel => (
             <option key={channel} value={channel}>{PUSH_CHANNEL_LABELS[channel] ?? channel}</option>
           ))}
         </select>
       </Row>
-      <Row label="全队每天最多通知" hint="可填 0 到 10。紧急告警和日报不占名额。" htmlFor="ah-set-push-all">
-        <div className="ah-set-inline">
-          <input id="ah-set-push-all" type="number" min={0} max={10} value={draft.dailyPushCap} onChange={e => set({ dailyPushCap: e.target.value })} />
-          <span>条</span>
-        </div>
-      </Row>
-      <Row label="每位队友每天最多通知" hint="可填 0 到 3，不能超过全队上限。" htmlFor="ah-set-push-bot">
-        <div className="ah-set-inline">
-          <input id="ah-set-push-bot" type="number" min={0} max={3} value={draft.botDailyPushCap} onChange={e => set({ botDailyPushCap: e.target.value })} />
-          <span>条</span>
-        </div>
-      </Row>
     </div>
   )
+}
+
+/**
+ * 「给你自己留出」三档单选（P76k）。
+ * 当前值不在三档里（旧设置里的自定义份额）时多一项如实显示，选中它不会改掉这个值——
+ * 主人只能在三档里切换，或者保持原样。
+ */
+function quotaShareChoices(current: number): Array<{ value: number; label: string; isDefault: boolean }> {
+  const choices = QUOTA_SHARE_CHOICES.map(choice => ({ ...choice }))
+  if (!choices.some(choice => choice.value === current)) {
+    choices.push({ value: current, label: customShareLabel(current), isDefault: false })
+  }
+  return choices
 }
 
 export function UsageSection(props: {
   draft: SettingsDraft
   set: SetDraft
   settings: SettingsView
-  overview: OverviewView | null
-  loadError?: string | null
-  onRetry: () => void
+  /** P76k：最近 7 天的用量表；旧宿主没有这个接口时为 null（不显示这一块）。 */
+  weeklyUsage: WeeklyUsageView | null
+  weeklyUsageError?: string | null
+  onRetryWeeklyUsage: () => void
 }): ReactNode {
   const { draft, set } = props
   const models = modelSelectOptions(parseModel(draft.defaultModel), props.settings.modelOptions.filter(option => option.value !== null))
+  const share = Number(draft.botQuotaShare)
   return (
     <>
       <div className="ah-set-rows">
-        <Row label="默认模型" hint="新建队友时默认使用，已有队友不受影响。" htmlFor="ah-set-model">
+        <Row label="默认模型" hint="新员工默认使用，已有员工不受影响。" htmlFor="ah-set-model">
           <select id="ah-set-model" value={draft.defaultModel} onChange={e => set({ defaultModel: e.target.value })}>
             <option value="">跟随 DSH 默认</option>
             {/* 当前默认模型已不在宿主目录时补一项如实显示。 */}
             {models.map((option, i) => <option key={i} value={JSON.stringify(option.value) ?? ''}>{option.label}</option>)}
           </select>
-          {props.loadError ? (
-            <p className="ah-settings-error" role="alert">
-              模型列表读取失败：{props.loadError}
-              <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onRetry}>重试</button>
-            </p>
-          ) : null}
         </Row>
-        <Row label="每位队友每天最多自己开工" hint={`可填 ${BOT_DAILY_TURN_MIN} 到 ${BOT_DAILY_TURN_MAX}。主人发消息不计入，试岗队友自动减半。`} htmlFor="ah-set-turns">
-          <div className="ah-set-inline">
-            <input id="ah-set-turns" type="number" min={BOT_DAILY_TURN_MIN} max={BOT_DAILY_TURN_MAX} value={draft.botDailyTurnBudget} onChange={e => set({ botDailyTurnBudget: e.target.value })} />
-            <span>次</span>
+        <Row label="给你自己留出" hint="每个 5 小时额度窗口里，员工不碰这一部分。">
+          <div className="ah-set-inline" role="radiogroup" aria-label="给你自己留出">
+            {quotaShareChoices(share).map(choice => (
+              <label key={choice.value} className="ah-set-radio">
+                <input
+                  type="radio"
+                  name="ah-set-quota-share"
+                  value={String(choice.value)}
+                  checked={Number(draft.botQuotaShare) === choice.value}
+                  onChange={() => set({ botQuotaShare: String(choice.value) })}
+                />
+                <span>{choice.label}{choice.isDefault ? <span className="ah-set-default-tag">默认</span> : null}</span>
+              </label>
+            ))}
           </div>
         </Row>
-        <Row label="每位队友每天最多用" hint="用到上限后，当天不再自己开工，第二天重置。默认 250000。" htmlFor="ah-set-tokens">
+        <Row label="员工自己发起的工作" hint="只管员工没人交代、自己开工的回合。你交代的事按约定里的预计消耗计，复盘与整理另有上限，都不受这一项限制。" htmlFor="ah-set-turns">
           <div className="ah-set-inline">
-            <input id="ah-set-tokens" className="ah-set-wide-number" type="number" min={BOT_DAILY_TOKEN_MIN} max={BOT_DAILY_TOKEN_MAX} step={BOT_DAILY_TOKEN_STEP} value={draft.botDailyTokenBudget} onChange={e => set({ botDailyTokenBudget: e.target.value })} />
-            <span>token</span>
+            <span>每位每天最多</span>
+            <input id="ah-set-turns" type="number" min={BOT_DAILY_TURN_MIN} max={BOT_DAILY_TURN_MAX} value={draft.botDailyTurnBudget} onChange={e => set({ botDailyTurnBudget: e.target.value })} />
+            <span>回合</span>
           </div>
         </Row>
       </div>
-      <p className="ah-set-note">自主节奏在每位队友的「编辑队友」里单独设置。</p>
       {/* 用量明细很长，放在设置项下面，免得把真正要改的项挤到屏幕外。 */}
-      <div className="ah-set-usage"><CostMeter costs={props.overview?.costs} /></div>
+      <WeeklyUsageTable usage={props.weeklyUsage} error={props.weeklyUsageError ?? null} onRetry={props.onRetryWeeklyUsage} />
     </>
+  )
+}
+
+/** 「最近 7 天的用量」只读表（P76k）：表头与每一行都来自 core 的 weeklyUsageView，界面不另算。 */
+export function WeeklyUsageTable(props: { usage: WeeklyUsageView | null; error: string | null; onRetry: () => void }): ReactNode {
+  if (props.usage === null && props.error === null) return null
+  if (props.usage === null) {
+    return (
+      <div className="ah-set-usage" role="region" aria-label="最近 7 天的用量">
+        <h4 className="ah-set-subhead">最近 7 天的用量</h4>
+        <p className="ah-settings-error" role="alert">用量读不出来：{props.error}
+          <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onRetry}>重试</button>
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="ah-set-usage" role="region" aria-label="最近 7 天的用量">
+      <h4 className="ah-set-subhead">最近 7 天的用量</h4>
+      <table className="ah-set-usage-table">
+        <thead>
+          <tr>{props.usage.head.map(cell => <th key={cell} scope="col">{cell}</th>)}</tr>
+        </thead>
+        <tbody>
+          {props.usage.rows.map((row, index) => (
+            <tr key={`${row.label}-${index}`}>
+              <th scope="row">{row.label}</th>
+              <td>{row.turns}</td>
+              <td>{row.estimate}</td>
+              <td>{row.tokens}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -165,7 +209,7 @@ export function KnowledgeSection(props: {
       <div className="ah-set-rows">
 {/* U11 #29：开关 hint 按定稿拆成几句，每行只回答一个问题；
     https 与凭据两句在下面「连接地址」「凭据名称」行各有一条更具体的 hint，不在这里重复。 */}
-        <Row label="启用公共知识库" hint={<>关着：队友看不到知识库，也不会联网。<br />打开：全队能搜、能读，但只能看，权限不变。<br />访问方式还没定，先关着。</>} htmlFor="ah-set-kb-on">
+        <Row label="启用公共知识库" hint={<>关着：员工看不到知识库，也不会联网。<br />打开：全队能搜、能读，但只能看，权限不变。<br />访问方式还没定，先关着。</>} htmlFor="ah-set-kb-on">
           <input id="ah-set-kb-on" type="checkbox" className="ah-set-switch" checked={draft.kbEnabled} onChange={e => set({ kbEnabled: e.target.checked })} />
         </Row>
         {draft.kbEnabled ? (
@@ -213,7 +257,7 @@ export function StatusSection(props: {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
-  // 结果提示只停留几秒：「已暂停全队」一直挂着，会让人以为还在执行。
+  // 结果提示只停留几秒：「已全部停用」一直挂着，会让人以为还在执行。
   useEffect(() => {
     if (note === null || busy) return
     const timer = setTimeout(() => { try { setNote(null) } catch { /* 提示消失失败不影响设置页。 */ } }, 2200)
@@ -246,9 +290,11 @@ export function StatusSection(props: {
           <div className="ah-set-row"><dt>未处理告警</dt><dd>{o.health.openAlerts} 条</dd></div>
           <div className="ah-set-row">
             <dt>模型额度</dt>
-            <dd>{quotaMeaning(o.quota.light).label}，{o.quota.usedText}{o.quota.resetText ? `，${o.quota.resetText}` : ''}</dd>
+            {/* P86：这一行的回合数与 token 是「本窗口内全队」的合计（core 的 quota.usedText：不含项目主题里的回合）；
+                顶栏、总管右侧栏的 token 是「本窗口内员工一侧」（不含你发起的对话和主题回合），范围不同，所以有窗口视图时
+                把时间范围「本窗口」写在数字前，两处各自无歧义。没有窗口视图的旧宿主保持原写法。 */}
+            <dd>{quotaMeaning(o.quota.light).label}，{o.quota.window ? `${STATUS_WINDOW_PREFIX}${o.quota.usedText}` : o.quota.usedText}{o.quota.resetText ? `，${o.quota.resetText}` : ''}</dd>
           </div>
-          <div className="ah-set-row"><dt>今天还能通知</dt><dd>{o.pushesLeftToday} 条</dd></div>
           <div className="ah-set-row"><dt>数据目录</dt><dd className="ah-set-path" title={props.rootDir}>{props.rootDir}</dd></div>
         </dl>
       ) : props.onRetry ? (
@@ -258,21 +304,21 @@ export function StatusSection(props: {
         <EmptyHint text="读不出来。看看 DSH 是不是关了。" />
       )}
       <h4 className="ah-set-subhead">全队操作</h4>
-      <p className="ah-set-note">暂停后所有队友停止自主开工；恢复后继续。两项操作立即生效。</p>
+      <p className="ah-set-note">全部停用后所有在岗员工停止自主开工；全部恢复在岗后继续。两项操作立即生效。</p>
       <div className="ah-settings-actions ah-set-actions">
-        <button type="button" className="ah-btn ah-btn-danger" disabled={busy} onClick={() => setConfirming(true)}>暂停全队</button>
-        <button type="button" className="ah-btn" disabled={busy} onClick={() => void lifecycle(props.onResumeAll, '恢复中', '已恢复。')}>恢复全队</button>
+        <button type="button" className="ah-btn ah-btn-danger" disabled={busy} onClick={() => setConfirming(true)}>全部停用</button>
+        <button type="button" className="ah-btn" disabled={busy} onClick={() => void lifecycle(props.onResumeAll, '恢复中', '已恢复在岗。')}>全部恢复在岗</button>
         {note ? <span className="ah-set-result" role="status">{note}</span> : null}
       </div>
       {confirming ? (
         <ConfirmDialog
-          title="暂停全队"
-          text="全体在岗与试岗队友将暂停自主开工。点击「恢复全队」即可恢复。"
-          confirmText="暂停全队"
+          title="全部停用"
+          text="全体在岗员工将停用，不再自主开工。点击「全部恢复在岗」即可恢复。"
+          confirmText="全部停用"
           busy={busy}
           error={null}
           onCancel={() => { if (!busy) setConfirming(false) }}
-          onConfirm={() => void lifecycle(props.onPauseAll, '暂停中', '已暂停。')}
+          onConfirm={() => void lifecycle(props.onPauseAll, '停用中', '已全部停用。')}
         />
       ) : null}
     </>

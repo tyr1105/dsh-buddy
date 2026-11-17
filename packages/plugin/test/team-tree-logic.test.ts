@@ -171,7 +171,7 @@ describe('展开状态与加号位置', () => {
     expect(tree.teammateGroup.addBot).toEqual({
       groupId: 'teammates',
       anchor: 'group-header',
-      label: '新建队友',
+      label: '新建员工',
     })
   })
 

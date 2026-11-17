@@ -38,6 +38,11 @@ export const LifecycleSchema = z.enum(LIFECYCLES, { error: '请选择有效的Li
 export type Lifecycle = z.infer<typeof LifecycleSchema>;
 export const LIFECYCLE_LABELS: Record<Lifecycle, string> = { 'draft': '草稿', 'probation': '试岗', 'active': '在岗', 'paused': '暂停', 'quarantined': '隔离', 'retired': '退役' };
 
+// P73a：主人看到的员工状态只有三种。存储用的 lifecycle 六种取值不变，由 model/bot.ts 的 staffStatus 合并显示。
+export const STAFF_STATUSES = ['on_duty', 'suspended', 'archived'] as const;
+export type StaffStatus = (typeof STAFF_STATUSES)[number];
+export const STAFF_STATUS_LABELS: Record<StaffStatus, string> = { on_duty: '在岗', suspended: '停用', archived: '归档' };
+
 // 在岗口径：试岗与正式在岗都算在队里，能接活、能读普通资料。取消编制后仍是派活与资料判定的唯一口径。
 export const ON_TEAM_LIFECYCLES = ['probation', 'active'] as const;
 
@@ -192,10 +197,10 @@ export type VerificationLevel = z.infer<typeof VerificationLevelSchema>;
 export const VERIFICATION_LEVEL_LABELS: Record<VerificationLevel, string> = { 'program': '程序验证', 'agent': '机器人验证', 'e2e': '端到端验证', 'none': '未验证' };
 
 // 线程消息的用途，界面据此区分聊天、报告和需要主人处理的消息。
-export const THREAD_KINDS = ['chat', 'reply', 'report', 'question', 'approval', 'proposal', 'alert', 'digest', 'handoff', 'peer', 'system'] as const;
+export const THREAD_KINDS = ['chat', 'reply', 'report', 'question', 'approval', 'proposal', 'alert', 'digest', 'handoff', 'peer', 'system', 'agreement', 'team_question', 'team', 'work', 'job_card'] as const;
 export const ThreadKindSchema = z.enum(THREAD_KINDS, { error: '请选择有效的ThreadKind值' });
 export type ThreadKind = z.infer<typeof ThreadKindSchema>;
-export const THREAD_KIND_LABELS: Record<ThreadKind, string> = { 'chat': '聊天', 'reply': '回复', 'report': '汇报', 'question': '提问', 'approval': '审批', 'proposal': '提议', 'alert': '告警', 'digest': '日报', 'handoff': '交接', 'peer': '同伴消息', 'system': '系统消息' };
+export const THREAD_KIND_LABELS: Record<ThreadKind, string> = { 'chat': '聊天', 'reply': '回复', 'report': '汇报', 'question': '提问', 'approval': '审批', 'proposal': '提议', 'alert': '告警', 'digest': '日报', 'handoff': '交接', 'peer': '同伴消息', 'system': '系统消息', 'agreement': '约定', 'team_question': '组队提问', 'team': '组队卡', 'work': '工作往来', 'job_card': '事务卡' };
 
 // 收件箱只承载需要主人动手的提议、问题、审批或告警。
 export const INBOX_TYPES = ['proposal', 'question', 'approval', 'alert'] as const;
@@ -294,11 +299,11 @@ export type AppraisalDecision = z.infer<typeof AppraisalDecisionSchema>;
 export const APPRAISAL_DECISION_LABELS: Record<AppraisalDecision, string> = { 'woke': '已唤醒', 'queued': '已排队', 'pile': '入待处理堆', 'record_only': '仅记录', 'suppressed': '被拦截' };
 
 // 解释有候选却没有唤醒的具体限制，界面据此展示为什么没醒。
-export const SUPPRESSION_REASONS = ['paused', 'waiting_owner_same_subject', 'waiting_owner', 'cooldown', 'pace_min', 'daily_cap', 'bot_budget', 'quota', 'concurrency', 'dispatch_gap', 'startup_quiet', 'dedup', 'retry_backoff'] as const;
+export const SUPPRESSION_REASONS = ['paused', 'waiting_owner_same_subject', 'waiting_owner', 'cooldown', 'pace_min', 'daily_cap', 'bot_budget', 'quota', 'concurrency', 'dispatch_gap', 'startup_quiet', 'dedup', 'retry_backoff', 'on_demand', 'job_cap', 'job_inactive', 'skill_cap', 'skill_daily_cap', 'skill_expired', 'skill_stale'] as const;
 export const SuppressionReasonSchema = z.enum(SUPPRESSION_REASONS, { error: '请选择有效的SuppressionReason值' });
 export type SuppressionReason = z.infer<typeof SuppressionReasonSchema>;
 // waiting_owner 与 waiting_owner_same_subject 的区别：前者是「还有别的事在等主人，先别自己找事做」，后者是同一事项已被明确丢弃。
-export const SUPPRESSION_REASON_LABELS: Record<SuppressionReason, string> = { 'paused': '已暂停', 'waiting_owner_same_subject': '同一事项等主人', 'waiting_owner': '等主人回复时暂停', 'cooldown': '冷却中', 'pace_min': '未到最短间隔', 'daily_cap': '每日上限', 'bot_budget': '机器人预算', 'quota': '额度保护', 'concurrency': '并发限制', 'dispatch_gap': '放行间隔', 'startup_quiet': '启动静默', 'dedup': '重复事件', 'retry_backoff': '错误退避' };
+export const SUPPRESSION_REASON_LABELS: Record<SuppressionReason, string> = { 'paused': '已停用', 'waiting_owner_same_subject': '同一事项等主人', 'waiting_owner': '等主人回复时暂停', 'cooldown': '冷却中', 'pace_min': '未到最短间隔', 'daily_cap': '每日上限', 'bot_budget': '机器人预算', 'quota': '额度保护', 'concurrency': '并发限制', 'dispatch_gap': '放行间隔', 'startup_quiet': '启动静默', 'dedup': '重复事件', 'retry_backoff': '错误退避', 'on_demand': '听吩咐：没有人点名或派活，不自己行动', 'job_cap': '这件事的回合用到上限', 'job_inactive': '这件事已不需要这次唤醒', 'skill_cap': '这次复盘、技能核对、学习或整理的回合已用完', 'skill_daily_cap': '全队今天的复盘与整理回合已用完', 'skill_expired': '等待超过 7 天，已放弃', 'skill_stale': '这次记录里已没有这位员工要做的事，不再进行' };
 
 // 给主人单独推送所用的通道；none 表示关闭单推。
 export const PUSH_CHANNELS = ['dsh', 'macos', 'none'] as const;

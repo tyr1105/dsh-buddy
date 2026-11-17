@@ -38,14 +38,11 @@ async function ownerFixture() {
 /** 逐个入口使用独立环境，失败时核对原记录，确保校验不会留下半份业务数据。 */
 async function runEntry(entry: string, everyMs: number, weekdays: number[] | null) {
   const expectation = { text: '定期出现日志', everyMs, weekdays };
-  if (entry === 'propose' || entry === 'reflect') {
-    const { ctx, tc, wake } = toolFixture();
+  // P75f：旧复盘交账入口已下线，逐项用例删去 reflect（其余入口照旧）。
+  if (entry === 'propose') {
+    const { ctx, tc } = toolFixture();
     const before = ctx.store.table('watches').list();
-    if (entry === 'reflect') ctx.store.table('wakes').patch(wake.id, { variant: 'reflection' });
-    const result = entry === 'propose'
-      ? await runTool(ctx, tc, 'hub_watch_propose', { ...watchInput, expectation })
-      : await runTool(ctx, tc, 'hub_reflect_commit', { summary: '调整检查日', lessons: [], routineUpdates: [],
-        watchChanges: [{ ...watchInput, expectation }] });
+    const result = await runTool(ctx, tc, 'hub_watch_propose', { ...watchInput, expectation });
     if (!result.ok) expect(ctx.store.table('watches').list()).toEqual(before);
     return result;
   }
@@ -72,7 +69,7 @@ describe('M09 检查段计算与 M11 单日间隔上限', () => {
     expect(() => ExpectationSchema.parse({ ...value, everyMs: length * 24 * hour + 1 })).toThrow('everyMs 必须小于 24 小时');
   });
 
-  it.each(['propose', 'createBot', 'upsertWatch', 'reflect'])('%s 共享中文拒绝与边界允许规则且失败不落表', async entry => {
+  it.each(['propose', 'createBot', 'upsertWatch'])('%s 共享中文拒绝与边界允许规则且失败不落表', async entry => {
     const rejected = await runEntry(entry, 24 * hour, [1, 3, 5]);
     expect(rejected).toMatchObject({ ok: false, error: expect.stringContaining('weekdays 不为空时 everyMs 必须小于 24 小时；每个检查日一份请用 byLocalTime（例如每天 08:20 前）') });
     expect(await runEntry(entry, 24 * hour - 1, [1, 3, 5])).toMatchObject({ ok: true });

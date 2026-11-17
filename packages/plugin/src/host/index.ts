@@ -308,7 +308,8 @@ async function startEngine(ctx: any, rootDir: string, facade: LazyHubFacade, eng
 
   // M07/D06：打断按钮经路由命令 interruptBot 直接交给 core（取消、线程消息、恢复
   // 感知都由 core 完成），插件不自己 cancel、不写系统消息。
-  real = new RealHubFacade(hub, store)
+  // P74r4b：传入 rootDir，宿主打开预览之前据此确认目标在中心的预览目录之内。
+  real = new RealHubFacade(hub, store, rootDir)
   facade.setImpl(real)
   console.log(`[agent-hub] 引擎已启动 rootDir=${rootDir}`)
 }

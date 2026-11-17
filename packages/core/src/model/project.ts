@@ -95,7 +95,7 @@ export const ProjectContextSourceSchema = z.enum(PROJECT_CONTEXT_SOURCES, {
 export type ProjectContextSource = z.infer<typeof ProjectContextSourceSchema>;
 export const PROJECT_CONTEXT_SOURCE_LABELS: Record<ProjectContextSource, string> = {
   owner_edit: '主人编辑',
-  bot_proposal: '采纳队友建议',
+  bot_proposal: '采纳员工建议',
   owner_bot: '负责人更新',
 };
 
@@ -200,12 +200,13 @@ export const TaskStatusSchema = z.enum(TASK_STATUSES, {
 });
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  todo: '待办',
-  doing: '进行中',
+  // P74a（裁定 16）：与「一件事」的状态词统一，只改显示文字，存储值不变。
+  todo: '待开工',
+  doing: '执行中',
   blocked: '受阻',
-  done_pending_check: '待验收',
-  accepted: '已通过',
-  rejected: '已驳回',
+  done_pending_check: '待你验收',
+  accepted: '已完成',
+  rejected: '返工中',
 };
 
 /**

@@ -25,10 +25,12 @@ export * from './office/index.js';
 export * from './gate/index.js';
 export * from './outreach/index.js';
 export * from './memory/index.js';
-export * from './routines/index.js';
+export * from './migrate/p75-storage.js';
 export * from './peer/index.js';
 export * from './reflect/index.js';
 export * from './tools/index.js';
+export * from './team/index.js';
+export * from './job/index.js';
 
 export * from './engine/hub.js';
 export * from './api/index.js';

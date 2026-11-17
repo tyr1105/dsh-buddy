@@ -79,7 +79,8 @@ describe('C03 不可信围栏的 UTF8 配额', () => {
     ], 6144, 10, 5);
     expect(byteLength(packet)).toBeLessThanOrEqual(6144);
     for (const id of [...agendaIds, ...evidenceIds]) expect(packet).toContain(`[${id}]`);
-    expect(packet).toContain('untrusted>>＞');
+    // P75r6 同步（第 7 节）：围栏标记的转义写法由「把最后一个字符换成全角」改为整段换成「〔围栏标记已转义〕」；原意（伪造的结束标记被转义、不成对）不变。
+    expect(packet).toContain('〔围栏标记已转义〕');
     expect(packet.match(/\nuntrusted>>>/g)).toHaveLength(1);
   });
 });

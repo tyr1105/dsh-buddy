@@ -18,6 +18,7 @@ import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { isBotOnTeam } from '../org/access.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { newId } from '../util/ids.js';
+import { resolveBotRef } from '../peer/common.js';
 import { requireProjectOwnerBot } from './owner-rules.js';
 import { OWNER_SETTABLE_TASK_STATUSES, explainOwnerStatusChange } from './task-state.js';
 
@@ -27,7 +28,8 @@ export const OwnerTaskUpsertSchema = z.strictObject({
   taskId: recordId('pt').optional(),
   title: nonempty.trim().min(1, '事务标题不能为空').max(120, '事务标题不能超过 120 字').optional(),
   detail: text.trim().max(2000, '事务说明不能超过 2000 字').optional(),
-  assigneeBotId: recordId('b').nullable().optional(),
+  // P72j：写员工名字或机器人 id 都可以，进入服务层后统一解析成 id。
+  assigneeBotId: nonempty.nullable().optional(),
   status: z.enum(OWNER_SETTABLE_TASK_STATUSES, {
     error: '状态必须是 todo（待办）、doing（进行中）、blocked（受阻）、done_pending_check（待确认）或 accepted（已完成）之一',
   }).optional(),
@@ -38,8 +40,8 @@ export type OwnerTaskUpsertInput = z.infer<typeof OwnerTaskUpsertSchema>;
 /** 校验跟进人：必须是项目成员且在岗，派给叫不醒的人等于没派。 */
 function requireAssignee(ctx: HubContext, memberBotIds: readonly string[], botId: string): void {
   const bot = ctx.store.table('bots').get(botId);
-  if (!bot || !memberBotIds.includes(botId)) throw new Error(`assigneeBotId：跟进人必须是项目成员：${botId}`);
-  if (!isBotOnTeam(bot)) throw new Error(`assigneeBotId：队友「${bot.name}」现在不在岗，请换一位成员跟进`);
+  if (!bot || !memberBotIds.includes(botId)) throw new Error(`assigneeBotId：跟进人必须是项目成员：${bot?.name ?? botId}`);
+  if (!isBotOnTeam(bot)) throw new Error(`assigneeBotId：员工「${bot.name}」现在不在岗，请换一位成员跟进`);
 }
 
 /**
@@ -47,7 +49,11 @@ function requireAssignee(ctx: HubContext, memberBotIds: readonly string[], botId
  * currentTopicId 是当前回合所在的主题：聊着聊着写下来的事，默认归到这个主题，owner 不用自己传。
  */
 export function upsertTaskByOwner(ctx: HubContext, botId: string, raw: unknown, currentTopicId: string | null = null): { task: ProjectTask; created: boolean } {
-  const input = parseInput(OwnerTaskUpsertSchema, raw, '事务更新');
+  const parsed = parseInput(OwnerTaskUpsertSchema, raw, '事务更新');
+  // P72j：跟进人可写名字或 id，先统一解析成机器人 id，后面的闸门和成员、在岗校验都按 id 走。
+  const input = typeof parsed.assigneeBotId === 'string'
+    ? { ...parsed, assigneeBotId: resolveBotRef(ctx, parsed.assigneeBotId, 'assigneeBotId', botId).id }
+    : parsed;
   const project = ctx.store.table('projects').get(input.projectId);
   if (!project) throw new Error(`项目不存在：${input.projectId}`);
   requireProjectOwnerBot(project, botId);
@@ -57,6 +63,12 @@ export function upsertTaskByOwner(ctx: HubContext, botId: string, raw: unknown, 
   if (input.taskId && !existing) throw new Error(`taskId：事务不存在：${input.taskId}`);
   if (existing && existing.projectId !== project.id) throw new Error(`taskId：事务不属于项目「${project.name}」`);
   if (!existing && !input.title) throw new Error('title：新建事务必须写标题');
+  // P74b：总管不能把事务指派给别人，派活只有 hub_job_manage 的 assign 一条路（指派给自己、不指派、只改状态或标题都不拦；
+  // 非总管的项目负责人不受影响，他们指派的是项目里的记账）。
+  if (typeof input.assigneeBotId === 'string' && input.assigneeBotId !== botId && input.assigneeBotId !== existing?.assigneeBotId
+    && ctx.store.table('bots').get(botId)?.role === 'chief') {
+    throw new Error('派活用 hub_job_manage 的 assign。');
+  }
   if (!existing && ctx.store.table('projectTasks').count(task => task.projectId === project.id) >= V2_DEFAULTS.PROJECT_TASK_MAX) {
     throw new Error(`单个项目任务不能超过 ${V2_DEFAULTS.PROJECT_TASK_MAX} 个，请先清理不用的任务`);
   }

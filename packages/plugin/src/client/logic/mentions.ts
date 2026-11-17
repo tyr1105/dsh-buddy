@@ -7,6 +7,7 @@
  * 项目会话的候选名单也能用固定输入单测钉死。
  */
 import type { BotCard, ProjectViewRow } from '../../shared/views.js'
+import { isArchivedBot } from './lifecycle.js'
 
 /** @ 菜单里的一项：只带画菜单需要的最小字段。 */
 export interface MentionMember {
@@ -37,7 +38,7 @@ export function mentionMembers(
     seen.add(member.botId)
     if (member.botId === excludeBotId) continue
     const bot = byId.get(member.botId)
-    if (bot === undefined || bot.lifecycle === 'retired') continue
+    if (bot === undefined || isArchivedBot(bot)) continue
     out.push({ botId: bot.id, name: bot.name, color: bot.color, initials: bot.initials })
   }
   return out

@@ -65,7 +65,7 @@ export function topicReplyFields(topic: ProjectTopic): { topicId: string; ownerI
     ownerInitiated: true,
     // 主人可能在「待你处理」里答，也可能直接点主题里的卡片答，这里不写在哪答的。
     summary: `主人回复了你在主题「${title}」里提的事，接着做`,
-    ownerSummary: `按你的回复接着做主题「${title}」`,
+    ownerSummary: `按你的回复继续处理主题「${title}」`,
   };
 }
 
@@ -73,10 +73,15 @@ export function topicReplyFields(topic: ProjectTopic): { topicId: string; ownerI
  * 主题里那句旁白（提问、建议）：说清主人怎么处理的。
  * 标题和回答都截短，完整内容在卡片上；审批的旁白直接用审批结果那句「你批准了：……」。
  */
-export function followUpNoteText(item: Pick<InboxItem, 'type' | 'title'>, answer: string): string {
+export function followUpNoteText(item: Pick<InboxItem, 'type' | 'title'>, answer: string, ownerNote = ''): string {
   const title = clip(item.title, V2_DEFAULTS.TOPIC_FOLLOWUP_TITLE_CHARS);
   // 主题里对建议一直叫「建议」（「它提了 N 条建议」），这里沿用同一个叫法。
-  if (item.type === 'proposal') return answer === '接受' ? `你接受了建议「${title}」。` : `你没有采纳建议「${title}」。`;
+  // P79：主人答复提议时附了一句话，接在原句后面；没有附言时与原来逐字相同。
+  if (item.type === 'proposal') {
+    const base = answer === '接受' ? `你接受了建议「${title}」。` : `你没有采纳建议「${title}」。`;
+    // P74i-m4（第 4 节）：这句旁白里已经用「你」称呼主人，附言写成「（你说：……）」，不再出现第三人称「主人说」。
+    return ownerNote === '' ? base : `${base}（你说：${ownerNote}）`;
+  }
   return `你回答了「${title}」：${clip(answer, V2_DEFAULTS.TOPIC_FOLLOWUP_ANSWER_CHARS)}`;
 }
 

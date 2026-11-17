@@ -9,15 +9,16 @@
 import type {
   Lifecycle, ProjectBackgroundView, ProjectPathView, ProjectStatus, ProjectView, ProjectViewRow, Role,
 } from '../../shared/views.js'
+import { isArchivedBot } from './lifecycle.js'
 
 /** 一个项目都没有时的说明。 */
-export const PROJECT_EMPTY_TEXT = '还没有项目。点「＋ 新项目」，起个名字，把队友拉进来。'
+export const PROJECT_EMPTY_TEXT = '还没有项目。点「＋ 新项目」，起个名字，把员工拉进来。'
 /** 项目背景还是空的时候的说法。 */
 export const PROJECT_BACKGROUND_EMPTY_TEXT = '还没有项目背景。负责人会随项目推进写在这里，也可以点「编辑」先写几句。'
 /** 事务清单还是空的时候的说法。 */
 export const PROJECT_TASKS_EMPTY_TEXT = '还没有事务。新开一条会话说说诉求，负责人会把要做的事列在这里。'
 /** 成员名单还是空的时候的说法。 */
-export const PROJECT_MEMBERS_EMPTY_TEXT = '还没有队友。点「编辑」把队友拉进来，并选一位负责人。'
+export const PROJECT_MEMBERS_EMPTY_TEXT = '还没有员工。点「编辑」把员工拉进来，并选一位负责人。'
 
 /** 项目名列表的一行：从跳转面板进来、还没选项目时用。 */
 export interface ProjectPickRow {
@@ -46,7 +47,7 @@ export interface ProjectMemberRow {
 export function projectMemberRows(row: ProjectViewRow): ProjectMemberRow[] {
   const rows = row.members.map((member): ProjectMemberRow => ({
     botId: member.botId,
-    name: member.invalid || member.name === null ? '队友已删除或退役' : member.name,
+    name: member.invalid || member.name === null ? '员工已删除或归档' : member.name,
     roleLabel: member.invalid ? null : member.roleLabel,
     isOwner: member.isOwner,
     invalid: member.invalid,
@@ -85,13 +86,36 @@ export function backgroundMetaText(background: ProjectBackgroundView): string | 
 /** 「项目文件路径」的一行。 */
 export interface ProjectPathRow {
   label: string
+  /** 完整路径：只给复制按钮和悬停提示用，不铺在正文里。 */
   value: string
+  /** 正文显示：目录名加结尾 `/`；没设置时是「未设置」。 */
+  display: string
+  /** 悬停提示=完整路径；没设置时不挂提示。 */
+  title?: string
+}
+
+/**
+ * 把完整路径收成人话（U05）：正文只留最后一段目录名并补结尾 `/`，
+ * 完整路径放进 title；纯空白算「未设置」，根路径照实显示 `/`。
+ * 兼容 `/` 与 `\` 两种分隔符，结尾多写的分隔符先忽略。
+ */
+export function workspaceDirDisplay(fullPath: string): { display: string; title?: string } {
+  const trimmed = fullPath.trim()
+  if (trimmed === '') return { display: '未设置' }
+  const withoutTrailing = trimmed.replace(/[\\/]+$/, '')
+  const parts = withoutTrailing.split(/[\\/]/)
+  const last = parts[parts.length - 1] ?? ''
+  // 根路径（`/` 或 `\`）没有目录名，照实显示，不伪装成「未设置」。
+  if (last === '') return { display: trimmed, title: trimmed }
+  return { display: `${last}/`, title: trimmed }
 }
 
 /** 文件路径：工作目录和共享目录现在是同一个，相同时只列一行，免得看起来像两个地方。 */
 export function projectPathRows(path: ProjectPathView): ProjectPathRow[] {
-  if (path.workspaceDir === path.sharedDir) return [{ label: '项目目录', value: path.workspaceDir }]
-  return [{ label: '工作目录', value: path.workspaceDir }, { label: '共享目录', value: path.sharedDir }]
+  const rows = path.workspaceDir === path.sharedDir
+    ? [{ label: '项目目录', value: path.workspaceDir }]
+    : [{ label: '工作目录', value: path.workspaceDir }, { label: '共享目录', value: path.sharedDir }]
+  return rows.map(row => ({ ...row, ...workspaceDirDisplay(row.value) }))
 }
 
 /** 编辑弹窗底部的项目状态动作：命令和成功提示都在这里，页面照表画按钮。 */
@@ -142,7 +166,7 @@ export function botOptions(
   const byId = new Map<string, BotOption>()
   const retired = new Set<string>()
   for (const bot of bots) {
-    if (bot.lifecycle === 'retired') retired.add(bot.id)
+    if (isArchivedBot(bot)) retired.add(bot.id)
     else byId.set(bot.id, { botId: bot.id, name: bot.name, lifecycle: bot.lifecycle, role: bot.role })
   }
   for (const row of view?.projects ?? []) {

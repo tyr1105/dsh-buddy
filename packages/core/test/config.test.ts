@@ -1,8 +1,9 @@
 /** 设置与默认数值测试：检查深合并、非法配置、各角色节奏和试岗预算，不启动引擎。 */
 import { describe, expect, it } from 'vitest';
-import { DEFAULTS, botBudgetFor, dailyThinkCapFor, paceMaxMsFor, paceMinMsFor, resolveSettings, thresholdFor, turnLimitsFor } from '../src/config/defaults.js';
+import { DEFAULTS, paceMaxMsFor, paceMinMsFor, resolveSettings, thresholdFor, turnLimitsFor } from '../src/config/defaults.js';
+import * as defaultsModule from '../src/config/defaults.js';
 import { SettingsSchema } from '../src/model/settings.js';
-import { AUTONOMIES, VARIANTS } from '../src/model/enums.js';
+import { VARIANTS } from '../src/model/enums.js';
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -87,22 +88,17 @@ describe('纯配置辅助函数', () => {
     expect(paceMaxMsFor(true, defaults)).toBe(48 * hour);
     expect(paceMaxMsFor(false, defaults)).toBe(7 * day);
   });
-  it.each(AUTONOMIES)('试岗的 %s 按 L1 每日上限', autonomy => {
-    expect(dailyThinkCapFor(autonomy, 'probation', defaults)).toBe(6);
-    expect(dailyThinkCapFor(autonomy, 'active', defaults)).toBe({ L0: 2, L1: 6, L2: 10, L3: 12 }[autonomy]);
-  });
-  it('试岗按覆盖后的 L1 上限计算', () => {
-    expect(dailyThinkCapFor('L3', 'probation', resolveSettings({ dailyThinkCapByAutonomy: { L1: 4 } }))).toBe(4);
-  });
-  it('在岗预算正常，试岗减半并对窗口回合向下取整', () => {
-    expect(botBudgetFor('active', defaults)).toEqual({ dailyTurns: 6, dailyTokens: 250000, windowTurns: 3 });
-    expect(botBudgetFor('probation', defaults)).toEqual({ dailyTurns: 3, dailyTokens: 125000, windowTurns: 1 });
-  });
-  it('试岗预算允许覆盖且向下取整', () => {
-    expect(botBudgetFor('probation', resolveSettings({ botDailyTurnBudget: 7, botDailyTokenBudget: 101, botWindowTurnBudget: 5 }))).toEqual({ dailyTurns: 3, dailyTokens: 50, windowTurns: 2 });
+  // P76c：原来这里有 7 条用例（试岗按 L1 每日思考上限 4 个自主等级共 4 条、按覆盖后的 L1 上限、在岗预算与试岗减半、试岗预算覆盖且向下取整），
+  // 测的是 dailyThinkCapFor、botBudgetFor 两个函数。两个函数已随「员工自己发起的工作只剩一条上限」删除（每日思考上限、试岗减半、每日 token、
+  // 每窗口回合都已取消），所以这些用例对应的事情已不存在，整体删除；下面一条证明替代它们的事实：每天上限只剩设置里的一个数。
+  it('每天上限只剩 botDailyTurnBudget 一个数（默认 2）；原来的两个计算函数已不存在', () => {
+    expect(defaults.botDailyTurnBudget).toBe(2);
+    expect(resolveSettings({ botDailyTurnBudget: 5 }).botDailyTurnBudget).toBe(5);
+    expect((defaultsModule as Record<string, unknown>).dailyThinkCapFor).toBeUndefined();
+    expect((defaultsModule as Record<string, unknown>).botBudgetFor).toBeUndefined();
   });
   it.each([...VARIANTS, 'owner'] as const)('%s 返回正确回合限制且返回值不污染设置', variant => {
-    const expected = { regular: [30, 20, 60000], light_check: [5, 5, 15000], reflection: [20, 15, 40000], catch_up: [30, 20, 60000], trial: [30, 20, 60000], teach: [30, 20, 60000], owner: [40, 30, 80000] }[variant];
+    const expected = { regular: [30, 20, 60000], light_check: [5, 5, 15000], reflection: [20, 15, 40000], catch_up: [30, 20, 60000], trial: [30, 20, 60000], teach: [30, 20, 60000], owner: [40, 30, 300000] }[variant];
     const limits = turnLimitsFor(variant, defaults);
     expect(limits).toEqual({ steps: expected[0], durationMs: expected[1]! * minute, tokens: expected[2] });
     limits.steps = 999;

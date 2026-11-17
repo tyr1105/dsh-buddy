@@ -2,9 +2,9 @@
  * 账本行截断（纯函数）：保证单行不超过硬上限，同时保留最先发生的事实。
  *
  * 为什么需要：一次唤醒可能产生很多动作或很长的交账。账本不负责存档完整输出，
- * 只负责指路；超过 8 KB 时宁可少记后面的动作并标「已截断」，也不让一行撑爆存储
- * 或拖慢界面。截断规则固定、可测试：先截字段长度，再从尾部丢动作、证据、
- * 世界变化和引用。
+ * 只负责指路；超过 16 KiB 时宁可少记细节并标「已截断」，也不让一行撑爆存储
+ * 或拖慢界面。截断规则固定、可测试：先截字段长度，仍超限先把较长的返回文字从最早的动作开始截回 160 字，
+ * 还不够才从尾部丢动作、证据、世界变化和引用。
  */
 import { V2_DEFAULTS } from '../config/defaults.js';
 import { WakeLedgerEntrySchema, type WakeLedgerEntry } from '../model/wake-ledger.js';
@@ -16,6 +16,11 @@ export interface CappedLedger {
   bytes: number;
   /** 是否发生过任何截断。 */
   truncated: boolean;
+}
+
+/** 这条动作的返回文字能不能用放宽后的上限：只有名字以 hub_ 开头的 DSH 工具（中心自己的工具）。 */
+export function hasLongDetail(action: Pick<WakeLedgerEntry['actions']['items'][number], 'kind' | 'name'>): boolean {
+  return action.kind === 'dsh_tool' && action.name.startsWith('hub_');
 }
 
 /** 实际存储大小：按 UTF-8 字节，和落盘文件一致。 */
@@ -65,7 +70,14 @@ export function capLedgerEntry(
     entry.actions.items = entry.actions.items.slice(0, V2_DEFAULTS.LEDGER_ACTION_MAX);
     truncated = true;
   }
-  entry.actions.items = entry.actions.items.map(action => ({ ...action, detail: clip(action.detail) }));
+  // P74r16a、P74r16c：只有中心自己的工具（名字以 hub_ 开头，返回文字里有中心的提示，核对时要看全）的返回文字
+  // 用更长的上限（800 字）；其余动作和其余工具的摘要仍是 detailMaxChars（160 字）。
+  entry.actions.items = entry.actions.items.map(action => {
+    if (!hasLongDetail(action)) return { ...action, detail: clip(action.detail) };
+    const next = clipLedgerText(action.detail, V2_DEFAULTS.LEDGER_TOOL_RESULT_MAX_CHARS);
+    if (next !== action.detail) truncated = true;
+    return { ...action, detail: next };
+  });
   if (entry.decision) {
     entry.decision = {
       ...entry.decision,
@@ -85,8 +97,18 @@ export function capLedgerEntry(
   }));
   if (entry.result.refs.length > 20) { entry.result.refs = entry.result.refs.slice(0, 20); truncated = true; }
 
-  // 第二层：仍超限就从尾部丢整条，直到能装下或只剩不可再删的骨架。
+  // 第二层（P74r16c 起分两步）：
+  // 第一步：仍超限时，先把这一行里超过 detailMaxChars 的返回文字逐条截回 detailMaxChars，
+  // 从最早的动作开始，截到不超限为止（长文字只是细节，动作本身——尤其最新的动作——比它重要）。
   let bytes = withMeasuredBytes(entry);
+  for (let index = 0; index < entry.actions.items.length && bytes > maxBytes; index += 1) {
+    const action = entry.actions.items[index]!;
+    if ([...action.detail].length <= detailMaxChars) continue;
+    entry.actions.items[index] = { ...action, detail: clipLedgerText(action.detail, detailMaxChars) };
+    truncated = true;
+    bytes = withMeasuredBytes(entry);
+  }
+  // 第二步：仍然超限，才从尾部丢整条，直到能装下或只剩不可再删的骨架。
   while (bytes > maxBytes) {
     if (entry.actions.items.length > 0) entry.actions.items.pop();
     else if (entry.evidence.items.length > 0) entry.evidence.items.pop();

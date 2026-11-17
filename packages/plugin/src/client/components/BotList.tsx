@@ -1,11 +1,11 @@
 /**
- * 左栏：团队行（未读数）+「队友」分组树（头像、名字、角色、活动一行省略、未读红点、
+ * 左栏：「队友」分组树（头像、名字、角色、活动一行省略、未读红点、
  * waitingOwner 时「等你」标签、成员项目子行），分组标题右侧常驻「新建队友」加号，
  * 底部「收件箱」入口。
+ * P71：「团队全景」行已删掉。本组件目前没有页面引用（左栏已改用 team-sidebar-nav），文件按规矩不删，交主人决定。
  */
 import { useState, type ReactNode } from 'react'
-import type { BotCard, OverviewView, ProjectViewRow } from '../../shared/views.js'
-import { UnreadBadge } from './Ui.js'
+import type { OverviewView, ProjectViewRow } from '../../shared/views.js'
 import { TeamTree } from './TeamTree.js'
 
 export function BotList(props: {
@@ -24,45 +24,31 @@ export function BotList(props: {
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
   const bots = props.overview.bots.filter(b => `${b.name} ${b.roleLabel}`.toLowerCase().includes(q))
-  // 线程 id 与真引擎一致：团队线程是 'team'，机器人线程就是它的 id（core thread() 的约定）。
+  // 线程 id 与真引擎一致：机器人线程就是它的 id（core thread() 的约定）。
   const threadOf = (botId: string) => botId
   return (
-    <nav className="ah-botlist" aria-label="队友列表">
+    <nav className="ah-botlist" aria-label="员工列表">
       {/* 标题与右侧动作共用一个槽位（P27）：计数与「新建队友」加号保持同一间距；
           P37 起加号常驻这里，队友再多也不用到页面里找入口。 */}
       <div className="ah-botlist-head">
-        <span>队友</span>
+        <span>员工</span>
         <span className="ah-botlist-head-actions">
           <span>{props.overview.bots.length} 位</span>
           {props.onNewBot ? (
-            <button type="button" className="ah-botlist-add" aria-label="新建队友" title="新建队友" onClick={props.onNewBot}>＋</button>
+            <button type="button" className="ah-botlist-add" aria-label="新建员工" title="新建员工" onClick={props.onNewBot}>＋</button>
           ) : null}
         </span>
       </div>
-      <input className="ah-bot-search" aria-label="搜索队友" placeholder="搜索名字或角色" value={query} onChange={e => setQuery(e.target.value)} />
+      <input className="ah-bot-search" aria-label="搜索员工" placeholder="搜索名字或角色" value={query} onChange={e => setQuery(e.target.value)} />
       <div className="ah-botlist-rows">
-      <button
-        type="button"
-        className={`ah-bot-row${props.selected === 'team' ? ' ah-selected' : ''}`}
-        onClick={() => props.onSelect('team')}
-      >
-        <span className="ah-avatar ah-avatar-team" aria-hidden="true">B</span>
-        <span className="ah-bot-row-main">
-          <span className="ah-bot-row-name">团队全景</span>
-          {/* WCAG 1.4.12：单行预览在用户加大字距/词距后会更早省略，全文经 title 悬停可取；
-              与个人队友行（TeamTree）同一口径，团队行不能例外。 */}
-          <span className="ah-bot-row-activity" title={props.overview.team.lastMessageText ?? '全队的汇报与提问均汇总于此。'}>{props.overview.team.lastMessageText ?? '全队的汇报与提问均汇总于此。'}</span>
-        </span>
-        <UnreadBadge count={props.overview.team.unread} />
-      </button>
       <TeamTree
         bots={bots}
         projects={props.projects ?? null}
-        selectedBotId={props.selected !== '' && props.selected !== 'team' ? props.selected : null}
+        selectedBotId={props.selected !== '' ? props.selected : null}
         onSelectBot={(id) => props.onSelect(threadOf(id))}
         onOpenProject={props.onOpenProject}
       />
-      {bots.length === 0 ? <p className="ah-empty">{q ? '暂无匹配队友。请更换搜索词。' : '暂无队友。点击上方「＋」新建。'}</p> : null}
+      {bots.length === 0 ? <p className="ah-empty">{q ? '暂无匹配员工。请更换搜索词。' : '暂无员工。点击上方「＋」新建。'}</p> : null}
       </div>
       <div className="ah-botlist-footer">
         {props.notice ? <p className="ah-empty" role="alert">{props.notice}</p> : null}

@@ -11,7 +11,8 @@
  * - 项目只挂在它是成员的项目下，不额外造项目实体；
  * - 新建队友加号的位置写在分组元数据里，组件不写死。
  */
-import type { Activity, Lifecycle, ProjectStatus } from '../../shared/views.js'
+import type { Activity, Lifecycle, ProjectStatus, StaffStatus } from '../../shared/views.js'
+import { isArchivedBot } from './lifecycle.js'
 
 /** 队友树上需要的最小字段，来自 OverviewView.bots；不直接依赖整个视图。 */
 export interface TeamTreeBotInput {
@@ -20,11 +21,15 @@ export interface TeamTreeBotInput {
   color: string
   initials: string
   lifecycle: Lifecycle
+  /** P73f：员工状态；有它时归档以它为准，旧调用方不传则按 lifecycle 的 retired 判断。 */
+  staffStatus?: StaffStatus
   activity: Activity
   unread: number
   waitingOwner: boolean
   /** 最近一次活动时间；没有记录给 null，排序时沉到有记录的人后面。 */
   lastActiveAt: number | null
+  /** P72：角色；未退役的总管永远排第一。旧调用方不传则按原规则排。 */
+  role?: string
 }
 
 /** 项目树上需要的最小字段；成员用队友 id，编制移除后不再有席位概念。 */
@@ -76,6 +81,8 @@ export interface TeamTreeBotNode {
   color: string
   initials: string
   lifecycle: Lifecycle
+  /** P73f：是否已归档（旧的「已退役」判断统一为归档）。 */
+  archived: boolean
   activity: Activity
   unread: number
   waitingOwner: boolean
@@ -95,12 +102,12 @@ export interface TeamTreeOfficeNode extends TeamTreeOfficeInput {
 export interface TeamTreeAddBotAction {
   groupId: 'teammates'
   anchor: 'group-header'
-  label: '新建队友'
+  label: '新建员工'
 }
 
 export interface TeamTreeGroup {
   id: 'teammates'
-  title: '队友'
+  title: '员工'
   addBot: TeamTreeAddBotAction
   bots: TeamTreeBotNode[]
 }
@@ -113,7 +120,7 @@ export interface TeamTree {
 export const TEAM_TREE_ADD_BOT: TeamTreeAddBotAction = {
   groupId: 'teammates',
   anchor: 'group-header',
-  label: '新建队友',
+  label: '新建员工',
 }
 
 /** 项目状态排序：进行中在前，归档沉底；同状态再按名字。 */
@@ -132,8 +139,12 @@ const PROJECT_STATUS_RANK: Record<ProjectStatus, number> = {
  * 4. id 兜底，保证完全同名的队友也有稳定顺序。
  */
 function compareBots(a: TeamTreeBotInput, b: TeamTreeBotInput): number {
-  const aRetired = a.lifecycle === 'retired' ? 1 : 0
-  const bRetired = b.lifecycle === 'retired' ? 1 : 0
+  // P72：未退役的总管（全队入口）排在所有人前面。
+  const aChief = a.role === 'chief' && !isArchivedBot(a) ? 0 : 1
+  const bChief = b.role === 'chief' && !isArchivedBot(b) ? 0 : 1
+  if (aChief !== bChief) return aChief - bChief
+  const aRetired = isArchivedBot(a) ? 1 : 0
+  const bRetired = isArchivedBot(b) ? 1 : 0
   if (aRetired !== bRetired) return aRetired - bRetired
   if (a.lastActiveAt !== b.lastActiveAt) {
     if (a.lastActiveAt === null) return 1
@@ -201,6 +212,7 @@ export function buildTeamTree(input: TeamTreeInput): TeamTree {
       color: bot.color,
       initials: bot.initials,
       lifecycle: bot.lifecycle,
+      archived: isArchivedBot(bot),
       activity: bot.activity,
       unread: bot.unread,
       waitingOwner: bot.waitingOwner,
@@ -222,7 +234,7 @@ export function buildTeamTree(input: TeamTreeInput): TeamTree {
     },
     teammateGroup: {
       id: 'teammates',
-      title: '队友',
+      title: '员工',
       addBot: TEAM_TREE_ADD_BOT,
       bots,
     },

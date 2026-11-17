@@ -81,7 +81,7 @@ describe('F12 项目任务段', () => {
     expect(result.section.title).toContain('你手上的项目任务');
     expect(body).toContain('写竞品报告');
     expect(body).toContain('项目「季度战役」');
-    expect(body).toContain('进行中');
+    expect(body).toContain('执行中'); // P74a：事务状态词改名
     expect(body).toContain('引用 3 个公开来源（验证：链接可打开）');
     expect(body).not.toContain('已经做完的事');
     expect(body).toContain(project.sharedDir);

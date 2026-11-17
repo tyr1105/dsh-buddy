@@ -44,10 +44,10 @@ describe('F17 resourceView 只读视图', () => {
     expect(view.resources.map(r => r.resource.id)).toEqual([r2.id, r1.id]);
     const activeRow = view.resources[0]!;
     expect(activeRow.kindLabel).toBe('文件');
-    expect(activeRow.sensitivityLabel).toBe('指定队友可读');
+    expect(activeRow.sensitivityLabel).toBe('指定员工可读');
     expect(activeRow.archived).toBe(false);
     expect(activeRow.grants[0]).toMatchObject({
-      resourceName: '机密预算', subjectKindLabel: '队友', subjectName: '分析师', levelLabel: '读写',
+      resourceName: '机密预算', subjectKindLabel: '员工', subjectName: '分析师', levelLabel: '读写',
     });
   });
 

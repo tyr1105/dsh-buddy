@@ -128,17 +128,17 @@ describe('F12 assignTask 反例', () => {
     // 新建一条待办任务且不指派：不传队友时没有可沿用的承接人。
     const free = saveTask(ctx, { projectId: task.projectId, title: '没人接' });
     expect(() => assignTask(ctx, { taskId: free.id }))
-      .toThrow('任务还没有承接队友');
+      .toThrow('任务还没有承接员工');
   });
 
   it('队友不存在、已退役、不是项目成员 → 分别中文拒绝', () => {
     const ctx = createTestContext();
     const { outsiderBot, task } = setup(ctx);
     expect(() => assignTask(ctx, { taskId: task.id, botId: 'b_0000000099' }))
-      .toThrow('队友不存在或已退役');
+      .toThrow('员工不存在或已归档');
     const retired = putBot(ctx, 'b_0000000004', '退役队友', 'retired');
     expect(() => assignTask(ctx, { taskId: task.id, botId: retired.id }))
-      .toThrow('队友不存在或已退役');
+      .toThrow('员工不存在或已归档');
     expect(() => assignTask(ctx, { taskId: task.id, botId: outsiderBot.id }))
       .toThrow('不是项目成员');
   });
@@ -150,7 +150,7 @@ describe('F12 assignTask 反例', () => {
     // 直接加入成员名单，模拟队友在项目里但被暂停。
     ctx.store.table('projects').patch(project.id, { memberBotIds: [...project.memberBotIds, paused.id] });
     expect(() => assignTask(ctx, { taskId: task.id, botId: paused.id }))
-      .toThrow('只有在岗或试岗的队友能接活');
+      .toThrow('只有在岗或试岗的员工能接活');
   });
 
   it('队友未完成议程达上限 → 中文拒绝', () => {

@@ -42,19 +42,33 @@ it('额度红灯空队列到期只保留许可，下一件真实工作作为唯�
   await world.host.settle();
   const red = world.store.table('quota').get('quota')!;
   expect(red.light).toBe('red');
-  expect(world.store.table('queue').count()).toBe(0);
+  // P76r1（4b）同步：原来这里断言队列为空（主人的第一句话被额度报错打断后什么都不排）；现在队列里保留着它的候选，
+  // 带「主人发起」、理由写「额度用完，恢复后继续上一轮的事」、最早放行时刻是恢复时刻（不按出错退避）。
+  const kept = world.store.table('queue').list();
+  expect(kept).toHaveLength(1);
+  expect(kept[0]).toMatchObject({ ownerInitiated: true, notBefore: red.redUntil });
+  expect(kept[0]!.reason).toMatchObject({ kind: 'retry', summary: '额度用完，恢复后继续上一轮的事' });
   world.host.registerBrain(botId, quietBrain);
   await advance(world, red.redUntil! - world.clock.now());
-  expect(world.store.table('wakes').list()).toHaveLength(1);
-  expect(world.store.table('quota').get('quota')).toMatchObject({ light: 'red', probeAllowed: true, probeInFlight: false });
+  // 原来断言「只有 1 个回合、红灯只保留许可」；现在恢复时刻一到，保留的这一句作为唯一的探针回合放行（原意不变：恢复时只放一个探针、没有按出错退避的重试）。
+  const afterProbe = world.store.table('wakes').list();
+  expect(afterProbe).toHaveLength(2);
+  expect(afterProbe[1]!.reason).toMatchObject({ kind: 'retry', summary: '额度用完，恢复后继续上一轮的事' });
+  expect(afterProbe[1]!.ownerInitiated).toBe(true);
+  expect(world.store.table('queue').count()).toBe(0);
+  await world.host.settle();
+  // 主人收到了这一句的回复（探针回合的回复落在对话线程里）。
+  expect(world.store.log('thread').all().some(message => message.from === botId && message.thread === botId)).toBe(true);
+  expect(world.store.table('quota').get('quota')!.light).toBe('green');
+  // 之后再发一句，照常处理。
   await world.hub.api.sendMessage(botId, '核对新收到的一份资料');
   await world.host.settle();
   const wakes = world.store.table('wakes').list();
-  expect(wakes).toHaveLength(2);
-  expect(wakes[1]!.reason).toMatchObject({ kind: 'owner_message', summary: '主人发来消息' });
+  expect(wakes).toHaveLength(3);
+  expect(wakes[2]!.reason).toMatchObject({ kind: 'owner_message', summary: '主人发来消息' });
   expect(world.host.turns.at(-1)?.packet).toContain('核对新收到的一份资料');
-  expect(wakes[1]!.reason.evidence.length).toBeGreaterThan(0);
-  expect(wakes.some(w => w.reason.kind === 'retry')).toBe(false);
+  expect(wakes[2]!.reason.evidence.length).toBeGreaterThan(0);
+  expect(wakes.filter(w => w.reason.kind === 'retry')).toHaveLength(1);
   expect(world.store.table('quota').get('quota')!.light).toBe('green');
 });
 
@@ -66,7 +80,8 @@ it('界面命令保存失败明确返回错误，仍保留脏数据并可在后�
   const result = await hub.api.createBot({ name: '检查员', role: 'sentinel', persona: '核对事实', aspirations: ['保持资料准确'] });
   expect(result).toMatchObject({ ok: false });
   expect('error' in result && result.error).toContain('保存失败');
-  expect(ctx.store.table('bots').count()).toBe(1);
+  // P73c：启动时中心自动建了一位总管，所以保存失败后内存里是 2 位（总管加刚创建的检查员）。
+  expect(ctx.store.table('bots').count()).toBe(2);
   expect(ctx.store.isDirty()).toBe(true);
   await hub.onOwnerActivity(ctx.clock.now());
   expect(flush).toHaveBeenCalledTimes(2);
@@ -108,8 +123,8 @@ it('探针运行期间重建 Hub，结束事件仍按持久投递身份解除红
   const red = world.store.table('quota').get('quota')!;
   world.host.registerBrain(botId, async () => ({ hang: true }));
   await advance(world, red.redUntil! - world.clock.now());
-  expect(world.store.table('quota').get('quota')).toMatchObject({ probeAllowed: true, probeInFlight: false });
-  await world.hub.api.sendMessage(botId, '处理下一份真实材料并验证连接');
+  // P76r1（4b）同步：原来此刻只有「许可」（probeAllowed），要再发一句话才有探针；现在主人第一句话被保留的候选在恢复时刻就是探针，
+  // 所以此刻探针已在途（probeInFlight 为真），不再需要第二句话。之后重建 Hub、结束事件解除红灯的原意不变。
   await world.host.settle();
   expect(world.store.table('quota').get('quota')).toMatchObject({ light: 'red', redUntil: red.redUntil, probeAllowed: false, probeInFlight: true });
   await world.hub.stop();

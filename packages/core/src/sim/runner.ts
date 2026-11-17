@@ -54,9 +54,12 @@ export async function createSimWorld(input: SimWorldInput) {
     host.registerBrain(bot.id, inputBot.brain ?? quietBrain);
     await createBotHome(setupContext, bot);
   }
-  const hub = createHub({ host, clock, rng, fs, net, exec, logger, store, settings });
+  const hub = createHub({ host, clock, rng, fs, net, exec, logger, store, settings, normalizeStaffOnStart: false, teamSetupOnStart: false });
   host.attach(hub);
   const world = { hub, store, clock, fs, net, exec, host, logger, rng, settings, startAt };
+  // P73a：启动整理会把执行类员工统一成听吩咐。仿真里 bots 是场景指定的初始数据，
+  // 各场景要验证的是主动节奏、额度、补课等行为，所以仿真世界的 Hub 不做启动整理（含场景里的停止后重启）；
+  // 启动整理本身由 test/p73a-normalize.test.ts 单独验证。
   await hub.start();
   await host.settle();
   return world;

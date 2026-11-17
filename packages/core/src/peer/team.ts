@@ -6,7 +6,13 @@ import { formatDuration } from '../util/time.js';
 import { recordPercept } from '../perception/percept.js';
 import { buildCandidate } from '../appraisal/think.js';
 import { enqueue } from '../scheduler/queue.js';
+import { TEAM_SIGNAL_SUBJECT_PREFIX } from '../scheduler/on-demand.js';
 import { auditTool } from '../tools/common.js';
+import { isJobClosed } from '../job/store.js';
+/** 这位员工是不是某件没收尾的事（没有完成、没有停止）的总管、执行者或核对人。 */
+function isJobParticipant(ctx: HubContext, botId: string): boolean {
+    return ctx.store.table('jobs').count(job => !isJobClosed(job) && (job.executorId === botId || job.reviewerId === botId || job.chiefId === botId)) > 0;
+}
 /** 汇总各机器人当前状态、等待对象和超时交接，供总管了解团队实际进度。 */
 export function teamSummary(ctx: HubContext): string {
     const now = ctx.clock.now();
@@ -45,11 +51,13 @@ export function checkTeamSignals(ctx: HubContext, now: number): void {
         refId: string;
     }> = [];
     for (const bot of ctx.store.table('bots').list()) {
-        if (bot.activity === 'blocked' && now - blockedSince(ctx, bot.id, now) >= ctx.settings.c03.blockedChiefAfterMs)
+        // P76g：员工是某件没收尾的事的参与者时，卡住由那件事自己的停滞判断（job/stall-check.ts）通知主人，
+        // 不再重复给总管发「卡住超过 24 小时」的信号；与一件事无关的员工卡住照旧发。
+        if (bot.activity === 'blocked' && !isJobParticipant(ctx, bot.id) && now - blockedSince(ctx, bot.id, now) >= ctx.settings.c03.blockedChiefAfterMs)
             facts.push({ key: `blocked:${bot.id}:${blockedSince(ctx, bot.id, now)}`, summary: `${bot.name} 卡住超过 24 小时：${bot.activityText}`, refId: bot.id });
         const quarantineEvent = ctx.store.log('audit').recent(1, a => a.action === 'quarantine_event' && a.detail === bot.id && a.at <= now)[0];
         if (bot.lifecycle === 'quarantined')
-            facts.push({ key: `quarantined:${bot.id}:${quarantineEvent?.id ?? bot.updatedAt}`, summary: `${bot.name} 已隔离：${bot.quarantineReason ?? '安全保护'}`, refId: bot.id });
+            facts.push({ key: `quarantined:${bot.id}:${quarantineEvent?.id ?? bot.updatedAt}`, summary: `${bot.name} 已停用：${bot.quarantineReason ?? '安全保护'}`, refId: bot.id });
     }
     for (const h of ctx.store.table('handoffs').list(h => h.status === 'offered' && now - h.createdAt >= ctx.settings.handoffWaitingMs))
         facts.push({ key: `handoff:${h.id}`, summary: `交接「${h.task}」超过接收时限`, refId: h.id });
@@ -58,12 +66,17 @@ export function checkTeamSignals(ctx: HubContext, now: number): void {
             const key = `${chief.id}:${fact.key}`;
             if (ctx.store.log('audit').all().some(a => a.action === 'chief_signal' && a.detail === key))
                 continue;
+            let queued = false;
             const percept = recordPercept(ctx, { botId: chief.id, watchId: null, source: 'system', kind: 'team_attention', summary: fact.summary,
                 location: fact.refId, fingerprintMaterial: key, magnitude: 1, anomaly: false, untrusted: false, occurredAt: now });
             if (percept) {
                 const score = percept.salience;
-                enqueue(ctx, buildCandidate(ctx, { botId: chief.id, kind: 'percept', score, summary: fact.summary, evidence: [percept.id], subjectKey: fact.key }));
+                // P73r3 S2：事项键带团队信号前缀，听吩咐的总管不会因它被入队总闸挡住；directed 让它入队时不看思考门槛。
+                queued = enqueue(ctx, buildCandidate(ctx, { botId: chief.id, kind: 'percept', score, summary: fact.summary, evidence: [percept.id],
+                    subjectKey: `${TEAM_SIGNAL_SUBJECT_PREFIX}${fact.key}` }), { directed: true }) !== null;
             }
-            auditTool(ctx, chief.id, 'chief_signal', key);
+            // 只有真正入队了才记为已处理，否则下次检查还要再试。
+            if (queued)
+                auditTool(ctx, chief.id, 'chief_signal', key);
         }
 }

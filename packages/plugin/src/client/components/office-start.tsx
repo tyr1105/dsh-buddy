@@ -7,9 +7,9 @@ import { officeStartState } from '../logic/office.js'
 export function FirstTeammate(props: { onNewBot?: () => void }): ReactNode {
   const [error, setError] = useState<string | null>(null)
   return (
-    <section className="ah-office-start" aria-label="新建第一位队友">
-      <h3>新建第一位队友</h3>
-      <p>队友持续观察变化，满足条件时执行。汇报留在会话里；需要你回复或批准时，会出现在「待你处理」。</p>
+    <section className="ah-office-start" aria-label="新建第一位员工">
+      <h3>新建第一位员工</h3>
+      <p>员工持续观察变化，满足条件时执行。汇报留在会话里；需要你回复或批准时，会出现在「待你处理」。</p>
       <dl className="ah-office-guide">
         <div><dt>座位和灯</dt><dd>谁在做事、谁在等待</dd></div>
         <div><dt>桌上的结果</dt><dd>点开看这次做了什么</dd></div>
@@ -18,9 +18,9 @@ export function FirstTeammate(props: { onNewBot?: () => void }): ReactNode {
       {props.onNewBot ? (
         <button type="button" className="ah-btn ah-btn-primary" onClick={() => {
           try { setError(null); props.onNewBot?.() } catch { setError('新建向导打开失败。请重试。') }
-        }}>新建队友</button>
+        }}>新建员工</button>
       ) : null}
-      <p className="ah-office-start-note">创建后先试跑。之后可点名字对话。</p>
+      <p className="ah-office-start-note">创建后可点名字对话。</p>
       {error ? <p role="alert">{error}</p> : null}
     </section>
   )

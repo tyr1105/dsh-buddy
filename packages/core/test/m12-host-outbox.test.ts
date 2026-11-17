@@ -4,6 +4,7 @@ import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { createBotHome } from '../src/memory/files.js';
 import { submitOutbox, executeReadyOutbox } from '../src/gate/outbox.js';
 import { consumeTicket, decideApproval, requestApproval } from '../src/gate/approvals.js';
+import { hostCommandRiskNote } from '../src/gate/host-writable.js';
 import { OutboxActionSchema, type OutboxAction } from '../src/model/outreach.js';
 import { resolveSettings } from '../src/config/defaults.js';
 import { buildTools, runTool } from '../src/tools/index.js';
@@ -14,7 +15,8 @@ import { botFixture } from './model-fixtures.js';
 import { toolFixture } from './c03-tool-fixtures.js';
 
 const response = { code: 0, stdout: '已完成', stderr: '', timedOut: false };
-const warning = '这条命令在受限沙箱内运行，只能写家目录、共享目录和系统临时目录。看不懂就拒绝。';
+// P74r13 第 13 节改了预期：末句原为「看不懂就拒绝。」；P74r18b 同步（4.2）：这句话改由可写清单生成（点名员工；研究员不在任何项目里，不写「项目文件夹」）。
+const warning = hostCommandRiskNote('研究员', false);
 const reason = '脚本在批准后被改动';
 const commands = [
   { cmd: 'python3', args: ['work/x.py'] },
@@ -81,7 +83,8 @@ describe('M12 中心命令一律需要主人批准', () => {
     ctx.store.table('bots').patch(bot.id, { autonomy: 'L3' });
     ctx.settings = resolveSettings({ rootDir: '/hub', l3Grants: [grant] });
     const command = grant === 'send_message' ? input(bot.homeDir, 'say', ['完成'])
-      : grant === 'high_risk' ? input(bot.homeDir, 'rm', ['-rf', '/outside/obsolete'])
+      // P74r18b 同步（4.3）：要删的路径原是 /outside/obsolete（可写范围之外，提交时会被直接拒绝）；改成可写范围内的 /tmp 下，高风险（D 类）的性质不变。
+      : grant === 'high_risk' ? input(bot.homeDir, 'rm', ['-rf', '/tmp/obsolete'])
       : grant === 'run_command' ? input(bot.homeDir, 'custom-cli', ['run']) : input(bot.homeDir);
     const row = await submitOutbox(ctx, bot.id, command);
     expect(row).toMatchObject({ status: 'pending_approval', approvalId: expect.any(String) });
@@ -236,7 +239,7 @@ describe('M12 批准绑定实际文件内容', () => {
     await executeReadyOutbox(ctx);
     expect(ctx.exec.calls).toHaveLength(0);
     expect(ctx.store.table('outbox').get(row.id)).toMatchObject({ status: 'rejected', executionStarted: false, ownerFailureReason: reason });
-    const expected = `未执行你批准的：运行命令 python3 work/x.py（原因：${reason}）`;
+    const expected = `未执行你批准的：请中心代为运行一条命令（原因：${reason}）`;
     expect(resultMessages(ctx, row).map(message => message.text)).toEqual([expected]);
     const ticket = ctx.store.table('approvals').get(row.approvalId!)!;
     expect(ticket.status).not.toBe('approved');

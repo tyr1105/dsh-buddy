@@ -10,15 +10,21 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { BotCard, PresetSkillOption } from '../../shared/views.js'
 import {
   BOT_TEMPLATE_GROUPS, TEMPLATE_BLOCK_LABELS, defaultDetailTemplate, liveBots, pickWholeGroup, templateBlock, templateById,
-  templateDetailRows, templateDetailTitle, templateMeta, templatesInGroup, toggleTemplatePick,
+  templateDetailRows, templateDetailTitle, templateMeta, templatePickSummary, templatesInGroup, toggleTemplatePick,
   type BotTemplate, type BotTemplateGroupId,
 } from '../logic/bot-templates.js'
+import { PersonalityLines } from './PersonalityLines.js'
+
+/** P73e：弹窗顶部那一行，把不确定要谁的人引回总管。 */
+export const TEMPLATE_BANNER_TEXT = '不确定要谁？关掉这里，直接告诉总管你要做什么，由它推荐。'
 
 export function BotTemplatePicker(props: {
   /** 完整名册：退役和归档的也要传，名字占用和人数上限都按它算。 */
   existingBots: readonly BotCard[]
   /** 技能中文名来自这里；清单没加载时详情里不显示技能那一行。 */
   presetSkillOptions: readonly PresetSkillOption[]
+  /** 轻档是否可用（模型目录里有轻量模型）：决定卡片底部写「轻档」还是「标准档」；不传按可用处理。 */
+  lightAvailable?: boolean
   submitting: boolean
   error: string | null
   onAdd: (templates: readonly BotTemplate[]) => void
@@ -32,7 +38,8 @@ export function BotTemplatePicker(props: {
   const firstCardRef = useRef<HTMLButtonElement | null>(null)
 
   // 打开或从表单退回来时，把焦点放到第一张卡片：这一屏的主要动作就是选卡片。
-  useEffect(() => { firstCardRef.current?.focus() }, [])
+  // 聚焦失败只是焦点不在第一张卡上，不影响选择（与本插件其他聚焦处同一兜底）。
+  useEffect(() => { try { firstCardRef.current?.focus() } catch { /* 聚焦失败不影响选择。 */ } }, [])
 
   const group = BOT_TEMPLATE_GROUPS.find(item => item.id === groupId)!
   const cards = templatesInGroup(groupId)
@@ -55,19 +62,22 @@ export function BotTemplatePicker(props: {
 
   // 提示只给第一次用的人；已经有队友的人不需要被告知从哪开始。
   const firstTime = liveBots(props.existingBots).length === 0 && groupId === 'product'
+  // P73e：选了人时写「已选 N 位：…。添加后在册 M / 6 位。不另跑试用，第一件事就是试用。」
   const summary = picked.length > 0
-    ? `已选 ${picked.length} 位：${picked.map(template => template.name).join('、')}`
+    ? templatePickSummary(picked, liveBots(props.existingBots).length)
     : firstTime ? '第一次用，先选带「推荐」的两位：一个做事，一个挑毛病。' : ''
 
   return (
     <>
       {/* 弹窗是独立表面（背景已 inert 剪枝），标题从 h2 起，大纲不跳级（WCAG 1.3.1）。 */}
       <header className="ah-wizard-head">
-        <h2>新建队友</h2>
+        <h2>从模板库添加员工</h2>
         <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onClose} disabled={props.submitting}>关闭</button>
       </header>
 
       <div className="ah-template-body">
+        {/* P73e：顶部一行提示，把不确定要谁的人引回总管。 */}
+        <p className="ah-template-banner">{TEMPLATE_BANNER_TEXT}</p>
         <p className="ah-template-lead">选几位，一键加进来。名字和设定之后都能改。</p>
         <div className="ah-template-tabs" role="group" aria-label="按部门看模板">
           {BOT_TEMPLATE_GROUPS.map(item => {
@@ -97,7 +107,7 @@ export function BotTemplatePicker(props: {
                 {isPicked ? <span className="ah-wizard-role-check" aria-hidden="true">已选</span> : null}
                 <strong>{template.name}{template.recommended ? <em className="ah-template-recommend">推荐</em> : null}</strong>
                 <span>{template.tagline}</span>
-                <small className="ah-template-meta">{block !== null ? TEMPLATE_BLOCK_LABELS[block] : templateMeta(template)}</small>
+                <small className="ah-template-meta">{block !== null ? TEMPLATE_BLOCK_LABELS[block] : templateMeta(template, props.lightAvailable ?? true)}</small>
               </button>
             )
           })}
@@ -107,7 +117,7 @@ export function BotTemplatePicker(props: {
           <p className="ah-template-detail-title">{templateDetailTitle(detail)}</p>
           <dl className="ah-template-kv">
             {templateDetailRows(detail, props.presetSkillOptions).map((row, index) => (
-              <div key={`${row.label}-${index}`}><dt>{row.label}</dt><dd>{row.value}</dd></div>
+              <div key={`${row.label}-${index}`}><dt>{row.label}</dt><dd>{row.value}{row.lines !== undefined && row.lines.length > 0 ? <PersonalityLines lines={row.lines} /> : null}</dd></div>
             ))}
           </dl>
         </section>
@@ -116,12 +126,11 @@ export function BotTemplatePicker(props: {
       <div className="ah-template-foot">
         {/* 选中人数变化时读屏会念这一行；空内容也要留着节点，状态区必须先存在。 */}
         <p className="ah-template-summary" role="status">{summary}</p>
-        <p className="ah-wizard-note">每位加入后先试跑一次，消耗模型额度。</p>
         {props.error !== null ? <p className="ah-settings-error" role="alert">{props.error}</p> : null}
         <footer className="ah-dialog-actions ah-template-actions">
           <button type="button" className="ah-btn" onClick={props.onCustom} disabled={props.submitting}>自己从头配置</button>
           <button type="button" className="ah-btn ah-btn-primary" disabled={picked.length === 0 || props.submitting} onClick={() => props.onAdd(picked)}>
-            {props.submitting ? '添加中…' : picked.length > 0 ? `添加 ${picked.length} 位队友` : '添加队友'}
+            {props.submitting ? '添加中…' : picked.length > 0 ? `添加 ${picked.length} 位员工` : '添加员工'}
           </button>
         </footer>
       </div>

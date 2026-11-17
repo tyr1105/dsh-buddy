@@ -6,7 +6,6 @@ import { BotSchema } from '../model/bot.js';
 import { parseInput } from '../engine/validation.js';
 import { nonempty } from '../model/primitives.js';
 import { sha256Hex } from '../util/hash.js';
-import { truncateBytes } from '../util/text.js';
 import { localDateKey, localParts } from '../util/time.js';
 import { checkQuarantine, quarantine } from '../health/quarantine.js';
 import { postThread } from '../outreach/thread.js';
@@ -14,6 +13,15 @@ import { loadThreadReadState } from '../outreach/read-state.js';
 import { writeOutreachAudit, readAuditDetail } from '../outreach/audit.js';
 import { renderBotAgentsMd, renderRootAgentsMd, renderMindFiles } from './render.js';
 import { syncPresetSkills } from './preset-skills.js';
+import { syncSelfSkills, verifyManagedSkillFiles } from '../skill/files.js';
+import { legacyRulesInEffect } from './memory-read.js';
+
+/**
+ * P75f 迁移完成后 memory/MEMORY.md 的固定内容：长期记忆并入技能库与全队记忆，这个文件不再使用。
+ * 迁移收尾把原文件备份到 {rootDir}/.hub/legacy/{botId}/MEMORY.md 后改写成这一句；
+ * 回合结束核对（verifyManagedSkillFiles 的 includeMemory）把它恢复成这一句。
+ */
+export const LEGACY_MEMORY_NOTICE = '长期记忆已并入技能库与全队记忆，本文件不再使用。';
 /** 校验并取得机器人档案，让文件操作只针对中心名册中存在的身份。 */
 function botById(ctx: HubContext, botId: string): Bot {
     const bot = ctx.store.table('bots').get(parseInput(nonempty, botId, 'botId'));
@@ -52,8 +60,9 @@ export async function createBotHome(ctx: HubContext, input: Bot): Promise<void> 
     for (const path of ['', 'mind', 'memory/journal', 'playbooks', '.agents/skills', 'work'])
         await ctx.fs.mkdirp(posix.join(bot.homeDir, path), { within: bot.homeDir });
     const memoryPath = posix.join(bot.homeDir, 'memory/MEMORY.md');
+    // P75f：长期记忆拆入记忆与技能库，新员工不再写「# 长期记忆」那两行，直接写停用说明。
     if (await ctx.fs.readText(memoryPath) === null)
-        await ctx.fs.writeTextAtomic(memoryPath, '# 长期记忆\n\n只记录已经确认、适合长期保留的事实与经验。\n', { within: bot.homeDir });
+        await ctx.fs.writeTextAtomic(memoryPath, `${LEGACY_MEMORY_NOTICE}\n`, { within: bot.homeDir });
     await refreshBotFiles(ctx, bot.id);
     // P40：家目录建好后立刻物化主人在向导里勾选的预置 skill；空数组时什么都不写。
     await syncPresetSkills(ctx, bot);
@@ -79,6 +88,17 @@ async function refreshFiles(ctx: HubContext, botId: string): Promise<void> {
     await ctx.fs.writeTextAtomic(posix.join(ctx.settings.rootDir, '.hub', 'protected-files', `${bot.id}.json`), JSON.stringify(files));
     if (JSON.stringify(previous) !== JSON.stringify(hashes))
         writeOutreachAudit(ctx, 'protected_files', { files: hashes }, bot.id);
+    // P75e：自己积累的技能文件与预置技能并列物化（在用的写入、收起的删除；内容不同才写）。
+    // 出错只记日志，下次刷新补上，不影响身份文件的基线。
+    try { await syncSelfSkills(ctx, bot); } catch (error) { ctx.logger.warn('自己积累技能文件同步失败', { botId: botId, error: String(error) }); }
+}
+/** P75e：回合结束核对中心维护的三处（技能目录、playbooks 的搬走、MEMORY.md 由 P75f 接）；与保护核验共用同一把文件锁。不计越界。 */
+export async function verifyManagedFiles(ctx: HubContext, botId: string): Promise<void> {
+    await withFileLock(ctx, botId, async () => {
+        const bot = botById(ctx, botId);
+        // P75f：迁移完成后（旧规矩表不再读）MEMORY.md 也纳入核对；迁移完成前还由员工使用，不核。
+        try { await verifyManagedSkillFiles(ctx, bot, !legacyRulesInEffect(ctx)); } catch (error) { ctx.logger.warn('中心维护文件核对失败', { botId, error: String(error) }); }
+    });
 }
 /** 在同一机器人文件锁内核验保护文件，避免并发合法刷新被误判为篡改。 */
 export async function verifyProtectedFiles(ctx: HubContext, botId: string): Promise<string[]> {
@@ -121,10 +141,6 @@ async function verifyFiles(ctx: HubContext, botId: string): Promise<string[]> {
             quarantine(ctx, botId, reason);
     }
     return changed;
-}
-/** 读取长期记忆并按字节预算截断，避免记忆正文挤占唤醒包。 */
-export async function readMemorySummary(ctx: HubContext, bot: Bot): Promise<string> {
-    return truncateBytes(await ctx.fs.readText(posix.join(bot.homeDir, 'memory/MEMORY.md')) ?? '尚无长期记忆。', ctx.settings.memorySummaryMaxBytes);
 }
 /** 交账按上海日期追加，幂等键采用 commit.id，恢复重试不会写两段相同日志。 */
 export async function appendJournal(ctx: HubContext, bot: Bot, commit: Commit, ticket: WakeTicket): Promise<void> {

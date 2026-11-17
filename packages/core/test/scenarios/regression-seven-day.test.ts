@@ -39,7 +39,9 @@ function regressionBrain(): Brain {
 
 /** 构建回归世界：一个机器人、一个文件关注项、一个目标，以及固定节奏的世界变化。 */
 async function buildWorld(): Promise<SimWorld> {
-  const world = await createSimWorld({ bots: bots(1), startAt, seed });
+  // 显式设为 6：七天行为指纹（回合数、间隔、理由分布）是按每天 6 个自己发起的回合固化的，本场景证明的是行为稳定，与默认值无关（P76b 加，P76c 保留）。
+  // P76c 对快照的改动只有两处：日报不再推送，指纹里的 digests 由 8 变 0、notifications 由每天一条（共 8 条）变为空；其余字段一字未动。
+  const world = await createSimWorld({ bots: bots(1), startAt, seed, settings: { botDailyTurnBudget: 6 } });
   addGoal(world, botId);
   addWatch(world, { botId, kind: 'file', target: `${world.settings.rootDir}/shared/${botId}.txt` });
   world.host.registerBrain(botId, regressionBrain());

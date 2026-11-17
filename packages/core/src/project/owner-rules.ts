@@ -23,7 +23,7 @@ export function pickDefaultOwnerId(members: readonly Bot[]): string | null {
 /** 建议风格只提意见不动手，负责人要拆事、拍板，所以不能当；不合规时抛中文错误。 */
 export function assertOwnerEligible(bot: Pick<Bot, 'name' | 'role'>): void {
   if (bot.role === 'advisor') {
-    throw new Error(`队友「${bot.name}」是建议风格，只提意见不动手，不能当项目负责人，请换一位`);
+    throw new Error(`员工「${bot.name}」是建议风格，只提意见不动手，不能当项目负责人，请换一位`);
   }
 }
 

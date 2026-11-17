@@ -5,8 +5,8 @@
 import { describe, expect, it } from 'vitest'
 import type { HubState } from '../src/client/hub-state.js'
 import {
-  canRequestById, exitMissingSelection, isMissingFromRoster, isMissingTopic, nextGoneIds, nextGoneTopicIds, rosterIds,
-  shouldExitSelection, shouldExitTopicSelection, TEAM_THREAD_ID,
+  canRequestById, exitMissingSelection, isMissingFromRoster, isMissingTopic, isNoThread, landingSurface, LEGACY_TEAM_THREAD_ID,
+  nextGoneIds, nextGoneTopicIds, NO_THREAD, rosterIds, shouldExitSelection, shouldExitTopicSelection,
 } from '../src/client/logic/missing-teammate.js'
 import { DisabledHub } from '../src/host/real-hub.js'
 import type { OverviewView, ProjectView } from '../src/shared/views.js'
@@ -50,8 +50,9 @@ describe('isMissingFromRoster：名册明确说没有', () => {
     const overview = { bots: [{ id: 'b_old', lifecycle: 'retired', archived: true }] } as unknown as OverviewView
     expect(isMissingFromRoster('b_old', overview)).toBe(false)
   })
-  it('反例：团队线程不是队友，名册空着也不算', () => {
-    expect(isMissingFromRoster(TEAM_THREAD_ID, roster())).toBe(false)
+  it('反例：「没有选中」（含旧数据里已下线的团队线程，P71）不是队友，名册空着也不算', () => {
+    expect(isMissingFromRoster(NO_THREAD, roster())).toBe(false)
+    expect(isMissingFromRoster(LEGACY_TEAM_THREAD_ID, roster())).toBe(false)
   })
   it('反例：名册不可用时一律不下结论', () => {
     expect(isMissingFromRoster('b_gone', null)).toBe(false)
@@ -88,8 +89,8 @@ describe('shouldExitSelection：这份名册落地后要不要退出', () => {
   it('反例：名册里有它', () => {
     expect(shouldExitSelection({ ...check, roster: roster('b_1') })).toBe(false)
   })
-  it('反例：选中的是团队线程', () => {
-    expect(shouldExitSelection({ ...check, selectedThread: TEAM_THREAD_ID })).toBe(false)
+  it('反例：现在没有选中任何对话（P71 前这里是团队线程）', () => {
+    expect(shouldExitSelection({ ...check, selectedThread: NO_THREAD })).toBe(false)
   })
   it('反例：这份名册比选中旧，可能只是队友刚建好', () => {
     expect(shouldExitSelection({ ...check, selectedAfterRequest: true })).toBe(false)
@@ -107,14 +108,15 @@ describe('canRequestById：现在能不能按 id 请求', () => {
   it('正例：名册已到，它没被判定消失', () => {
     expect(canRequestById(check)).toBe(true)
   })
-  it('正例：团队线程任何时候都可以', () => {
-    expect(canRequestById({ ...check, id: TEAM_THREAD_ID, selectedThread: TEAM_THREAD_ID, rosterLoaded: false })).toBe(true)
+  it('反例（P71）：没有选中、旧数据里的团队线程，都没有对话可拉，名册到没到都不请求', () => {
+    expect(canRequestById({ ...check, id: NO_THREAD, selectedThread: NO_THREAD })).toBe(false)
+    expect(canRequestById({ ...check, id: LEGACY_TEAM_THREAD_ID, selectedThread: LEGACY_TEAM_THREAD_ID, rosterLoaded: false })).toBe(false)
   })
   it('正例：名册没到，但这是主人刚点选的（来自名册或刚新建），不用等', () => {
     expect(canRequestById({ ...check, rosterLoaded: false, selectedThisSession: true })).toBe(true)
   })
   it('正例：名册没到，但问的不是当前选中，没有「本地恢复」的疑问', () => {
-    expect(canRequestById({ ...check, selectedThread: TEAM_THREAD_ID, rosterLoaded: false })).toBe(true)
+    expect(canRequestById({ ...check, selectedThread: NO_THREAD, rosterLoaded: false })).toBe(true)
   })
   it('反例：名册已确认它不存在', () => {
     expect(canRequestById({ ...check, goneIds: new Set(['b_1']) })).toBe(false)
@@ -124,16 +126,44 @@ describe('canRequestById：现在能不能按 id 请求', () => {
   })
 })
 
-describe('exitMissingSelection：把选中退回团队全景', () => {
-  const state = { selectedThread: 'b_gone', view: 'main', selectionExitSeq: 2 } as unknown as HubState
+describe('exitMissingSelection：把选中退回办公室（P71 前是团队全景）', () => {
+  const state = { selectedThread: 'b_gone', view: 'main', selectionExitSeq: 2, topicDraft: null } as unknown as HubState
 
-  it('回到团队线程，次数加一', () => {
+  it('正在看这条对话：清掉选中、落到办公室，次数加一', () => {
     const next = exitMissingSelection(state)
-    expect(next.selectedThread).toBe(TEAM_THREAD_ID)
+    expect(next.selectedThread).toBe(NO_THREAD)
+    expect(next.view).toBe('office')
     expect(next.selectionExitSeq).toBe(3)
   })
-  it('反例：只改选中，不把主人从当前页面拽走', () => {
-    expect(exitMissingSelection({ ...state, view: 'project' }).view).toBe('project')
+  it('反例：主人在别的页面时只清选中，不把他拽走', () => {
+    const next = exitMissingSelection({ ...state, view: 'project' })
+    expect(next.view).toBe('project')
+    expect(next.selectedThread).toBe(NO_THREAD)
+  })
+  it('反例：中栏摆着草稿主题时不动页面', () => {
+    const draft = { ...state, topicDraft: { projectId: 'prj_1', seq: 1 } } as unknown as HubState
+    expect(exitMissingSelection(draft).view).toBe('main')
+  })
+})
+
+describe('landingSurface：没有对话可摆时落到办公室（P71）', () => {
+  it('正例：主视图 + 旧数据里的团队线程 → 办公室、没有选中', () => {
+    expect(landingSurface('main', LEGACY_TEAM_THREAD_ID)).toEqual({ view: 'office', threadId: NO_THREAD })
+  })
+  it('正例：主视图 + 没有选中 → 办公室', () => {
+    expect(landingSurface('main', NO_THREAD)).toEqual({ view: 'office', threadId: NO_THREAD })
+  })
+  it('反例：别的页面原样保留，只是不再记着团队线程', () => {
+    expect(landingSurface('settings', LEGACY_TEAM_THREAD_ID)).toEqual({ view: 'settings', threadId: NO_THREAD })
+  })
+  it('反例：选中了真实队友或主题时原样保留', () => {
+    expect(landingSurface('main', 'b_1')).toEqual({ view: 'main', threadId: 'b_1' })
+    expect(landingSurface('main', 'ptp_1')).toEqual({ view: 'main', threadId: 'ptp_1' })
+  })
+  it('isNoThread 只认空串和旧团队线程', () => {
+    expect(isNoThread(NO_THREAD)).toBe(true)
+    expect(isNoThread(LEGACY_TEAM_THREAD_ID)).toBe(true)
+    expect(isNoThread('b_1')).toBe(false)
   })
 })
 

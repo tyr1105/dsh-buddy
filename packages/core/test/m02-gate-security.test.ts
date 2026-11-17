@@ -6,6 +6,7 @@ import { guardToolCall, guardToolCallSync } from '../src/gate/guard.js';
 import { checkGitBoundaries } from '../src/gate/git-boundary.js';
 import { submitOutbox, executeReadyOutbox } from '../src/gate/outbox.js';
 import { requestApproval, decideApproval } from '../src/gate/approvals.js';
+import { approvalModelSummary } from '../src/util/owner-text.js';
 import { resolveRealTarget } from '../src/gate/real-path.js';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { resolveSettings } from '../src/config/defaults.js';
@@ -119,7 +120,7 @@ describe('M02 C03 [2][35][39] 支付词干及分类子类独立覆盖', () => {
         expect(classifyCommand(`wget --post-data=x ${url}`, ctx).cls).toBe('D');
         expect(classifyToolCall('web_fetch', { url, method: 'POST' }, ctx).cls).toBe('D');
     });
-    it.each([['brew install x', 'global_install'], ['pip install x', 'global_install'], ['lark-cli im send x', 'send_message'], ['osascript -e x', 'send_message'], ['crontab -e', 'system_settings'], ['defaults write x y', 'system_settings'], ['git push', 'git_write']])('%s 命中特定子类 %s', (command, subclass) => expect(classifyCommand(command!, ctx)).toMatchObject({ cls: 'C', subclass }));
+    it.each([['brew install x', 'global_install'], ['pip install x', 'global_install'], ['lark-cli im send x', 'send_message'], ['osascript -e x', 'send_message'], ['crontab -e', 'system_settings'], ['defaults write x y', 'system_settings'], ['git push', 'git_push']])('%s 命中特定子类 %s', (command, subclass) => expect(classifyCommand(command!, ctx)).toMatchObject({ cls: 'C', subclass }));
     it('L3 http_post/run_command 授权不能放行 D，且计越界', async () => {
         const { runtime, bot } = setup();
         expect((await guardToolCall(runtime, bot.sessionId!, 'exec', { command: 'env rm -rf /outside' })).allow).toBe(false);
@@ -130,15 +131,16 @@ describe('M02 C03 [2][35][39] 支付词干及分类子类独立覆盖', () => {
 });
 
 describe('M02 C03 [4][19][21] 复盘、gitdir、真实目标与审批可读性', () => {
-    it('复盘合法写 work 不计越界，中心文件仍拒绝', async () => {
+    it('复盘写 work 被拒但不计越界（P75r6：技能类回合一律只读），中心文件仍拒绝', async () => {
         const { runtime, bot } = setup();
         runtime.store.table('wakes').put({ ...(modelFixtures.WakeTicket.valid as WakeTicket), botId: bot.id, sessionId: bot.sessionId, variant: 'reflection' });
-        expect((await guardToolCall(runtime, bot.sessionId!, 'exec', { command: 'touch work/a' })).allow).toBe(true);
+        // P75r6 同步（第 1 节第 5 条）：原来这里断言复盘回合合法写 work（touch work/a 放行、write_file 出站记录可执行并写成功）；
+        // 现在技能类回合一律只读：自己的工具写 work 被拒，hub_outbox_submit 的 write_file 整个被拒（文字沿用「复盘回合只读，不执行对外动作」），
+        // 都不计越界。原意「复盘里写 work 不算越界」不变。
+        expect((await guardToolCall(runtime, bot.sessionId!, 'exec', { command: 'touch work/a' })).allow).toBe(false);
         expect(runtime.store.table('bots').get(bot.id)?.violations).toBe(0);
-        const row = await submitOutbox(runtime, bot.id, { kind: 'write_file', payload: { path: `${home}/work/notes`, content: '复盘' }, why: '记录' });
-        expect(row.status).toBe('ready');
-        await executeReadyOutbox(runtime);
-        expect(await runtime.fs.readText(`${home}/work/notes`)).toBe('复盘');
+        await expect(submitOutbox(runtime, bot.id, { kind: 'write_file', payload: { path: `${home}/work/notes`, content: '复盘' }, why: '记录' })).rejects.toThrow('复盘回合只读，不执行对外动作');
+        expect(runtime.store.table('outbox').count()).toBe(0);
         await expect(submitOutbox(runtime, bot.id, { kind: 'http_post', payload: { url: 'https://example.test/data', body: 'x' }, why: '测试' })).rejects.toThrow('复盘');
         expect(runtime.store.table('bots').get(bot.id)?.violations).toBe(0);
         expect((await guardToolCall(runtime, bot.sessionId!, 'write_file', { path: 'mind/goals.md' })).allow).toBe(false);
@@ -193,8 +195,11 @@ describe('M02 C03 [4][19][21] 复盘、gitdir、真实目标与审批可读性',
         expect(approval.argsPreview).toContain('git push --force');
         expect(approval.argsPreview).toContain('"cmd":"bash"');
         await decideApproval(runtime, approval.id, true);
-        expect(runtime.store.table('queue').list()[0]?.reason.summary).toContain('由中心执行');
-        expect(runtime.store.table('queue').list()[0]?.reason.summary).not.toContain('完全相同');
+        // P74r18b 同步（第 1 节改了时机）：批准的那一刻不再叫醒员工，队列里没有候选；模型看到的批准说明（approvalModelSummary，
+        // 命令运行完之后的结果唤醒不用它）仍然写「由中心执行」、不写「完全相同的参数再调用」。
+        expect(runtime.store.table('queue').list()).toHaveLength(0);
+        expect(approvalModelSummary(approval, 'approved')).toContain('由中心执行');
+        expect(approvalModelSummary(approval, 'approved')).not.toContain('完全相同');
     });
     it('短审批参数完整，长中文首尾各四百字不破坏字符', async () => {
         const { runtime, bot } = setup();

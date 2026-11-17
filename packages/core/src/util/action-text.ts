@@ -1,6 +1,7 @@
 /** 把工具参数翻成主人能理解的动作；原始参数仍保留在审批记录里供核对，不参与执行或权限判断。 */
 import { C03_DEFAULTS } from '../config/defaults.js';
 import type { Approval } from '../model/outreach.js';
+import { hostCommandRiskNote } from '../gate/host-writable.js';
 import { COMMAND_ARGUMENT_KEYS, PATH_ARGUMENT_KEYS, commandTargets, editTargetPaths, pathArguments, selectedCommand } from '../gate/tool-targets.js';
 
 /** 仅取对象中的文本字段，坏旧档也能显示明确的缺失提示。 */
@@ -61,11 +62,13 @@ export function describeAction(tool: string, input: unknown, commandMaxChars: nu
   }
   if (tool === 'web_fetch') return `访问 ${domain(stringField(args, 'url'))}`;
   if (tool === 'web_search') return `搜索 ${stringField(args, 'query') || '网页'}`;
+  // P75e（P75a 的 M3 裁定）：skill 工具的目标栏写技能名（参数 name 的值），从账本看得出用的是哪条技能；别的工具不变。
+  if (tool === 'skill') return `加载技能 ${oneLine(stringField(args, 'name')) || '（未提供技能名）'}`;
   return `执行 ${oneLine(tool)}`;
 }
 /** 新记录有版本证明按全部目标生成；旧摘要可能遗漏危险目标，必须重算，截断旧参数只显示通用动作。 */
 export function approvalActionText(row: Approval, commandMaxChars: number = C03_DEFAULTS.actionCommandMaxChars): string {
-  if (row.actionTextVersion === 2 && row.actionText) return row.actionText;
+  if ((row.actionTextVersion === 2 || row.actionTextVersion === 3) && row.actionText) return row.actionText;
   try { return describeAction(row.tool, JSON.parse(row.argsPreview), commandMaxChars); }
   catch {
     if (['bash', 'exec', 'run_command', 'shell', 'exec_command'].includes(row.tool)) return '运行一条命令（完整参数见末行）';
@@ -79,14 +82,16 @@ export function approvalDisplayText(row: Approval, commandMaxChars: number = C03
   parameterMaxChars: number = C03_DEFAULTS.approvalOwnerParamsMaxChars, parameters = row.argsPreview): { title: string; body: string } {
   const action = approvalActionText(row, commandMaxChars);
   // 该帮助函数同时服务审批落表和只读投影，确保重新打开旧卡片也不丢失宿主权限提醒。
-  let hostCommand = row.tool === 'hub_outbox_execute' && action.startsWith('运行命令');
+  let hostCommand = row.tool === 'hub_outbox_execute' && (action.startsWith('运行命令') || action.startsWith('请中心代为运行'));
   try { hostCommand ||= row.tool === 'hub_outbox_execute' && fields(JSON.parse(parameters)).kind === 'run_command'; } catch { /* 截断旧参数时按可信动作摘要判断。 */ }
-  const sandboxNotice = hostCommand ? '\n这条命令在受限沙箱内运行，只能写家目录、共享目录和系统临时目录。看不懂就拒绝。' : '';
+  // P69：新记录把风险提示存在 riskNote 里；旧记录没有这一项，仍按出站命令现算同一句话。
+  // P74r18b：旧记录没有 riskNote 时，现算同一句话（员工名取不到，写「员工」；按有项目写，范围取最宽的真实清单）。
+  const sandboxNotice = row.riskNote ? `\n${row.riskNote}` : hostCommand ? `\n${hostCommandRiskNote('员工', true)}` : '';
   return { title: `批准：${action}`,
     body: `${action}\n${row.actionClass} 类：${row.why}${sandboxNotice}\n原始参数（供核对）：${ownerParameterPreview(parameters, parameterMaxChars)}` };
 }
 /** 单项首尾截断；多目标预览也复用它，不能只留下命令或路径的无害开头。 */
-function clipEdges(value: string, maxChars: number): string {
+export function clipEdges(value: string, maxChars: number): string {
   const chars = Array.from(value.replaceAll('\n', '\\n').replaceAll('\r', '\\r'));
   if (chars.length <= maxChars) return chars.join('');
   const mark = '…中间省略…';

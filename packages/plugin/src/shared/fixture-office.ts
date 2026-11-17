@@ -7,10 +7,13 @@
  * 由 /api/agent-hub/office 返回）。编制取消后每个座位就是一位在岗队友，
  * 没有部门分组、空位与临时摆放。
  */
+import { sampleStaffFields } from './fixture-status.js'
 import type { InboxItemView, OfficeView, SeatView } from './views.js'
 
 /** 样例基准时刻：文案与 asOf 都写死，避免每次刷新漂移。 */
 const NOW = Date.UTC(2026, 10, 6, 14, 20)
+/** 样例基准日的零点（UTC 口径，样例不依赖时区）：入职时间晚于它的员工算「今天入职」。 */
+const TODAY_START = Date.UTC(2026, 10, 6, 0, 0)
 
 /**
  * 门口样例条的标题与类型：标题必须与 fixtures.ts 里同 id 的收件箱条目完全一致
@@ -29,6 +32,8 @@ function seat(input: {
   title: string
   name: string
   roleLabel: string
+  /** P75r7（B13）：模板的显示标签（如「评审」）；样例这几位没有模板，一律 null。 */
+  templateLabel?: string | null
   color: string
   activityLabel: string
   activityText: string
@@ -39,6 +44,8 @@ function seat(input: {
   deskRefKind: 'artifact' | 'wake' | 'bot'
   deskRefId: string
   doorInboxIds: string[]
+  /** P73f：入职时间；不传表示没有入职记录（样例里的老员工），joinedToday 一律 false。 */
+  joinedAt?: number
 }): SeatView {
   const activity = input.light === 'working' ? 'thinking'
     : input.light === 'watching' ? 'watching'
@@ -49,8 +56,9 @@ function seat(input: {
     title: input.title,
     occupant: {
       botId: input.botId, name: input.name, role: 'researcher', roleLabel: input.roleLabel,
+      templateLabel: input.templateLabel ?? null,
       color: input.color, initials: Array.from(input.name).slice(0, 2).join(''),
-      lifecycle: 'active', lifecycleLabel: '在岗',
+      lifecycle: 'active', lifecycleLabel: '在岗', ...sampleStaffFields('active'),
       activity: activity as never, activityLabel: input.activityLabel,
       activityText: input.activityText, updatedAt: NOW - 18 * 60_000,
     },
@@ -78,6 +86,9 @@ function seat(input: {
     },
     warnings: [],
     ref: `bot:${input.botId}`,
+    // 入职当天（与样例基准时刻同一天）才算 joinedToday；与 core 的判断口径一致。
+    joinedAt: input.joinedAt ?? null,
+    joinedToday: input.joinedAt !== undefined && input.joinedAt >= TODAY_START,
   }
 }
 
@@ -105,6 +116,17 @@ const seats: SeatView[] = [
     light: 'waiting', lightLabel: '在等人',
     deskTitle: '提出巡检降频提议，等你拍板', deskRef: 'bot:bot-zongguan', deskRefKind: 'bot', deskRefId: 'bot-zongguan',
     doorInboxIds: ['inbox-p1'],
+  }),
+  // P73f（设计稿 F）：今天入职的林舟。灯是「盯着」（空闲类），所以头顶气泡显示「报到」；
+  // 他不在总览样例里（总览的三位员工数量被很多测试固定），只出现在办公室样例中。
+  seat({
+    botId: 'bot-linzhou', title: '执行席', name: '林舟', roleLabel: '执行',
+    color: 'var(--dsw-alias-success)',
+    activityLabel: '盯着', activityText: '刚入职，等第一件事',
+    light: 'watching', lightLabel: '盯着',
+    deskTitle: null, deskRef: 'bot:bot-linzhou', deskRefKind: 'bot', deskRefId: 'bot-linzhou',
+    doorInboxIds: [],
+    joinedAt: Date.UTC(2026, 10, 6, 1, 5),
   }),
 ]
 

@@ -4,6 +4,7 @@ import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { closeAlert, raiseAlert } from '../src/health/alerts.js';
 import { syncAlertItems } from '../src/outreach/alerts.js';
 import { pushHistory } from '../src/outreach/push.js';
+import { flushPushQueue } from '../src/outreach/notify.js';
 import { createInboxItem } from '../src/outreach/inbox.js';
 import { FileStore } from '../src/store/file-store.js';
 import { botFixture } from './model-fixtures.js';
@@ -20,7 +21,7 @@ function setup() {
 const quota = { code: 'quota', botId: null, text: '额度已用尽', level: 'P0' as const, immediate: true };
 
 describe('M09 告警时间乱序与唯一开放记录', () => {
-  it('两次额度告警倒序两毫秒只存一条、建一张卡并申请一次推送', async () => {
+  it('两次额度告警倒序两毫秒只存一条、建一张卡、不推送（P76h：额度告警不再推送）', async () => {
     const ctx = setup();
     const now = ctx.clock.now();
     const first = raiseAlert(ctx, { ...quota, at: now + 2 });
@@ -31,10 +32,12 @@ describe('M09 告警时间乱序与唯一开放记录', () => {
     expect(second).toMatchObject({ id: first.id, count: 2, status: 'open', firstAt: now, lastAt: now + 2 });
     expect(ctx.store.table('alerts').list()).toHaveLength(1);
     expect(ctx.store.table('inbox').list()).toHaveLength(1);
-    expect(ctx.store.table('inbox').list()[0]).toMatchObject({ title: '中心告警：额度', status: 'open', pushed: true });
-    expect(ctx.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(1);
-    expect(pushHistory(ctx)).toHaveLength(1);
-    expect(ctx.host.calls.filter(call => call.method === 'notify')).toHaveLength(1);
+    // P76h：原断言是「卡 pushed 为 true、推送审计 1 条、宿主通知 1 次」；额度告警不属于推送的类别，三处都是没有推送。
+    expect(ctx.store.table('inbox').list()[0]).toMatchObject({ title: '中心告警：额度', status: 'open', pushed: false });
+    // P71：中心告警只进「待你处理」和推送，不再写进团队线程或任何对话。
+    expect(ctx.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(0);
+    expect(pushHistory(ctx)).toHaveLength(0);
+    expect(ctx.host.calls.filter(call => call.method === 'notify')).toHaveLength(0);
   });
 
   it('普通告警倒序仍累计连续次数，第一次不打扰、第二次才开放', async () => {
@@ -157,10 +160,11 @@ describe('M09 告警时间乱序与唯一开放记录', () => {
     ]);
     const cards = store.table('inbox').list(item => item.status === 'open');
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({ refId: latest.id, title: '中心告警：额度', pushed: true });
+    // P76h：原断言是「没有旧卡（none）时补的新卡 pushed 为 true 并推送 1 次」；额度告警不再推送：新卡 pushed 为 false，保留的旧卡仍是存档里的 true，推送 0 次。
+    expect(cards[0]).toMatchObject({ refId: latest.id, title: '中心告警：额度', pushed: mode !== 'none' });
     expect(store.table('inbox').count()).toBe(mode === 'both' ? 2 : 1);
-    expect(ctx.host.calls.filter(call => call.method === 'notify')).toHaveLength(mode === 'none' ? 1 : 0);
-    expect(pushHistory(ctx)).toHaveLength(mode === 'none' ? 1 : 0);
+    expect(ctx.host.calls.filter(call => call.method === 'notify')).toHaveLength(0);
+    expect(pushHistory(ctx)).toHaveLength(0);
     await store.flush();
     const reloaded = new FileStore(source.fs, source.clock, '/hub', 'Asia/Shanghai', source.logger);
     await reloaded.load();
@@ -179,9 +183,13 @@ describe('M09 主人可读的告警标题', () => {
       const ctx = setup();
       raiseAlert(ctx, { ...quota, botId, code });
       await syncAlertItems(ctx);
-      const title = `${botId === null ? '中心' : '巡检员'}告警：${name}`;
+      // P74r16b：员工被中心停用（quarantine 且有对应员工）这一种告警，标题改为「{名字}已被停用」；没有对应员工的中心告警和其余告警不变。
+      const title = code === 'quarantine' && botId !== null ? '巡检员已被停用' : `${botId === null ? '中心' : '巡检员'}告警：${name}`;
       expect(ctx.store.table('inbox').list()[0]?.title).toBe(title);
-      expect(pushHistory(ctx)[0]?.title).toBe(title);
+      // P76h：原断言是「每种告警都有一条同标题的推送审计」；现在只有鉴权告警推送，其余没有推送审计。
+      await flushPushQueue(ctx, ctx.clock.now());
+      if (code === 'auth') expect(pushHistory(ctx)[0]?.title).toBe(title);
+      else expect(pushHistory(ctx)).toHaveLength(0);
       expect(title).not.toContain(code);
     }
   });
@@ -195,6 +203,7 @@ describe('M09 主人可读的告警标题', () => {
     await syncAlertItems(ctx);
     expect(ctx.store.table('inbox').get(item.id)?.title).toBe('中心告警：额度');
     expect(ctx.store.table('inbox').list()).toHaveLength(1);
-    expect(pushHistory(ctx)).toHaveLength(1);
+    // P76h：原断言是「推送审计仍只有 1 条」；额度告警不推送，审计为 0 条（仍然没有再次推送）。
+    expect(pushHistory(ctx)).toHaveLength(0);
   });
 });

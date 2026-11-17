@@ -36,6 +36,37 @@ export function truncateBytes(text: string, maxBytes: number): string {
   return prefixWithinBytes(text, maxBytes - markBytes) + TRUNCATION_MARK;
 }
 
+/** 按完整 Unicode 码点从末尾往前累积字节，返回末尾那一段（不会把一个字截成两半）。 */
+function suffixWithinBytes(text: string, maxBytes: number): string {
+  const characters = [...text];
+  let used = 0;
+  let start = characters.length;
+  while (start > 0) {
+    const size = byteLength(characters[start - 1]!);
+    if (used + size > maxBytes) break;
+    used += size;
+    start -= 1;
+  }
+  return characters.slice(start).join('');
+}
+
+/** 摘要被截掉开头时，最前面加的一行（P75r5c，审查 M5）。 */
+export const HEAD_OMITTED_LINE = '（前面的内容已省略）';
+
+/**
+ * 按字节上限截取，保留末尾（会话摘要用：最新的内容在末尾，结论和最终做法通常在那里，丢掉的应该是开头）。
+ * 没超上限原样返回；超了就取末尾，并在最前面加一行 HEAD_OMITTED_LINE，整段（含这一行）不超过 maxBytes。
+ * 预算连这一行都放不下时只取末尾（不加这一行），优先保证字节上限。
+ */
+export function truncateBytesKeepTail(text: string, maxBytes: number): string {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) throw new Error('maxBytes 必须是非负整数字节数');
+  if (byteLength(text) <= maxBytes) return text;
+  const head = `${HEAD_OMITTED_LINE}\n`;
+  const headBytes = byteLength(head);
+  if (maxBytes <= headBytes) return suffixWithinBytes(text, maxBytes);
+  return head + suffixWithinBytes(text, maxBytes - headBytes);
+}
+
 /** 去掉不供阅读的块和标签，再解码实体；实体中的尖括号属于正文，不二次当标签删掉。 */
 export function stripHtml(html: string): string {
   // Map 不继承对象原型；未知实体不能误取 constructor 等内置属性。

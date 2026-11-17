@@ -51,6 +51,9 @@ export function officeView(ctx: HubContext): OfficeView {
     quotaLight: quota.light,
     openAlerts: ctx.store.table('alerts').count(row => row.status === 'open'),
     sandboxOk: ctx.runtime.sandboxUnavailable === null,
+    // P73c：员工来历和时区，用来判断「今天入职」（报到）。
+    origins: ctx.store.table('botOrigins').list(),
+    timezone: ctx.settings.timezone,
     // 超过读取上限时明确告知「只看了最近 N 条」，不假装读全了。
     truncated: index.total > limit,
   });

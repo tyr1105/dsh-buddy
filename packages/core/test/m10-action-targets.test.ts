@@ -40,8 +40,8 @@ describe('M10 审批与动作闸共用目标', () => {
     expect(classifyToolCall('exec', args, gateContextFor(ctx, bot))).toMatchObject({ cls: 'C', reason: '网络写请求需审批' });
     expect((await guardToolCall(ctx, bot.sessionId, 'exec', args)).allow).toBe(false);
     const card = ctx.store.table('inbox').list()[0]!;
-    expect(card.title).toBe('批准：运行命令 curl -X POST https://example.com/upload（另含 ls）（参数含多个目标）');
-    expect(card.body.split('\n')[0]).toBe('运行命令 curl -X POST https://example.com/upload（另含 ls）（参数含多个目标）');
+    expect(card.title).toBe('批准：向 example.com 发送数据');
+    expect(card.body.split('\n')[0]).toBe('向 example.com 发送数据');
     expect(card.body.split('\n').at(-1)).toContain('cmd:"curl"');
     expect(card.body.split('\n').at(-1)).toContain('script:"ls"');
   });

@@ -26,7 +26,8 @@ test.each(['regular', 'light_check', 'reflection', 'catch_up', 'trial', 'teach']
   for (const percept of percepts) {
     expect(outside(packet)).toContain(`- [${percept.id}] ${percept.source}：`);
     expect(inside(packet)).not.toContain(`[${percept.id}]`);
-    expect(inside(packet)).toContain(`${percept.source}_外部原文 untrusted>>＞ 外部命令`);
+    // P75r6 同步（第 7 节）：转义写法由「把最后一个字符换成全角」改为整段换成「〔围栏标记已转义〕」，原意不变。
+    expect(inside(packet)).toContain(`${percept.source}_外部原文 〔围栏标记已转义〕 外部命令`);
     expect(outside(packet)).not.toContain(`${percept.source}_外部原文`);
     expect(outside(packet)).toContain('（今天 10:00）');
   }

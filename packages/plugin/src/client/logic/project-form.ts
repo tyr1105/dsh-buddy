@@ -108,9 +108,9 @@ export function validateProjectForm(values: ProjectFormValues, options: readonly
   if (name === '') return { field: 'name', message: '项目名称：不能为空' }
   if (name.length > PROJECT_NAME_MAX) return { field: 'name', message: `项目名称：不能超过 ${PROJECT_NAME_MAX} 字（现在 ${name.length} 字）` }
   if (values.memberBotIds.length > PROJECT_MEMBER_MAX) {
-    return { field: 'members', message: `项目成员：不能超过 ${PROJECT_MEMBER_MAX} 个队友（现在选了 ${values.memberBotIds.length} 个）` }
+    return { field: 'members', message: `项目成员：不能超过 ${PROJECT_MEMBER_MAX} 位员工（现在选了 ${values.memberBotIds.length} 位）` }
   }
-  if (values.ownerBotId === '') return { field: 'owner', message: '负责人：请选一位。先勾选成员；建议风格的队友不能当负责人。' }
+  if (values.ownerBotId === '') return { field: 'owner', message: '负责人：请选一位。先勾选成员；建议风格的员工不能当负责人。' }
   if (!values.memberBotIds.includes(values.ownerBotId)) return { field: 'owner', message: '负责人：必须是成员之一，先在成员里勾选 TA。' }
   const owner = options.find(option => option.botId === values.ownerBotId)
   if (owner !== undefined && !canBeOwner(owner) && owner.botId !== initialOwnerId) {

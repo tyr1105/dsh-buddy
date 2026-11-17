@@ -4,3 +4,6 @@ export * from './files.js';
 export * from './rules.js';
 export * from './rotation.js';
 export * from './preset-skills.js';
+// P75c：记忆服务（写入只经它）与撤销命令。
+export * from './service.js';
+export * from './undo.js';

@@ -10,7 +10,7 @@ import { createInboxItem } from '../src/outreach/inbox.js';
 import { postThread } from '../src/outreach/thread.js';
 import { requestApproval } from '../src/gate/approvals.js';
 import { upsertRule } from '../src/memory/rules.js';
-import { restForQuota, getQuotaState } from '../src/quota/window.js';
+import { restBotsForQuota, getQuotaState } from '../src/quota/window.js';
 import { toolFixture } from './c03-tool-fixtures.js';
 import { turnContext, commitArgs } from './c03-turn-fixtures.js';
 import { apiFixture } from './c04-api-fixtures.js';
@@ -26,8 +26,9 @@ function expectBotChanges(events: Change[], botId: string, scopes: string[] = [H
 }
 
 describe('M07 公开推送词表与机器人归属', () => {
-  it('从包入口导出且包含九个面向视图的范围', () => {
-    expect(HUB_EVENT_SCOPES).toEqual({ overview: 'overview', bot: 'bot', thread: 'thread', inbox: 'inbox', activity: 'activity', settings: 'settings', ledger: 'ledger', project: 'project', office: 'office' });
+  it('从包入口导出且包含十个面向视图的范围', () => {
+    // P75c：新增 memory 范围（记忆的变化）。P76i：新增 presence 范围（主人上次打开的记录变化）。
+    expect(HUB_EVENT_SCOPES).toEqual({ overview: 'overview', bot: 'bot', thread: 'thread', inbox: 'inbox', activity: 'activity', settings: 'settings', ledger: 'ledger', project: 'project', office: 'office', memory: 'memory', presence: 'presence' });
   });
 
   it('交账同时刷新机器人详情和活动，失败交账不发虚假变化', async () => {
@@ -147,7 +148,8 @@ describe('M07 公开推送词表与机器人归属', () => {
   it('全队额度保护仍逐个通知机器人的状态变化，全局范围允许 null', () => {
     const { ctx, bot, peer, now } = toolFixture();
     ctx.events.length = 0;
-    restForQuota(ctx, { ...getQuotaState(ctx, now), light: 'red', redUntil: now + 60_000 }, now);
+    // P76d：restForQuota（休息加告警）已删除，额度用完不再建告警；本用例只证明「逐个通知机器人状态变化」，改调只安排休息的 restBotsForQuota，断言不变。
+    restBotsForQuota(ctx, { ...getQuotaState(ctx, now), light: 'red', redUntil: now + 60_000 }, now);
     expect(ctx.events.filter(event => event.scope === HUB_EVENT_SCOPES.bot)).toEqual([
       { scope: HUB_EVENT_SCOPES.bot, botId: bot.id }, { scope: HUB_EVENT_SCOPES.bot, botId: peer.id },
     ]);

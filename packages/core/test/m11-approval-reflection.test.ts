@@ -7,14 +7,18 @@ import { enqueue, removeEntry } from '../src/scheduler/queue.js';
 import { createTicket } from '../src/wake/ticket.js';
 import { requestApproval, decideApproval } from '../src/gate/approvals.js';
 import { hasApprovalDecision } from '../src/util/approval-candidate.js';
+// P75r3 第 10 节：P75f 删掉的「M11 复盘期间批准后的真实 Hub 执行」三条与 worldFor、finishReflection 辅助函数在文件末尾恢复。
+// 复盘变体回合的机制还在（队列、派活、闸门的只读判断），只是旧的触发（纠正、连续未交账）下线了：
+// 恢复的测试改为直接往队列里放一条复盘变体的候选来驱动，断言与原来一致。
 import { createSimWorld, advance, type SimWorld } from '../src/sim/runner.js';
 import { commitBrain } from '../src/sim/brains.js';
 import type { Brain } from '../src/sim/types.js';
+import { createRuntime, type HubContext } from '../src/engine/context.js';
 import { createBotHome } from '../src/memory/files.js';
 import { createDispatcher } from '../src/engine/dispatch.js';
 import { interruptBot } from '../src/api/interrupt.js';
 import { guardToolCall } from '../src/gate/guard.js';
-import { processReflectCommit } from '../src/reflect/process.js';
+import { runTool } from '../src/tools/index.js';
 import { onTurnEvent } from '../src/turn/events.js';
 
 const hook = 'https://hooks.example.com/morning';
@@ -67,19 +71,7 @@ describe('M11 审批与只读复盘分开排队', () => {
     expect(ctx.store.table('queue').list()[0]?.variant).toBe('regular');
   });
 
-  it('连续未交账不会把审批改成复盘，且批准回合交账清零后仍保留独立复盘', async () => {
-    const { ctx, candidate } = await queueContext();
-    ctx.store.table('bots').patch(botFixture.id, { consecutiveNoCommit: ctx.settings.noCommitReflectionCount });
-    const approvalEntry = enqueue(ctx, candidate)!;
-    const ticket = createTicket(ctx, approvalEntry, null);
-    expect(ticket.variant).toBe('regular');
-    removeEntry(ctx, approvalEntry.id);
-    ctx.store.table('bots').patch(botFixture.id, { consecutiveNoCommit: 0 });
-    const reflection = ctx.store.table('queue').list()[0]!;
-    expect(ctx.store.table('queue').list()).toHaveLength(1);
-    expect(reflection).toMatchObject({ variant: 'reflection', reason: { kind: 'reflection' } });
-    expect(createTicket(ctx, reflection, null).variant).toBe('reflection');
-  });
+  // P75f：连续未交账不再强制转复盘（旧触发下线），原「连续未交账不会把审批改成复盘……」测试删除。
 
   it('审批并入主人主理由后，常规唤醒包仍附审批结果并允许原参数 bash 执行', async () => {
     const { ctx, candidate } = await queueContext();
@@ -99,6 +91,9 @@ describe('M11 审批与只读复盘分开排队', () => {
 
   it.each(['deferred', 'legacy'] as const)('%s 审批证据在投递前再次分离，复盘不消费，之后常规回合仍能执行', async source => {
     const { ctx, candidate } = await queueContext();
+    // 保留显式设置 6：本用例要连续跑三个自己发起的回合（常规、事项键不是技能类的复盘、常规），默认的每天 2 个上限会先拦住第三个；
+    // 它证明的是审批证据在投递前再次分离，与每天上限无关（P76b 加，P76c 核对后保留，只改说明）。
+    ctx.settings.botDailyTurnBudget = 6;
     const dispatcher = createDispatcher(ctx);
     if (source === 'deferred') {
       enqueue(ctx, candidate);
@@ -118,8 +113,11 @@ describe('M11 审批与只读复盘分开排队', () => {
     expect(ctx.store.table('percepts').list(row => row.kind === 'approval_decided').every(row => row.consumedByWake === null)).toBe(true);
     const packets = ctx.host.calls.filter(call => call.method === 'createSession').map(call => (call.args[0] as { firstMessage: string }).firstMessage);
     expect(packets.at(-1)).not.toContain('## 审批结果');
-    expect(await processReflectCommit(ctx, { botId: botFixture.id, sessionId: wake.sessionId!, wakeId: wake.id },
-      { summary: '复盘完成', lessons: [], watchChanges: [], routineUpdates: [] })).toMatchObject({ ok: true });
+    // P75f：旧复盘交账工具已删除；在途的复盘回合改用 hub_commit 收口（机制同前：只读、不吃掉批准票）。
+    expect(await runTool(ctx, { botId: botFixture.id, sessionId: wake.sessionId!, wakeId: wake.id }, 'hub_commit',
+      { outcome: 'no_change', summary: '复盘完成', worldChanges: [], evidence: [], verification: { level: 'agent', notCovered: '复盘只读' },
+        blocker: null, nextThink: { mode: 'auto', reason: '复盘完成' }, ownerQuestion: null, reply: null, report: null,
+        importance: ctx.settings.c03.reflectCommitImportance, proposals: [] })).toMatchObject({ ok: true });
     ctx.host.sessions.get(wake.sessionId!)!.running = false;
     await onTurnEvent(ctx, { type: 'ended', sessionId: wake.sessionId!, at: ctx.clock.now(), tokens: 1000, finalText: '复盘完成' });
     ctx.clock.advance(ctx.settings.dispatchGapMs);
@@ -133,8 +131,11 @@ describe('M11 审批与只读复盘分开排队', () => {
   });
 });
 
-/** 对齐审查剧本：先经主人消息提交待批动作，再纠正触发复盘；只有真实复盘回合会挂起。 */
-async function worldFor(kind: 'http' | 'file' | 'direct', quickReflection = true) {
+/**
+ * 对齐审查剧本：先经主人消息提交待批动作，再往队列里直接放一条复盘变体的候选（原来由「纠正」触发，触发已下线）；
+ * 只有真实复盘回合会挂起。notBefore 为空时下一个 tick 就会派出复盘；给了 notBefore 就留在队列里（对应原来「复盘还没轮到」的情形）。
+ */
+async function worldFor(kind: 'http' | 'file' | 'direct', reflectionNow = true) {
   let submitted = false;
   const packets: Array<{ variant: string; packet: string }> = [];
   const attempts: Array<{ variant: string; ok: boolean }> = [];
@@ -152,25 +153,32 @@ async function worldFor(kind: 'http' | 'file' | 'direct', quickReflection = true
     return commitBrain(input, { outcome: 'progress', summary: '已处理', reply: '收到' });
   };
   const world = await createSimWorld({ startAt: Date.parse('2026-11-04T10:00:00+08:00'),
-    settings: quickReflection ? { paceMinMsByRole: { sentinel: minute, researcher: minute, executor: minute, chief: minute } } : {},
+    settings: reflectionNow ? { paceMinMsByRole: { sentinel: minute, researcher: minute, executor: minute, chief: minute } } : {},
     bots: [{ id: botId, role: 'executor', autonomy: 'L2', brain }] });
   world.net.set(hook, { status: 200, text: 'ok', contentType: 'text/plain' });
   await world.hub.api.sendMessage(botId, '请交付早盘结果。');
   await world.host.settle();
   await advance(world, 3 * minute);
-  await world.hub.api.sendMessage(botId, '记住，以后这类推送先跟我说一声。');
-  await world.host.settle();
+  // 直接往队列里放一条复盘变体的候选；不立刻派出时推到很久以后。
+  // 世界里的存储、时钟等都是同一份；入队只读写存储和设置，用一个只装这些的上下文即可（和仿真世界建家目录时的做法一样）。
+  const ctx: HubContext = { host: world.host, clock: world.clock, rng: world.rng, fs: world.fs, net: world.net, exec: world.exec,
+    logger: world.logger, store: world.store, settings: world.settings, runtime: createRuntime(world.startAt), emit: () => undefined };
+  const now = ctx.clock.now();
+  enqueue(ctx, buildCandidate(ctx, { botId, kind: 'reflection', variant: 'reflection', score: 0.8, summary: '复盘收口方式', now,
+    ...(reflectionNow ? {} : { notBefore: now + 6 * 60 * minute }) }));
   await advance(world, 2 * minute);
   return { world, packets, attempts };
 }
 
-/** 宿主真的收到反思交账并结束回合；同时维护仿真会话簿记，避免空闲检查被假在途挡住。 */
+/** 宿主真的收到交账并结束复盘回合（旧复盘交账工具已删除，改用 hub_commit）；同时维护仿真会话簿记，避免空闲检查被假在途挡住。 */
 async function finishReflection(world: SimWorld) {
   const wake = world.store.table('wakes').list(row => row.variant === 'reflection' && row.endedAt === null)[0]!;
   expect(wake).toBeDefined();
-  const args = { summary: '已经复盘', lessons: [], watchChanges: [], routineUpdates: [] };
-  expect(await world.hub.guardToolCall(wake.sessionId!, 'hub_reflect_commit', args)).toMatchObject({ allow: true });
-  expect(await world.hub.tools().find(tool => tool.name === 'hub_reflect_commit')!.handler(wake.sessionId!, args)).toMatchObject({ ok: true });
+  const args = { outcome: 'no_change', summary: '已经复盘', worldChanges: [], evidence: [], verification: { level: 'agent', notCovered: '复盘只读' },
+    blocker: null, nextThink: { mode: 'auto', reason: '复盘完成' }, ownerQuestion: null, reply: null, report: null,
+    importance: world.settings.c03.reflectCommitImportance, proposals: [] };
+  expect(await world.hub.guardToolCall(wake.sessionId!, 'hub_commit', args)).toMatchObject({ allow: true });
+  expect(await world.hub.tools().find(tool => tool.name === 'hub_commit')!.handler(wake.sessionId!, args)).toMatchObject({ ok: true });
   world.host.sessions.get(wake.sessionId!)!.running = false;
   for (const turn of world.host.turns.filter(row => row.sessionId === wake.sessionId && row.endedAt === null)) {
     turn.endedAt = world.clock.now(); turn.status = 'ended';
@@ -198,8 +206,8 @@ describe('M11 复盘期间批准后的真实 Hub 执行', () => {
     expect(world.store.table('approvals').get(approval.id)?.status).toBe('used');
     if (kind === 'http') expect(world.net.calls).toHaveLength(1);
     else expect(await world.fs.readText('/outside/result.md')).toBe('早盘结果');
-    const expected = kind === 'http' ? '已执行你批准的：向 hooks.example.com 发送网络请求 → 已完成（HTTP 200）'
-      : '已执行你批准的：写文件 /outside/result.md → 已完成（文件已写入）';
+    const expected = kind === 'http' ? '已执行你批准的：向 hooks.example.com 发送数据 → 已完成（HTTP 200）'
+      : '已执行你批准的：在工作区之外写文件：/outside/result.md → 已完成（文件已写入）';
     expect(world.store.log('thread').all().filter(row => row.refId === outbox.id && row.kind === 'system').map(row => row.text)).toEqual([expected]);
     expect(packets.filter(row => row.variant === 'reflection').every(row => !row.packet.includes('## 审批结果'))).toBe(true);
     expect(packets.some(row => row.variant === 'regular' && row.packet.includes('## 审批结果'))).toBe(true);
@@ -209,7 +217,7 @@ describe('M11 复盘期间批准后的真实 Hub 执行', () => {
     await world.hub.stop();
   });
 
-  it('纠正产生排队复盘后批准直接 bash，只在常规回合重试并消费原票，复盘仍保留', async () => {
+  it('有排队复盘时批准直接 bash，只在常规回合重试并消费原票，复盘仍保留', async () => {
     const { world, packets, attempts } = await worldFor('direct', false);
     expect(world.store.table('queue').list().some(row => row.variant === 'reflection')).toBe(true);
     const approval = world.store.table('approvals').list()[0]!;

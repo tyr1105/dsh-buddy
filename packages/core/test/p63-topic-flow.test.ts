@@ -385,7 +385,10 @@ describe('P63 主题发言和队友自己的目标分开', () => {
     expect(fix.ctx.store.table('goals').get(goal.id)!.status).toBe('active');
     await fix.hub.api.sendMessage(owner!.id, '私聊一句');
     await speak(fix, owner!, '做完了', { outcome: 'done' });
-    expect(fix.ctx.store.table('goals').get(goal.id)!.status).toBe('done_pending_check');
+    // P74f（裁定 15）：这位是总管，总管交账 done 不再生成目标验收提问、也不把目标判成待验收（否则没有人能结清它）；
+    // 原来这里断言 done_pending_check，按裁定改为目标保持进行中、没有验收提问。普通员工照旧（见 p74f-accept.test.ts 的反例）。
+    expect(fix.ctx.store.table('goals').get(goal.id)!.status).toBe('active');
+    expect(fix.ctx.store.table('inbox').list().filter(row => row.subjectKey === `goal_check:${goal.id}`)).toHaveLength(0);
   });
 });
 

@@ -25,7 +25,7 @@ export const RESOURCE_SENSITIVITIES = ['normal', 'restricted'] as const;
 export const ResourceSensitivitySchema = z.enum(RESOURCE_SENSITIVITIES, { error: '资料敏感性必须是 normal 或 restricted' });
 export type ResourceSensitivity = z.infer<typeof ResourceSensitivitySchema>;
 export const RESOURCE_SENSITIVITY_LABELS: Record<ResourceSensitivity, string> = {
-  normal: '全员可读', restricted: '指定队友可读',
+  normal: '全员可读', restricted: '指定员工可读',
 };
 
 /**
@@ -46,10 +46,10 @@ export type Resource = z.infer<typeof ResourceSchema>;
 
 /** 授权对象类型：只保留队友本人（编制取消后不再有席位与部门授权）。 */
 export const GRANT_SUBJECT_KINDS = ['bot'] as const;
-export const GrantSubjectKindSchema = z.enum(GRANT_SUBJECT_KINDS, { error: '授权对象必须是 bot（队友本人）' });
+export const GrantSubjectKindSchema = z.enum(GRANT_SUBJECT_KINDS, { error: '授权对象必须是 bot（员工本人）' });
 export type GrantSubjectKind = z.infer<typeof GrantSubjectKindSchema>;
 export const GRANT_SUBJECT_KIND_LABELS: Record<GrantSubjectKind, string> = {
-  bot: '队友',
+  bot: '员工',
 };
 
 /** 授权级别：read 只读；write 可读可写（本期工具只消费读语义，写为后续资料治理预留）。 */

@@ -16,6 +16,16 @@ export interface HubRuntime {
   lastHeartbeatAt: number | null;
   /** 最近一次宿主命令因沙箱不可用被拒绝；null 表示最近一次宿主命令正常或尚未执行。 */
   sandboxUnavailable: string | null;
+  /**
+   * P74r16a：中心根目录的真实路径（启动时取一次，不写进设置、不落盘）。
+   * 只在它与设置里的写法不同（数据目录放在符号链接后面）时才有值；取不到或相同时为 null，当作相同处理。
+   */
+  realRootDir?: string | null;
+  /**
+   * P85：本回合（按唤醒单编号）里成功办成事的中心工具种类，供完成声明核对放行对应的说法（commit/claim-evidence.ts）。
+   * 只在内存里，交账处理完就清；没有时当作空。
+   */
+  centralToolOk?: Map<string, Set<'agreement' | 'memory' | 'job'>>;
 }
 export interface HubContext {
   store: Store; clock: Clock; rng: Rng; fs: FsIO; net: NetIO; exec: ExecIO; host: HostPort; logger: Logger;
@@ -39,5 +49,5 @@ export interface HubContext {
 export function createRuntime(now: number): HubRuntime {
   return { deliveryInterrupts: new Map(), startedAt: now, lastTickAt: null, lastDispatchAt: null, ownerActiveAt: null,
     pendingFileEvents: new Map(), watchDisposers: new Map(), suppressionLogAt: new Map(), lastHeartbeatAt: null,
-    sandboxUnavailable: null };
+    sandboxUnavailable: null, realRootDir: null };
 }

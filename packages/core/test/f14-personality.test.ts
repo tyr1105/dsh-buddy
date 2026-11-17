@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { F14_DEFAULTS, resolveSettings, resolveStartupSettings, thresholdFor } from '../src/config/defaults.js';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { botFixture, modelFixtures } from './model-fixtures.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 import { apiFixture, okData } from './c04-api-fixtures.js';
 import { commitArgs, turnContext } from './c03-turn-fixtures.js';
 import { saveBotMbti, botMbti } from '../src/personality/profile.js';
@@ -54,7 +55,10 @@ describe('普通自主门槛确实参与排队', () => {
 
   it('疲劳与节奏先按原公式计算，性格只在上面追加', () => {
     const ctx = setup('INTJ'), now = ctx.clock.now();
-    for (let n = 0; n < 3; n++) ctx.store.log('ledger').append({ id: `le_test${n}`, who: botFixture.id, wakeId: null, tokens: 10, kind: 'turn', at: now });
+    // 设为 6 只为让「3 个自己发起的回合」恰好得到疲劳 0.5（P76b 加的显式设置；默认值现在是 2，本条测的是公式，与默认值无关）。
+    // P76c：疲劳改数唤醒单口径的「员工自己发起的回合」，原来数账本行；3 个回合的含义不变。
+    ctx.settings.botDailyTurnBudget = 6;
+    addSelfTurns(ctx, 3);
     ctx.store.table('bots').patch(botFixture.id, { pace: 'quiet' });
     const candidate = buildCandidate(ctx, { ...ordinary, score: 0.8 });
     expect(candidate.reason.threshold).toBeCloseTo(thresholdFor(0.5, 'quiet', ctx.settings) + 0.05);
@@ -87,7 +91,8 @@ describe('普通自主门槛确实参与排队', () => {
       const snapshot = buildSnapshot(ctx, botFixture.id, now);
       expect(evaluateGates(entry, snapshot, now, ctx.settings)).toEqual({ pass: true });
       expect(evaluateGates(entry, { ...snapshot, quota: { ...snapshot.quota, light: 'red', probeAllowed: false } }, now, ctx.settings)).toMatchObject({ by: 'quota' });
-      expect(evaluateGates(entry, { ...snapshot, todayTurns: 100 }, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
+      // P76c：快照里「今天用了多少」换成 selfTurnsToday（只数员工自己发起的回合）；仍证明性格不能绕过每天上限。
+      expect(evaluateGates(entry, { ...snapshot, selfTurnsToday: 100 }, now, ctx.settings)).toMatchObject({ by: 'daily_cap' });
       expect(evaluateGates(entry, { ...snapshot, subjectWakeAt: new Map([[entry.subjectKey, now]]) }, now, ctx.settings)).toMatchObject({ by: 'cooldown' });
       expect(evaluateGates(entry, { ...snapshot, bot: { ...snapshot.bot!, lastThinkAt: now } }, now, ctx.settings)).toMatchObject({ by: 'pace_min' });
       expect(evaluateGates(entry, { ...snapshot, openOwnerAskCount: 1 }, now, ctx.settings)).toMatchObject({ by: 'waiting_owner' });

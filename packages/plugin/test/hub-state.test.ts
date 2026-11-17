@@ -44,6 +44,8 @@ describe('connectEvents：退避重连与 30 秒阈值（D05 第 12 条）', () 
     vi.useFakeTimers()
     const { fetchCalls } = stubFetch(async () => ({ status: 200, body: {} }))
     const hub = createHubStore()
+    // P71 起刚打开时没有选中任何对话（落在办公室）；这里先由主人点开一位队友，才有「当前线程」可补拉。
+    hub.selectThread('b_1')
     const refreshAll = vi.spyOn(hub, 'refreshAll')
     const close = connectEvents(hub)
     // 第一次连接成功。
@@ -68,8 +70,21 @@ describe('connectEvents：退避重连与 30 秒阈值（D05 第 12 条）', () 
     expect(refreshAll).toHaveBeenCalled()
     expect(fetchCalls.some(u => u.includes('overview'))).toBe(true)
     // D07 第 28 条：当前线程的补拉要真的发生（此前只断言了 refreshAll 被调）。
-    expect(fetchCalls.some(u => u.includes('thread?id=team'))).toBe(true)
+    expect(fetchCalls.some(u => u.includes('thread?id=b_1'))).toBe(true)
     expect(fetchCalls.some(u => u.includes('settings'))).toBe(true)
+    close()
+  })
+
+  it('P71：刚打开、没有选中任何对话时，重连只补拉视图，不去拉团队线程或空线程', async () => {
+    vi.useFakeTimers()
+    const { fetchCalls } = stubFetch(async () => ({ status: 200, body: {} }))
+    const hub = createHubStore()
+    expect(hub.getSnapshot()).toMatchObject({ view: 'office', selectedThread: '' })
+    const close = connectEvents(hub)
+    FakeEventSource.instances.at(-1)!.open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchCalls.some(u => u.includes('overview'))).toBe(true)
+    expect(fetchCalls.some(u => u.includes('thread?'))).toBe(false)
     close()
   })
 
@@ -126,7 +141,7 @@ describe('guard：断开原因识别（D05 第 13 条）', () => {
       ? { status: 500, body: { ok: false, error: '中心引擎尚未就绪，请稍后重试' } }
       : { status: 200, body: {} })
     const hub = createHubStore()
-    await hub.refreshThread('team')
+    await hub.refreshThread('b_1')
     const state = hub.getSnapshot()
     expect(state.connectionDown).toBe(true)
     expect(state.downReason).toBe('starting')
@@ -240,10 +255,13 @@ describe('onChanged：每种 scope 实际请求了哪些接口（D07 第 25 条�
     const cases: Array<{ event: { scope: string; botId?: string }; expectPaths: string[] }> = [
       // F03：总览/详情/账本/收件箱变化都会改变房间里的灯、桌面或门口，顺带刷办公室。
       // V2-PH2-04：overview/bot 同口径顺带刷资料授权矩阵（resource）。
-      { event: { scope: 'overview', botId: 'b_1' }, expectPaths: ['overview', 'bot', 'office', 'resource'] },
-      { event: { scope: 'bot', botId: 'b_1' }, expectPaths: ['overview', 'bot', 'office', 'resource'] },
+      // P75j：员工详情随带取一次技能库（skill-library），技能变化发的就是这位员工的 bot 事件。
+      // P76j：员工详情同样随带取一次「在办的事」（active-jobs）。
+      { event: { scope: 'overview', botId: 'b_1' }, expectPaths: ['overview', 'bot', 'skill-library', 'active-jobs', 'office', 'resource'] },
+      { event: { scope: 'bot', botId: 'b_1' }, expectPaths: ['overview', 'bot', 'skill-library', 'active-jobs', 'office', 'resource'] },
       { event: { scope: 'thread', botId: 'b_1' }, expectPaths: ['overview', 'thread'] },
-      { event: { scope: 'thread', botId: undefined }, expectPaths: ['overview', 'thread'] },
+      // P71：不带 id 的线程事件原指团队线程；团队全景下线后只刷总览，不再拉那条线程。
+      { event: { scope: 'thread', botId: undefined }, expectPaths: ['overview'] },
       { event: { scope: 'inbox' }, expectPaths: ['overview', 'inbox', 'office'] },
       { event: { scope: 'activity' }, expectPaths: ['activity'] },
       { event: { scope: 'settings' }, expectPaths: ['settings'] },
@@ -291,9 +309,9 @@ describe('refreshBot / refreshThread：并发与合并（D07 第 9/14 条）', (
     expect(bots.b_2?.card.lifecycle).toBe('probation')
   })
   it('线程不带 before 的刷新按 id 合并：翻出来的更早历史不被最新一页冲掉（D07 第 14 条）', async () => {
-    // 先给 60 条（首页 50 + 加载更早 10），再推送一条新消息（服务端只剩最新 50 页）。
+    // 先给 60 条（首页 50 + 加载更早 10），再推送一条新消息（服务端只剩最新 50 页）。P71 起用队友线程演示（团队线程已下线）。
     let total = 60
-    const message = (i: number) => ({ id: `m_${i}`, thread: 'team', from: 'hub', fromName: '中心', fromColor: null, kind: 'system', text: `第 ${i} 条`, createdAt: i, timeText: '刚刚', card: null })
+    const message = (i: number) => ({ id: `m_${i}`, thread: 'b_1', from: 'hub', fromName: '中心', fromColor: null, kind: 'system', text: `第 ${i} 条`, createdAt: i, timeText: '刚刚', card: null })
     stubFetch(async url => {
       if (!url.includes('thread')) return { status: 200, body: {} }
       const before = /before=(m_\d+)/.exec(url)?.[1]
@@ -301,18 +319,18 @@ describe('refreshBot / refreshThread：并发与合并（D07 第 9/14 条）', (
       let page: typeof all
       if (before === undefined) page = all.slice(-50)
       else page = all.slice(0, all.findIndex(m => m.id === before))
-      return { status: 200, body: { threadId: 'team', title: '团队', messages: page, hasMore: page.length < all.length, oldestId: page[0]?.id ?? null } }
+      return { status: 200, body: { threadId: 'b_1', title: '探路', messages: page, hasMore: page.length < all.length, oldestId: page[0]?.id ?? null } }
     })
     const hub = createHubStore()
-    await hub.refreshThread('team')
-    expect(hub.getSnapshot().threads.team?.messages).toHaveLength(50)
-    await hub.refreshThread('team', 'm_11') // 加载更早：10 条历史 + 已有 50 条
-    expect(hub.getSnapshot().threads.team?.messages).toHaveLength(60)
-    expect(hub.getSnapshot().threads.team?.messages[0]?.id).toBe('m_1')
+    await hub.refreshThread('b_1')
+    expect(hub.getSnapshot().threads.b_1?.messages).toHaveLength(50)
+    await hub.refreshThread('b_1', 'm_11') // 加载更早：10 条历史 + 已有 50 条
+    expect(hub.getSnapshot().threads.b_1?.messages).toHaveLength(60)
+    expect(hub.getSnapshot().threads.b_1?.messages[0]?.id).toBe('m_1')
     // 新推送：最新一页（50 条）按 id 合并，60 条历史仍在，新消息追加。
     total = 61
-    await hub.refreshThread('team')
-    const merged = hub.getSnapshot().threads.team?.messages ?? []
+    await hub.refreshThread('b_1')
+    const merged = hub.getSnapshot().threads.b_1?.messages ?? []
     expect(merged).toHaveLength(61)
     expect(merged[0]?.id).toBe('m_1')
     expect(merged.at(-1)?.id).toBe('m_61')

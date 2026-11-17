@@ -18,6 +18,10 @@ export const HUB_EVENT_SCOPES = {
   project: 'project',
   /** 办公室投影变化：队友状态、账本、收件箱或资料变动都可能改变房间；botId 按来源带。 */
   office: 'office',
+  /** P75c：记忆（主人的规矩与偏好）新增、更正、撤销、删除；记忆页据此重取，全队共用，botId 固定 null。 */
+  memory: 'memory',
+  /** P76i：主人上次打开的记录变化（上报「正在看」、生成或收起离开期间摘要）；全队共用，botId 固定 null。 */
+  presence: 'presence',
 } as const;
 
 /** 订阅者只需处理这些公开范围，不应判断 queue、wakes、bots 等内部表名。 */

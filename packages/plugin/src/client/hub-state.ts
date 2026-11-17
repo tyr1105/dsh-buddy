@@ -9,18 +9,19 @@ import { createStore, type Store } from './store.js'
 import { newUrgentInbox } from './logic/feeds.js'
 import { refreshPlan } from './logic/scopes.js'
 import {
-  canRequestById, exitMissingSelection, isMissingFromRoster, isMissingTopic, nextGoneIds, nextGoneTopicIds,
-  shouldExitSelection, shouldExitTopicSelection, TEAM_THREAD_ID,
+  canRequestById, DEFAULT_LANDING_VIEW, exitMissingSelection, isMissingFromRoster, isMissingTopic, isNoThread, landingSurface,
+  nextGoneIds, nextGoneTopicIds, NO_THREAD, shouldExitSelection, shouldExitTopicSelection,
 } from './logic/missing-teammate.js'
 import { isTopicThreadId } from './logic/topics.js'
 import type { TopicDraft } from './logic/topic-draft.js'
 import type { CommandResult } from '../shared/views.js'
-import type { ActivityView, BotView, InboxItemView, InboxView, OfficeView, OverviewView, ProjectView, RecentSessionView, ResourceView, SettingsView, ThreadView, WakeLedgerRow, WakeLedgerView } from '../shared/views.js'
+import type { ActivityView, ActiveJobsView, BotView, InboxItemView, InboxView, MemoryPageView, OfficeView, OverviewView, ProjectView, ResourceView, SettingsView, SkillLibraryView, ThreadView, WakeLedgerRow, WakeLedgerView, WeeklyUsageView } from '../shared/views.js'
 
 /** 应用内提示（shell.overlay 上的一条，4 秒自动消失）。 */
 export interface HubToast { id: string; text: string; inboxItemId: string }
 
-export type PageView = 'main' | 'office' | 'resource' | 'project' | 'inbox' | 'activity' | 'settings'
+/** 页面视图；P75k 起多一页「关于你的记忆」（memory）；P86 起它是设置页里的一个分区（左栏选中「设置」）。 */
+export type PageView = 'main' | 'office' | 'resource' | 'project' | 'inbox' | 'activity' | 'settings' | 'memory'
 
 export interface HubState {
   overview: OverviewView | null
@@ -33,7 +34,21 @@ export interface HubState {
   inbox: InboxView | null
   activity: ActivityView | null
   settings: SettingsView | null
-  recentSessions: RecentSessionView[]
+  /** P76k：设置页「最近 7 天的用量」表；旧宿主没有这个接口时保持 null，那一块不显示。 */
+  weeklyUsage: WeeklyUsageView | null
+  /** 用量表读不出来的原因（只影响这一块，不标整页断开）。 */
+  weeklyUsageError: string | null
+  /**
+   * P75k：「关于你的记忆」一页的视图（全队共用一份，刷新时整份替换）。null 表示还没取到（页面显示骨架）；
+   * 取失败时在 memoryError 里记原因，旧数据保留不清掉。收到 memory 事件时重取。
+   */
+  memoryPage: MemoryPageView | null
+  memoryError: string | null
+  /**
+   * P75k：从约定卡的出处点过来时要定位的那一条记忆；记忆页定位完成（或找不到）后清空，
+   * 这样之后刷新、再次进入页面都不会被同一个旧目标拽回去（与 inboxFocus 同一做法）。
+   */
+  memoryFocusId: string | null
   bots: Record<string, BotView>
   threads: Record<string, ThreadView>
   /**
@@ -44,6 +59,19 @@ export interface HubState {
   ledgers: Record<string, WakeLedgerView | null>
   /** 单个账本拉取失败的原因（不影响整页连接状态，界面上给「重试」）。 */
   ledgerErrors: Record<string, string>
+  /**
+   * P75j：员工右侧栏「技能库」一栏的视图，按员工 id 存。随员工详情一起取，收到这位员工的 bot 事件时重取。
+   * 没有这个员工的键表示还没取到（界面显示骨架占位）；取失败时在 skillLibraryErrors 里记原因，旧数据保留不清掉。
+   */
+  skillLibraries: Record<string, SkillLibraryView>
+  skillLibraryErrors: Record<string, string>
+  /**
+   * P76j：每位员工的「在办的事」（右侧栏）。按员工 id 存；没有这个键表示还没取到或旧宿主没有这条路由，
+   * 界面退回现有的工作会话列表，不报错。
+   */
+  activeJobs: Record<string, ActiveJobsView>
+  /** 走查与排查用：最近一次取「在办的事」失败的原因；不显示给主人，也不标整页断开。 */
+  activeJobsError: string | null
   /** 宿主连不上时整页提示。 */
   connectionDown: boolean
   /** 连不上的原因（D05 第 13 条 + D07 第 12 条）：disabled=已停用；starting=启动中；failed=启动失败；null=普通连不上。 */
@@ -63,10 +91,13 @@ export interface HubState {
   activityError: string | null
   /** 当前页面视图（主视图 / 收件箱 / 活动流 / 设置）。 */
   view: PageView
-  /** 当前选中的线程：'team'、队友 id 或项目主题 id（ptp_ 开头，P63）。 */
+  /**
+   * 当前选中的线程：队友 id 或项目主题 id（ptp_ 开头，P63）；空串表示没有选中任何对话。
+   * P71 起团队全景下线，不再有 'team'；旧数据里存的 'team' 读进来时按空串处理（见 logic/missing-teammate 的 landingSurface）。
+   */
   selectedThread: string
   /**
-   * 选中的队友已不存在、被自动退回团队全景的次数（P58）。
+   * 选中的队友已不存在、被自动退回办公室的次数（P58；P71 前退回团队全景）。
    * 页面看到数字变化，就把跟这位队友绑定的局部状态（返回按钮、右栏、提示条等）一起归位。
    */
   selectionExitSeq: number
@@ -108,8 +139,15 @@ export type HubStore = Store<HubState> & {
   refreshInbox(): Promise<void>
   refreshActivity(before?: string): Promise<void>
   refreshSettings(): Promise<void>
-  refreshRecentSessions(): Promise<void>
+  /** P76k：拉设置页的「最近 7 天的用量」表；失败只记在这一块里，不标整页断开。 */
+  refreshWeeklyUsage(): Promise<void>
+  /** P75k：拉「关于你的记忆」一页；失败只记在这一页里，不标整页断开。 */
+  refreshMemory(): Promise<void>
   refreshBot(botId: string): Promise<void>
+  /** P75j：拉某位员工的技能库一栏；失败只记在这一栏里，不标整页断开。 */
+  refreshSkillLibrary(botId: string): Promise<void>
+  /** P76j：拉某位员工的「在办的事」；旧宿主没有这条路由时保持没有这个键，界面退回工作会话列表。 */
+  refreshActiveJobs(botId: string): Promise<void>
   refreshThread(threadId: string, before?: string): Promise<void>
   /** 拉一次唤醒的账本详情（按需调用）。 */
   refreshLedgerDetail(wakeId: string): Promise<void>
@@ -140,6 +178,14 @@ export type HubStore = Store<HubState> & {
   setActiveProject(projectId: string | null): void
   /** 在项目里开一张草稿主题（P60）：中栏切到空聊天，不发任何命令。 */
   openTopicDraft(projectId: string): void
+  /**
+   * P75k：打开「关于你的记忆」；带 memoryId 时（约定卡的出处、「已记住」一行）记下要定位的那一条。
+   * P86：记忆页已收进设置页，这个视图值 memory 表示「设置页停在记忆分区」；设置页的导航点「关于你的记忆」时不带 memoryId，
+   * 点同一分区也会重新取一次视图。
+   */
+  requestMemory(memoryId?: string): void
+  /** P75k：记忆页定位完成后清掉定位请求。 */
+  clearMemoryFocus(): void
   setView(view: PageView): void
   dismissToast(id: string): void
 }
@@ -169,10 +215,12 @@ export function mergeThreadMessages(
 
 function emptyState(): HubState {
   return {
-    overview: null, office: null, resource: null, project: null, inbox: null, activity: null, settings: null, recentSessions: [], bots: {}, threads: {},
-    ledgers: {}, ledgerErrors: {},
+    overview: null, office: null, resource: null, project: null, inbox: null, activity: null, settings: null, memoryPage: null, memoryError: null, memoryFocusId: null, bots: {}, threads: {},
+    weeklyUsage: null, weeklyUsageError: null,
+    ledgers: {}, ledgerErrors: {}, skillLibraries: {}, skillLibraryErrors: {}, activeJobs: {}, activeJobsError: null,
     connectionDown: false, downReason: null, downMessage: null, settingsError: null, activityError: null,
-    view: 'main', selectedThread: 'team', selectionExitSeq: 0, newBotRequest: 0, newProjectRequest: 0,
+    // P71：团队全景下线后，刚打开、什么都没选时落在办公室。
+    view: DEFAULT_LANDING_VIEW, selectedThread: NO_THREAD, selectionExitSeq: 0, newBotRequest: 0, newProjectRequest: 0,
     activeProjectId: null, topicDraft: null, toasts: [],
   }
 }
@@ -280,8 +328,8 @@ export function createHubStore(): HubStore {
    * 否则状态一翻转，页面又会重拉线程，形成新的循环。
    */
   const confirmGone = async (id: string): Promise<boolean> => {
-    // 主题不在名册里，拿名册核对只会得出错误结论；它的存亡由项目视图判断。
-    if (id === TEAM_THREAD_ID || isTopicThreadId(id)) return false
+    // 主题不在名册里，拿名册核对只会得出错误结论；它的存亡由项目视图判断。「没有选中」更无从核对。
+    if (isNoThread(id) || isTopicThreadId(id)) return false
     const ticket = rosterTicket()
     let overview: OverviewView
     try { overview = await api.overview() } catch { return false }
@@ -380,7 +428,33 @@ export function createHubStore(): HubStore {
         else patch({ settingsError: message })
       }
     },
-    async refreshRecentSessions() { await guard(async () => ({ recentSessions: await api.recentSessions() })) },
+    /**
+     * 记忆页取数：与技能库同一个做法，失败只记在这一页里（不标整页断开），旧数据保留；
+     * 成功时清掉错误。合并在 updater 里做，两次推送挨着到时不会把新数据改回旧值。
+     */
+    async refreshMemory() {
+      try {
+        const view = await api.memoryPage()
+        store.update(prev => ({ ...prev, memoryPage: view, memoryError: null }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[agent-hub] 拉取记忆页失败:', error)
+        store.update(prev => ({ ...prev, memoryError: message }))
+      }
+    },
+    /**
+     * P76k：用量表（只读）。与设置页同一口径：读不到只在设置页那一块给原因与「重试」，
+     * 不标整页断开；旧宿主的这条路由不存在时也走这里，界面据此不显示这一块。
+     */
+    async refreshWeeklyUsage() {
+      try {
+        patch({ weeklyUsage: await api.weeklyUsage(), weeklyUsageError: null })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[agent-hub] 拉取用量表失败:', error)
+        patch({ weeklyUsageError: message })
+      }
+    },
     /**
      * 机器人详情（D07 第 9 条）：先拿到详情，再在 updater 里合并进**最新**状态——
      * 两条 bot 推送挨着到时，后返回的请求不能把另一台刚拉到的新详情改回旧值。
@@ -388,6 +462,10 @@ export function createHubStore(): HubStore {
     async refreshBot(botId) {
       // 主题 id 不是队友，绝不能拿去拉 /bot：断线重连时「当前选中」可能就是主题。
       if (isTopicThreadId(botId) || !mayRequestById(botId)) return
+      // P75j：技能库一栏随员工详情一起取（两个请求并行；技能库取失败不影响详情，也不标整页断开）。
+      void hub.refreshSkillLibrary(botId)
+      // P76j：在办的事同样随详情取一次（取不到按旧宿主处理，不影响详情）。
+      void hub.refreshActiveJobs(botId)
       try {
         const view = await api.bot(botId)
         store.update(prev => ({ ...prev, bots: { ...prev.bots, [botId]: view } }))
@@ -398,6 +476,37 @@ export function createHubStore(): HubStore {
         const message = error instanceof Error ? error.message : String(error)
         console.error('[agent-hub] 拉取机器人详情失败:', error)
         patch({ connectionDown: true, downReason: reasonOfError(message), downMessage: reasonOfError(message) === 'failed' ? message : null })
+      }
+    },
+    async refreshSkillLibrary(botId) {
+      if (isTopicThreadId(botId) || !mayRequestById(botId)) return
+      try {
+        const view = await api.skillLibrary(botId)
+        // 合并进最新状态：两次推送挨着到时，后返回的请求不会把先到的新数据改回旧值（与 refreshBot 同理）。
+        store.update(prev => {
+          const skillLibraryErrors = { ...prev.skillLibraryErrors }
+          delete skillLibraryErrors[botId]
+          return { ...prev, skillLibraries: { ...prev.skillLibraries, [botId]: view }, skillLibraryErrors }
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[agent-hub] 拉取技能库失败:', error)
+        store.update(prev => ({ ...prev, skillLibraryErrors: { ...prev.skillLibraryErrors, [botId]: message } }))
+      }
+    },
+    /**
+     * P76j：在办的事。取不到时不改任何东西——旧宿主没有这条路由（404）就是这种情况，
+     * 界面按「没有这个键」退回工作会话列表；其余原因只记一句原因，不标整页断开。
+     */
+    async refreshActiveJobs(botId) {
+      if (isTopicThreadId(botId) || !mayRequestById(botId)) return
+      try {
+        const view = await api.activeJobs(botId)
+        store.update(prev => ({ ...prev, activeJobs: { ...prev.activeJobs, [botId]: view }, activeJobsError: null }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[agent-hub] 拉取在办的事失败（按旧宿主处理）:', error)
+        patch({ activeJobsError: message })
       }
     },
     /**
@@ -480,6 +589,12 @@ export function createHubStore(): HubStore {
           if (plan.inbox) jobs.push(hub.refreshInbox())
           if (plan.activity) jobs.push(hub.refreshActivity())
           if (plan.settings) jobs.push(hub.refreshSettings())
+          // P75k：记忆变化（memory 范围）：重取记忆页；线程里「已记住」行的状态随线程重取。
+          if (plan.memory === true) {
+            jobs.push(hub.refreshMemory())
+            const current = store.getSnapshot().selectedThread
+            if (!isNoThread(current)) jobs.push(hub.refreshThread(current))
+          }
           // 账本变化：重拉已经展开过的那些（通常只有一个，失败只影响那一块）。
           if (plan.ledgers) {
             for (const wakeId of Object.keys(store.getSnapshot().ledgers)) jobs.push(hub.refreshLedgerDetail(wakeId))
@@ -499,17 +614,20 @@ export function createHubStore(): HubStore {
       const { selectedThread: selected, overview: rosterBefore } = store.getSnapshot()
       const viewsDone = hub.refreshAll()
       void hub.refreshSettings()
+      // P75k：断线期间记忆可能变了；记忆页正摆着时补拉一次（没打开过的不拉，打开时会取最新的）。
+      if (store.getSnapshot().view === 'memory') void hub.refreshMemory()
       const reloadDetails = (): void => {
-        store.update(prev => ({ ...prev, bots: {}, ledgers: {}, ledgerErrors: {} }))
-        // 重新读选中：名册核对后，它可能已经退回了团队全景。
+        store.update(prev => ({ ...prev, bots: {}, ledgers: {}, ledgerErrors: {}, skillLibraries: {}, skillLibraryErrors: {} }))
+        // 重新读选中：名册核对后，它可能已经退回了办公室（没有选中）。没有选中时什么都不用补拉。
         const current = store.getSnapshot().selectedThread
+        if (isNoThread(current)) return
         void hub.refreshThread(current)
-        if (current !== 'team') void hub.refreshBot(current)
+        void hub.refreshBot(current)
       }
       // P58：断线期间队友可能被删、数据可能被清空，手里有旧名册时要等新名册回来，确认它还在再补拉。
       // 清缓存也要等：页面看到详情缓存空了会立刻按旧名册拉详情，那样又是一次报错请求。
-      // 团队线程不依赖名册；手里还没有名册时等也等不出什么，从本地恢复的选中由统一闸门拦住。
-      if (selected === 'team' || rosterBefore === null) reloadDetails()
+      // 没有选中时不依赖名册；手里还没有名册时等也等不出什么，从本地恢复的选中由统一闸门拦住。
+      if (isNoThread(selected) || rosterBefore === null) reloadDetails()
       else void viewsDone.then(reloadDetails)
     },
     async send(threadId, text) {
@@ -519,6 +637,11 @@ export function createHubStore(): HubStore {
     },
     command(name, input) { return api.command(name, input) },
     selectThread(threadId) {
+      // P71：团队全景已下线。旧入口（或旧数据）要选 'team'、或者选了个空值时，不进对话，落到办公室。
+      if (isNoThread(threadId)) {
+        store.update(prev => ({ ...prev, view: DEFAULT_LANDING_VIEW, selectedThread: NO_THREAD, activeProjectId: null, topicDraft: null }))
+        return
+      }
       selectionSerial += 1
       // 点队友或主题都直接进对话（P64、P63）。切换时清掉目标线程的旧缓存，进去拉最新一页。
       // P60：选了任何线程都离开草稿（包括草稿发出第一句后切进新主题），草稿不留痕迹。
@@ -529,12 +652,12 @@ export function createHubStore(): HubStore {
         return { ...prev, selectedThread: threadId, view: 'main', threads, topicDraft: null }
       })
       // P63：主题的「已读」由中心页负责，页面真的把这条主题摆出来才算读过。
-      // 这里只管核对：手头的项目视图里没有它（刚建好的，或已被删的）就重拉一次，确认没了退回团队全景。
+      // 这里只管核对：手头的项目视图里没有它（刚建好的，或已被删的）就重拉一次，确认没了退回办公室。
       if (isTopicThreadId(threadId)) {
         if (isMissingTopic(threadId, store.getSnapshot().project)) void hub.refreshProject()
         return
       }
-      // P58：手头名册里查不到这个 id（刚建好的，或已被删的）：马上重拉名册核对，确认没了就退回团队全景。
+      // P58：手头名册里查不到这个 id（刚建好的，或已被删的）：马上重拉名册核对，确认没了就退回办公室。
       // 这种情况不发标已读：对一个可能不存在的队友标已读没有意义，失败了还会吞掉这次核对。
       if (isMissingFromRoster(threadId, store.getSnapshot().overview)) { void hub.refreshOverview(); return }
       // 选中即已读：顺手把未读清掉（失败不影响展示）。
@@ -559,6 +682,14 @@ export function createHubStore(): HubStore {
       store.update(prev => ({ ...prev, view: 'project', activeProjectId: projectId, topicDraft: null }))
     },
     setActiveProject(projectId) { patch({ activeProjectId: projectId }) },
+    /** 打开记忆页（P75k）：切视图、记下要定位的那一条，并重取一次视图（入口每次点都取最新的）。 */
+    requestMemory(memoryId) {
+      store.update(prev => ({ ...prev, view: 'memory', activeProjectId: null, topicDraft: null, memoryFocusId: memoryId ?? null }))
+      void hub.refreshMemory()
+    },
+    clearMemoryFocus() {
+      store.update(prev => (prev.memoryFocusId === null ? prev : { ...prev, memoryFocusId: null }))
+    },
     /**
      * 开草稿主题（P60）：只改前端状态，不建主题、不发命令。
      * seq 每次加一，同一个项目再点一次也是一张全新的空白聊天。
@@ -570,9 +701,12 @@ export function createHubStore(): HubStore {
         topicDraft: { projectId, seq: (prev.topicDraft?.seq ?? 0) + 1 },
       }))
     },
-    /** 换页时收掉项目选中态（P44-R2）：不这样做，离开项目页后左栏还会亮着旧行。换页也离开草稿（P60）。 */
+    /**
+     * 换页时收掉项目选中态（P44-R2）：不这样做，离开项目页后左栏还会亮着旧行。换页也离开草稿（P60）。
+     * P71：要回主视图（对话）但手上没有选中任何对话时，落到办公室，不摆一页空对话。
+     */
     setView(view) {
-      store.update(prev => ({ ...prev, view, activeProjectId: null, topicDraft: null }))
+      store.update(prev => ({ ...prev, view: landingSurface(view, prev.selectedThread).view, activeProjectId: null, topicDraft: null }))
     },
     dismissToast(id) { store.update(prev => ({ ...prev, toasts: prev.toasts.filter(t => t.id !== id) })) },
   }

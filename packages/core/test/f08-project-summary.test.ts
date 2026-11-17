@@ -109,7 +109,7 @@ describe('F08 collectProjectIssues', () => {
     expect(issues[0]).toMatchObject({ level: 'error', code: 'owner_bot_invalid', subjectBotId: B2 });
     // 正文只说人话，绝不露内部 id；id 只放在 subjectBotId 里供界面放进悬停 title。
     expect(issues[0]!.text).not.toContain(B2);
-    expect(issues[0]!.text).toContain('已删除或退役');
+    expect(issues[0]!.text).toContain('已删除或归档');
   });
   it('成员队友失效报 warning', () => {
     const issues = collectProjectIssues(project({ memberBotIds: [B2] }), [], []);

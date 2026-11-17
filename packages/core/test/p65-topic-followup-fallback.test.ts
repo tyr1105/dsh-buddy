@@ -120,6 +120,10 @@ describe('P65 旧数据照常', () => {
 describe('P65 到期默认处理不是主人的回答', () => {
   it('提问到期按默认处理：照旧落私聊，主题里不加旁白、不动计数', async () => {
     const { fix, wang, topicId, item } = await wangAsked();
+    // P76c：员工新提的提问不再到期（expiresAt 为 null）；这条用例证明的是「到期按默认处理」的落点与旁白规则，
+    // 该机制对 P76c 之前就已经开着的旧提问仍然有效，所以把这条提问改成带原来的 72 小时到期时间（模拟旧提问），其余断言原样保留。
+    expect(fix.ctx.store.table('inbox').get(item.id)!.expiresAt).toBeNull();
+    fix.ctx.store.table('inbox').patch(item.id, { expiresAt: fix.ctx.clock.now() + fix.ctx.settings.questionExpiryMs });
     const before = floors(fix.ctx, topicId).length;
     const turns = fix.ctx.store.table('projectTopics').get(topicId)!.agentTurnsSinceOwner;
     fix.ctx.clock.advance(fix.ctx.settings.questionExpiryMs + 60_000);
@@ -164,8 +168,8 @@ describe('P65 额度：回到主题的那一回合照旧不计窗口回合，账
     expect(ledger).toHaveLength(1);
     expect(ledger[0]!.tokens).toBeGreaterThan(0);
     const snapshot = buildSnapshot(fix.ctx, owner!.id, fix.ctx.clock.now());
-    expect(snapshot.todayTurns).toBe(0);
-    expect(snapshot.windowTurns).toBe(0);
+    // P76c：快照里只剩 selfTurnsToday；每窗口回合（windowTurns）的概念已取消，对应一行删除。
+    expect(snapshot.selfTurnsToday).toBe(0);
   });
 
   it('审批后回到主题的那一回合同样不计窗口、不占自主额度，账本照记', async () => {
@@ -179,7 +183,7 @@ describe('P65 额度：回到主题的那一回合照旧不计窗口回合，账
     await speak(fix, owner!, '写好了');
     expect(fix.ctx.store.table('quota').get('quota')?.botTurns ?? 0).toBe(0);
     expect(fix.ctx.store.log('ledger').all().filter(row => row.wakeId === wakeId)).toHaveLength(1);
-    expect(buildSnapshot(fix.ctx, owner!.id, fix.ctx.clock.now()).todayTurns).toBe(0);
+    expect(buildSnapshot(fix.ctx, owner!.id, fix.ctx.clock.now()).selfTurnsToday).toBe(0);
   });
 
   it('反例：私聊提问回答后接着做的那一回合照旧计入窗口', async () => {
@@ -221,7 +225,7 @@ describe('P65 规则函数', () => {
     const topicId = await openTopic(fix, '长'.repeat(50));
     const fields = topicReplyFields(fix.ctx.store.table('projectTopics').get(topicId)!);
     expect(fields).toMatchObject({ topicId, ownerInitiated: true });
-    expect(fields.ownerSummary).toBe(`按你的回复接着做主题「${'长'.repeat(40)}…」`);
+    expect(fields.ownerSummary).toBe(`按你的回复继续处理主题「${'长'.repeat(40)}…」`);
     expect(fields.summary).toContain(`主题「${'长'.repeat(40)}…」`);
   });
 });

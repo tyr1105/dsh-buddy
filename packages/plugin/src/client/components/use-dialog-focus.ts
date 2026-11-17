@@ -14,8 +14,68 @@
  * 链上的兄弟节点打 inert（含顶栏），遮罩子树保持可用；关闭时按记录的原值逐节点还原。
  * 与右栏抽屉的 useDrawerFocus 各自记录、各自还原：弹窗叠在抽屉上时两套 inert 叠加，
  * 弹窗关闭只撤自己打过的标记，抽屉的背景隔离仍然成立。
+ *
+ * 弹窗叠弹窗（2026-11-10 修）：编辑项目弹窗上再弹「归档项目」确认框时，确认框是编辑弹窗的
+ * 兄弟节点，旧逻辑会被编辑弹窗的 MutationObserver 当成「背景」打上 inert，按钮全都点不动。
+ * 现在每个弹窗打开时领一个递增层号，只隔离比自己早的内容；后打开、叠在上面的弹窗不碰。
  */
 import { useEffect, useRef } from 'react'
+
+/** 弹窗层号写在遮罩节点的这个属性上；数字越大越晚打开、越靠上。 */
+export const DIALOG_LAYER_ATTR = 'data-ah-dialog-layer'
+/** 全局递增的层号计数：每个弹窗打开时领一个。 */
+let dialogLayerSeq = 0
+
+/** 判断时只用到节点的这三个能力，测试可以用假节点代替真 DOM。 */
+export interface LayerProbe {
+  matches(selector: string): boolean
+  getAttribute(name: string): string | null
+  querySelectorAll(selector: string): ArrayLike<{ getAttribute(name: string): string | null }>
+}
+
+/**
+ * 这个节点本身或里面，有没有比 myLayer 更晚打开的模态弹窗。有的话，下层弹窗不能把它设成不可交互。
+ * 还没登记层号的模态弹窗也算更晚：它刚挂上页面、自己的初始化还没跑，正是叠上来的那一层。
+ */
+export function containsNewerDialog(node: LayerProbe, myLayer: number): boolean {
+  const modals: Array<{ getAttribute(name: string): string | null }> = []
+  if (node.matches('[aria-modal="true"]')) modals.push(node)
+  modals.push(...Array.from(node.querySelectorAll('[aria-modal="true"]')))
+  return modals.some(modal => {
+    const layer = modal.getAttribute(DIALOG_LAYER_ATTR)
+    return layer === null || Number(layer) > myLayer
+  })
+}
+
+/** 只用到「能不能交互」这一个开关，测试可以用普通对象代替真节点。 */
+export interface InertTarget { inert: boolean }
+
+/**
+ * 所有弹窗共用的「不可交互」登记：同一个节点可能同时被几层弹窗设成不可交互。
+ * 记下第一次被设之前的原值，以及现在被几层压着；最后一层放手时才还原成原值。
+ * 为什么不各自还原：编辑项目弹窗和归档确认框会在同一刻一起关掉，React 按顺序清理，
+ * 各自还原「自己打开那一刻看到的值」，后清理的那层会把页面又设回不可交互，整页点不动（2026-11-10 实测）。
+ */
+const inertHolds = new Map<InertTarget, { count: number; original: boolean }>()
+
+/** 压住一个节点：设成不可交互，并把压着它的层数加一。 */
+export function holdInert(target: InertTarget): void {
+  const entry = inertHolds.get(target)
+  if (entry) entry.count += 1
+  else inertHolds.set(target, { count: 1, original: target.inert })
+  target.inert = true
+}
+
+/** 放开一个节点：层数减一，没人压着了才还原成第一次被压之前的样子。 */
+export function releaseInert(target: InertTarget): void {
+  const entry = inertHolds.get(target)
+  if (!entry) return
+  entry.count -= 1
+  if (entry.count <= 0) {
+    inertHolds.delete(target)
+    target.inert = entry.original
+  }
+}
 
 export function useDialogFocus(onClose: () => void, busy: boolean) {
   const ref = useRef<HTMLDivElement>(null)
@@ -34,6 +94,9 @@ export function useDialogFocus(onClose: () => void, busy: boolean) {
   useEffect(() => {
     const dialog = ref.current
     if (!dialog) return
+    // 领本层层号：之后叠上来的弹窗层号更大，本层不去隔离它们。
+    const myLayer = ++dialogLayerSeq
+    try { dialog.setAttribute(DIALOG_LAYER_ATTR, String(myLayer)) } catch { /* 写不上属性只影响叠加判断 */ }
     const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]')).filter(el => el.getClientRects().length > 0)
     // autoFocus 已把焦点放进弹窗就尊重它；否则优先首个表单字段，再退到非头部按钮
     // （避免焦点落在头部「关闭」上，误触回车即关窗），最后才是弹窗自身。
@@ -63,8 +126,8 @@ export function useDialogFocus(onClose: () => void, busy: boolean) {
     // ---------- 背景 inert：把弹窗祖先链之外的页面内容全部移出无障碍树与 Tab 序列 ----------
     // 页面根带 data-plugin-page；找不到时退化为遮罩的父节点，保证逻辑在任何挂载点都不报错。
     const root = dialog.closest<HTMLElement>('[data-plugin-page]') ?? dialog.parentElement
-    // 每个被本 hook 打过 inert 的节点及其原值：还原时一个不差地恢复，不替别的主人改状态。
-    const inerted = new Map<HTMLElement, boolean>()
+    // 本层压过的节点。原值记在所有弹窗共用的登记里，关闭时逐个放开，最后一层放手才还原。
+    const held = new Set<HTMLElement>()
     let observer: MutationObserver | null = null
     if (root) {
       // 祖先链：根之下、遮罩之上（含遮罩）每一层的直系节点。链上节点保持可用，
@@ -82,8 +145,13 @@ export function useDialogFocus(onClose: () => void, busy: boolean) {
           for (const current of chain) {
             for (const kid of Array.from(parent.children)) {
               if (!(kid instanceof HTMLElement) || kid === current) continue
-              if (!inerted.has(kid)) inerted.set(kid, kid.inert)
-              kid.inert = true
+              // 叠在本层上面的弹窗（或包含它的节点）保持可用；之前误打过的标记按原值撤掉。
+              if (containsNewerDialog(kid, myLayer)) {
+                if (held.has(kid)) { releaseInert(kid); held.delete(kid) }
+                continue
+              }
+              if (held.has(kid)) kid.inert = true
+              else { holdInert(kid); held.add(kid) }
             }
             parent = current
           }
@@ -103,7 +171,7 @@ export function useDialogFocus(onClose: () => void, busy: boolean) {
       dialog.removeEventListener('keydown', keydown)
       try { observer?.disconnect() } catch { /* 忽略 */ }
       try {
-        for (const [kid, prev] of inerted) kid.inert = prev
+        for (const kid of held) releaseInert(kid)
       } catch { /* 节点已随弹窗一起卸载时无需还原 */ }
       // 还给当初打开弹窗的按钮（节点已不在则交给浏览器默认，不强焦点）。
       const previous = previousRef.current

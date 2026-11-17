@@ -7,9 +7,15 @@
  *   赋值的门面上；未就绪时访问返回中文错误而不是崩。
  * - DisabledHub：rootDir/.hub/DISABLED 存在时只提供界面（显示已停用），不启动引擎。
  */
+import { execFile } from 'node:child_process'
+import { lstatSync, realpathSync } from 'node:fs'
+import { posix } from 'node:path'
+import { previewRootDir } from '@agent-hub/core'
 import type { Hub, UiApi, CommandResult } from '@agent-hub/core'
-import type { BotView, ProjectView, ResourceView, SettingsView, ThreadView } from '../shared/views.js'
+import type { BotView, MemoryPageView, ProjectView, ResourceView, SettingsView, SkillDetailView, SkillLibraryView, ThreadView } from '../shared/views.js'
 import type { HubFacade, ChangedEvent, ChangeListener } from './hub-facade.js'
+import { restoreSkillInput, rollbackSkillInput } from './skill-input.js'
+import { chooseLearnSessionInput, correctMemoryInput, memoryIdInput } from './memory-input.js'
 
 // ---------- 参数校验小工具（中文错误，说清哪一项不对） ----------
 
@@ -34,12 +40,155 @@ function reqBool(input: Record<string, unknown>, key: string): boolean {
   return value
 }
 
+// ---------- 打开预览（P74g）：宿主一侧的「只打开 core 返回的目标」 ----------
+
+/** 打开预览的结果：成功只带目标；失败带目标和一句中文说明（界面把目标显示出来，主人可以复制自己打开）。 */
+export type OpenResult = { ok: true; path: string } | { ok: false; path: string; error: string }
+
+/** 打不开时给主人的固定说明。 */
+export const OPEN_FAILED_TEXT = '没能自动打开，可以复制这个路径自己打开'
+
+/** 调用系统程序所需的两样东西，都可以替换：测试用替身，永远不会真的打开任何程序或地址。 */
+export interface OpenDeps {
+  platform: NodeJS.Platform
+  /** 与 node:child_process 的 execFile 同形：程序名、参数数组、选项、完成回调。不经过 shell。 */
+  execFile: (file: string, args: string[], options: { timeout: number; windowsHide: boolean }, callback: (error: Error | null) => void) => unknown
+  /**
+   * P74r4b：中心专用的预览目录（<中心数据目录>/.hub/preview）。文件预览打开的是 core 复制出来的副本，
+   * 宿主打开之前必须再确认目标在这个目录之内；没有给出时，一律不打开文件（失败关闭），地址预览不受影响。
+   */
+  previewRoot?: string
+  /** 宿主打开文件之前查看目标用的两个文件操作，可以替换（测试用）；默认用 node:fs 的同步版本。 */
+  files?: PreviewFiles
+}
+
+/** 打开文件之前的检查要用到的文件操作：不跟随链接地看一个路径，以及解析真实路径。 */
+export interface PreviewFiles {
+  /** 路径本身的信息（不跟随符号链接）；不存在返回 null。 */
+  lstat: (path: string) => { isFile: boolean; isSymlink: boolean } | null
+  /** 解析真实路径；失败抛出。 */
+  realpath: (path: string) => string
+}
+
+/** 系统实现：node:fs 的同步 lstat 与 realpath。 */
+const systemPreviewFiles: PreviewFiles = {
+  lstat: path => {
+    try {
+      const info = lstatSync(path)
+      return { isFile: info.isFile(), isSymlink: info.isSymbolicLink() }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw error
+    }
+  },
+  realpath: path => realpathSync(path),
+}
+
+/** 各系统打开默认程序的命令：返回程序名和参数数组。目标永远是参数数组里单独的一项。 */
+export function openCommandFor(platform: NodeJS.Platform, target: string): { file: string; args: string[] } {
+  // macOS：open 目标；Linux：xdg-open 目标。
+  if (platform === 'darwin') return { file: 'open', args: [target] }
+  // Windows：不用 cmd /c start。cmd 会把地址里的 & 当成「接着运行另一条命令」，本机地址的查询串里就可能带 &，
+  // 那样等于把别人写的字送进了命令行。rundll32 的 FileProtocolHandler 同样是用默认程序打开文件或网址，且没有命令行解释这一层。
+  if (platform === 'win32') return { file: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', target] }
+  return { file: 'xdg-open', args: [target] }
+}
+
+/**
+ * 宿主这一层的最后一道检查：目标必须是 core 给出的两种形状之一，且不能被系统程序当成选项。
+ * P74i-m2（第四次审查低-5）：地址预览与核心同一口径——主机必须是本机（localhost、127.0.0.1、[::1]），
+ * 用地址解析后的主机名判断（`http://localhost.evil.example/`、`http://127.0.0.1@evil.example/`
+ * 这类都不放行），不用字符串开头判断。
+ */
+function hostAcceptsTarget(kind: 'file' | 'url', target: string): boolean {
+  if (target === '' || target.startsWith('-') || /[\u0000-\u001f\u007f]/.test(target)) return false
+  if (kind === 'url') {
+    let url: URL | null = null
+    try { url = new URL(target) } catch { url = null }
+    if (url === null) return false
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
+  }
+  // 文件：绝对路径（POSIX 以 / 开头；Windows 以盘符开头）。
+  return target.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(target)
+}
+
+/**
+ * 文件预览打开之前再查一次目标（P74r4b 第 2 节第 2 点；core 已经检查过，这里是第二道）：
+ * - 必须在中心的预览目录之内：目标和预览目录都解析成真实路径，再按路径逐段比较（不用字符串前缀）；
+ * - 必须是普通文件、不是符号链接；
+ * - 扩展名必须是 .html 或 .htm。
+ * 没有给出预览目录、或检查中出了任何错误，都按「不满足」处理。
+ */
+export function previewFileAllowed(target: string, deps: OpenDeps): boolean {
+  try {
+    if (deps.previewRoot === undefined || deps.previewRoot === '') return false
+    if (!/\.html?$/i.test(target)) return false
+    const files = deps.files ?? systemPreviewFiles
+    const info = files.lstat(target)
+    if (info === null || !info.isFile || info.isSymlink) return false
+    const realRoot = files.realpath(deps.previewRoot)
+    const realTarget = files.realpath(target)
+    // 逐段比较：「…/preview」不能把「…/preview-other/…」当成自己里面的。
+    const rest = posix.relative(realRoot, realTarget)
+    return rest !== '' && rest !== '..' && !rest.startsWith('../') && !posix.isAbsolute(rest)
+  } catch {
+    return false
+  }
+}
+
+/** 用系统默认程序打开 target；任何失败（含抛出）都返回 ok: false 和目标，绝不抛出。 */
+export async function openTarget(kind: 'file' | 'url', target: string, deps: OpenDeps): Promise<OpenResult> {
+  const failed: OpenResult = { ok: false, path: target, error: OPEN_FAILED_TEXT }
+  try {
+    if (!hostAcceptsTarget(kind, target)) return failed
+    // 文件：目标必须是中心预览目录里的 .html 普通文件（P74r4b）。
+    if (kind === 'file' && !previewFileAllowed(target, deps)) return failed
+    const { file, args } = openCommandFor(deps.platform, target)
+    await new Promise<void>((resolve, reject) => {
+      deps.execFile(file, args, { timeout: 15000, windowsHide: true }, error => (error === null ? resolve() : reject(error)))
+    })
+    return { ok: true, path: target }
+  } catch {
+    return failed
+  }
+}
+
+/** 真正的系统实现：用 node:child_process 的 execFile（参数数组，不经过 shell）。 */
+export const systemOpenDeps: OpenDeps = {
+  platform: process.platform,
+  execFile: (file, args, options, callback) => execFile(file, args, options, error => callback(error)),
+}
+
+/**
+ * 界面的「打开预览」命令：只认 jobId，先让 core 校验并给出目标，再打开那个目标。
+ * 界面传来的其他任何字段（路径、地址）一律忽略；core 返回错误时原样返回、不调用任何系统程序。
+ */
+async function openJobPreviewCommand(api: UiApi, raw: Record<string, unknown>, deps: OpenDeps): Promise<CommandResult | OpenResult> {
+  const jobId = reqStr(raw, 'jobId')
+  const checked = await api.jobPreviewTarget({ jobId })
+  if (!checked.ok) return { ok: false, error: checked.error }
+  const target = checked.data
+  if (target === undefined) return bad('没能取得预览的位置')
+  return openTarget(target.kind, target.kind === 'file' ? target.path : target.url, deps)
+}
+
 /** 命令表：name → (api, input)。每条都在边界校验，UiApi 内部还会用 zod 再校验一次。 */
-export function dispatchCommand(api: UiApi, name: string, raw: Record<string, unknown>): Promise<CommandResult> {
-  const run = (work: () => Promise<CommandResult>): Promise<CommandResult> =>
+export function dispatchCommand(api: UiApi, name: string, raw: Record<string, unknown>, deps: OpenDeps = systemOpenDeps): Promise<CommandResult> {
+  const run = (work: () => Promise<CommandResult | OpenResult>): Promise<CommandResult> =>
     work().catch(error => bad(error instanceof Error ? error.message : String(error)))
   try {
     switch (name) {
+      // P74g：读一张证据截图（只读）：整对象透传给 core，由 core 的 zod 校验并检查路径。
+      case 'readJobEvidence': return run(() => api.readJobEvidence({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId }))
+      // P74g：打开预览：只认 jobId，目标由 core 给出，宿主只打开这个目标。
+      case 'openJobPreview': return run(() => openJobPreviewCommand(api, raw, deps))
+      // P74i：交付卡与三轮不过卡的按钮、回合上限与「停住了」条目的答复。
+      // 都是普通 core 命令：整对象透传，由 core 的 zod 校验（缺哪一项它会用中文说清）。
+      case 'acceptJob': return run(() => api.acceptJob(raw))
+      case 'chooseJobOption': return run(() => api.chooseJobOption(raw))
+      case 'answerJobCap': return run(() => api.answerJobCap(raw))
+      case 'answerJobStall': return run(() => api.answerJobStall(raw))
       case 'createBot': return run(() => api.createBot(raw))
       case 'updateBot': return run(() => api.updateBot(reqStr(raw, 'botId'), raw.patch))
       case 'setLifecycle': return run(() => api.setLifecycle(reqStr(raw, 'botId'), reqStr(raw, 'lifecycle') as never))
@@ -52,7 +201,7 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'deleteArchivedBot': return run(() => api.deleteArchivedBot(reqStr(raw, 'botId')))
       case 'interruptBot': return run(() => api.interruptBot(raw))
       case 'sendMessage': return run(() => api.sendMessage(reqStr(raw, 'threadId'), reqStr(raw, 'text')))
-      case 'answerInbox': return run(() => api.answerInbox(reqStr(raw, 'id'), reqStr(raw, 'answer')))
+      case 'answerInbox': return run(() => api.answerInbox(reqStr(raw, 'id'), reqStr(raw, 'answer'), optStr(raw, 'note')))
       case 'decideApproval': return run(() => api.decideApproval(reqStr(raw, 'id'), reqBool(raw, 'approve'), optStr(raw, 'note')))
       case 'upsertAspiration': return run(() => api.upsertAspiration(raw))
       case 'upsertGoal': return run(() => api.upsertGoal(raw))
@@ -63,10 +212,26 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'upsertWatch': return run(() => api.upsertWatch(raw))
       case 'decideWatchProposal': return run(() => api.decideWatchProposal(reqStr(raw, 'id'), reqBool(raw, 'approve')))
       case 'upsertRule': return run(() => api.upsertRule(raw))
-      case 'editRoutine': return run(() => api.editRoutine(reqStr(raw, 'id'), raw.patch))
-      case 'teach': return run(() => api.teach(reqStr(raw, 'botId'), reqStr(raw, 'sessionId'), reqStr(raw, 'note')))
+      // P75f：这两个入口已停用（套路并入技能库、教它技能改为对总管说），照任务卡返回固定说明。
+      case 'editRoutine': return Promise.resolve({ ok: false, error: '这个入口已停用：套路已并入技能库，请在技能库里查看。' })
+      case 'teach': return Promise.resolve({ ok: false, error: '这个入口已停用：要员工学某段会话的做法，请对总管说。' })
+      // P75j：技能详情里的「回退到这一版」「放回」。参数在边界先查一遍（中文错误，见 skill-input.ts），
+      // 再交给 core 的命令入口（它还会用 zod 校验一次，并判断技能与版本是否存在）。
+      case 'rollbackSkill': return run(() => api.rollbackSkill(rollbackSkillInput(raw)))
+      case 'restoreSkill': return run(() => api.restoreSkill(restoreSkillInput(raw)))
+      // P75k：「已记住」行与记忆页的五个命令、学习选会话（总管私聊里点某一段会话）。
+      // 与技能库命令同一做法：参数在边界先查一遍（中文错误，见 memory-input.ts），再交给 core 的命令入口（它还会用 zod 校验一次）。
+      case 'undoMemory': return run(() => api.undoMemory(memoryIdInput(raw)))
+      case 'correctMemory': return run(() => api.correctMemory(correctMemoryInput(raw)))
+      case 'deleteMemory': return run(() => api.deleteMemory(memoryIdInput(raw)))
+      case 'undoDeleteMemory': return run(() => api.undoDeleteMemory(memoryIdInput(raw)))
+      case 'undoCorrectMemory': return run(() => api.undoCorrectMemory(memoryIdInput(raw)))
+      case 'chooseLearnSession': return run(() => api.chooseLearnSession(chooseLearnSessionInput(raw)))
       case 'pokeBot': return run(() => api.pokeBot(reqStr(raw, 'botId'), optStr(raw, 'text')))
       case 'updateSettings': return run(() => api.updateSettings(raw))
+      // P76k：页面可见时上报「你正在看」、收起离开期间摘要；都不带参数，core 内部用 zod 校验空对象。
+      case 'ownerSeen': return run(() => api.ownerSeen())
+      case 'dismissAwaySummary': return run(() => api.dismissAwaySummary())
       // P38：连接草稿只读自检，整对象透传给 core zod 校验；不落设置、不产生审批。
       case 'testKnowledgeConnection': return run(() => api.testKnowledgeConnection(raw))
       case 'markThreadRead': return run(() => api.markThreadRead(reqStr(raw, 'threadId')))
@@ -103,6 +268,12 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'rejectTask': return run(() => api.rejectTask(raw))
       // 任务关联产物（F08 尾巴）：整对象透传，任务/产物是否存在与上限由 core 判定。
       case 'attachTaskArtifact': return run(() => api.attachTaskArtifact(raw))
+      // P72：约定卡上点「定了」，整对象（agreementId、version、choices）透传，由 core zod 校验。
+      case 'confirmAgreement': return run(() => api.confirmAgreement(raw))
+      // P73e：三问回答、组队卡编辑与确认，整对象透传，由 core zod 校验（rev、候选编号、动作、值）。
+      case 'answerTeamQuestion': return run(() => api.answerTeamQuestion(raw))
+      case 'editTeamCandidate': return run(() => api.editTeamCandidate(raw))
+      case 'confirmTeamProposal': return run(() => api.confirmTeamProposal(raw))
       default: return Promise.resolve(bad(`未知命令：${name}；请更新插件后重试`))
     }
   } catch (error) {
@@ -126,7 +297,11 @@ export class RealHubFacade implements HubFacade {
    */
   private pushChannelCache: string = 'none'
 
-  constructor(private readonly hub: Hub, store?: PushChannelStore) {
+  /** 打开预览时用的参数：系统程序加上中心的预览目录（没有传 rootDir 时没有预览目录，文件预览一律不打开）。 */
+  private readonly openDeps: OpenDeps
+
+  constructor(private readonly hub: Hub, store?: PushChannelStore, rootDir?: string) {
+    this.openDeps = rootDir === undefined ? systemOpenDeps : { ...systemOpenDeps, previewRoot: previewRootDir(rootDir) }
     this.readStoredPushChannel(store)
     // 常驻订阅一次（不挂在 SSE 订阅者上）：主人改设置后立刻刷新缓存。
     try {
@@ -151,20 +326,28 @@ export class RealHubFacade implements HubFacade {
   async inbox() { return this.hub.api.inbox() }
   async activity(opts?: { before?: string | number; limit?: number }) { return this.hub.api.activity(opts) }
   async settings() { return this.hub.api.settings() }
+  /** P76k：设置页「最近 7 天的用量」表；core 只读组装，不写任何状态。 */
+  async weeklyUsage() { return this.hub.api.weeklyUsage() }
   /** 办公室是 core 的纯投影，读一次就给一屏，不写任何状态。 */
   async office() { return this.hub.api.officeView() }
   /** 资料授权矩阵也是只读组装：资料、授权、中文名全部由 core 的 resourceView 给出。 */
   async resource() { return this.hub.api.resourceView() }
   /** 项目容器同样是只读组装：项目、成员、验收项、任务分组与问题都由 core 的 projectView 给出。 */
   async project() { return this.hub.api.projectView() }
-  async recentSessions() { return this.hub.api.recentSessions() }
   /** 账本读法：core 的接口是同步读存储，门面统一成 Promise 保持调用方一致。 */
   async wakeLedger(botId: string, opts?: { limit?: number; before?: number }) {
     return this.hub.api.wakeLedgerList(botId, opts?.limit, opts?.before)
   }
   async wakeLedgerDetail(wakeId: string) { return this.hub.api.wakeLedgerDetail(wakeId) }
+  /** P75j：技能库一栏与技能详情都是只读视图，core 同步读存储，门面统一成 Promise。 */
+  async skillLibrary(botId: string): Promise<SkillLibraryView> { return this.hub.api.skillLibrary(botId) }
+  async skillDetail(skillId: string): Promise<SkillDetailView> { return this.hub.api.skillDetail(skillId) }
+  /** P76j：「在办的事」也是只读视图（core 的 activeJobs），同步读存储后统一成 Promise。 */
+  async activeJobs(botId: string) { return this.hub.api.activeJobs(botId) }
+  /** P75k：记忆页是只读视图（core 同步读存储，不调用模型），门面统一成 Promise。 */
+  async memoryPage(): Promise<MemoryPageView> { return this.hub.api.memoryPage() }
   async command(name: string, input: Record<string, unknown>): Promise<CommandResult> {
-    return dispatchCommand(this.hub.api, name, input)
+    return dispatchCommand(this.hub.api, name, input, this.openDeps)
   }
   subscribe(fn: ChangeListener): () => void {
     return this.hub.subscribe(event => {
@@ -238,12 +421,16 @@ export class LazyHubFacade implements HubFacade {
   async inbox() { return this.facade().inbox() }
   async activity(opts?: { before?: string; limit?: number }) { return this.facade().activity(opts) }
   async settings() { return this.facade().settings() }
+  async weeklyUsage() { return this.facade().weeklyUsage() }
   async office() { return this.facade().office() }
   async resource() { return this.facade().resource() }
   async project() { return this.facade().project() }
-  async recentSessions() { return this.facade().recentSessions() }
   async wakeLedger(botId: string, opts?: { limit?: number; before?: number }) { return this.facade().wakeLedger(botId, opts) }
   async wakeLedgerDetail(wakeId: string) { return this.facade().wakeLedgerDetail(wakeId) }
+  async skillLibrary(botId: string) { return this.facade().skillLibrary(botId) }
+  async skillDetail(skillId: string) { return this.facade().skillDetail(skillId) }
+  async activeJobs(botId: string) { return this.facade().activeJobs(botId) }
+  async memoryPage() { return this.facade().memoryPage() }
   async command(name: string, input: Record<string, unknown>) { return this.facade().command(name, input) }
   subscribe(fn: ChangeListener): () => void {
     // 记在本地（emitInApp 与 setImpl 重挂都用它）；引擎已就绪时同时挂到引擎上。
@@ -298,6 +485,8 @@ export class DisabledHub implements HubFacade {
   async inbox() { return { items: [] } }
   async activity() { return { rows: [], hasMore: false } }
   async settings(): Promise<SettingsView> { return this.denied() }
+  /** 停用后没有可汇总的回合：给一份只有表头的空表，设置页照常打开。 */
+  async weeklyUsage() { return { head: ['事', '回合', '预计', 'token'] as ['事', '回合', '预计', 'token'], rows: [] } }
   /** 停用后办公室没有可投影的数据：给一间空房间并如实说明，不把整页打成错误。 */
   async office() {
     return {
@@ -311,10 +500,16 @@ export class DisabledHub implements HubFacade {
   async resource(): Promise<ResourceView> { return structuredClone(emptyResource) }
   /** 停用后项目页没有数据可看：给一份空项目视图（计数全 0），不把整页打成错误。 */
   async project(): Promise<ProjectView> { return structuredClone(emptyProject) }
-  async recentSessions() { return [] }
   /** 停用后账本只读视图没有数据可看：列表为空、详情为空，不把整页打成错误。 */
   async wakeLedger(_botId: string, _opts?: { limit?: number; before?: number }) { return [] }
   async wakeLedgerDetail(_wakeId: string) { return null }
+  /** 停用后没有技能数据可看：与读员工详情一致，直接说明停用原因。 */
+  async skillLibrary(_botId: string): Promise<SkillLibraryView> { return this.denied() }
+  async skillDetail(_skillId: string): Promise<SkillDetailView> { return this.denied() }
+  /** 停用后没有在办的事可看：给空视图，不把整页打成错误。 */
+  async activeJobs(_botId: string) { return { headText: '现在没有在办的事', rows: [], footerText: '查看全部记录' as const } }
+  /** 停用后没有记忆可看：直接说明停用原因（与技能库同一做法）。 */
+  async memoryPage(): Promise<MemoryPageView> { return this.denied() }
   async command(): Promise<CommandResult> { return { ok: false, error: this.reason } }
   subscribe(): () => void { return () => undefined }
 }

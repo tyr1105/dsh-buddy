@@ -30,7 +30,7 @@ async function checkSource(ctx: HubContext, botId: string, source: string): Prom
 /** 单个位置只保存完整普通文本；同逻辑产物的版本号在最后一次 await 后原子递增。 */
 async function archiveOne(ctx: HubContext, commit: Commit, goals: Goal[], where: string): Promise<string> {
   const bot = ctx.store.table('bots').get(commit.botId);
-  if (!bot) throw new ArchiveError('发起队友不存在');
+  if (!bot) throw new ArchiveError('发起员工不存在');
   if (!where || /^[a-z][a-z0-9+.-]*:/i.test(where) || /[$`*?\u0000]/.test(where)) throw new ArchiveError('不支持远程或不确定位置');
   const source = posix.resolve(bot.homeDir, where);
   const real = await checkSource(ctx, bot.id, source);
@@ -55,7 +55,7 @@ async function archiveOne(ctx: HubContext, commit: Commit, goals: Goal[], where:
   const old = ctx.store.table('artifactVersions').list(v => v.artifactId === artifactId && v.commitId === commit.id)[0];
   if (old) return old.id;
   if (ctx.store.table('artifactVersions').count(v => v.botId === bot.id) >= ctx.settings.artifacts.maxVersionsPerBot)
-    throw new ArchiveError('本队友保留版本已达上限');
+    throw new ArchiveError('本员工保留版本已达上限');
   const head = ctx.store.table('artifactHeads').get(artifactId);
   const number = Math.max(head?.lastVersion ?? 0,
     ...ctx.store.table('artifactVersions').list(v => v.artifactId === artifactId).map(v => v.number)) + 1;

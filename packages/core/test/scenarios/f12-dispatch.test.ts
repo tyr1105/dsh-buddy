@@ -154,7 +154,7 @@ describe('F12 场景 F：归档后只读、派活拒绝', () => {
     expect(row).toBeDefined();
     expect(row.project.status).toBe('archived');
     const taskRow = row.tasks.find(t => t.task.id === task.id)!;
-    expect(taskRow.statusLabel).toBe('进行中');
+    expect(taskRow.statusLabel).toBe('执行中'); // P74a：事务状态词改名（doing）
     expect(taskRow.artifactCount).toBe(1);
     expect(taskRow.assigneeBotId).toBe(botAId);
     expect(taskRow.assigneeBotName).toBe('守望');

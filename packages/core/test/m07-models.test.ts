@@ -18,6 +18,8 @@ describe('M07 宿主模型目录', () => {
     expect(view.modelOptions).toEqual([{ value: null, label: '跟随宿主默认模型' }, { value: choice, label: option.label }]);
     const bot = okData(await hub.api.createBot({ ...creation, model: view.modelOptions[1]!.value }));
     expect(bot.model).toEqual(choice);
+    // P72h H3：新建员工不再自动试跑，会话要等主人发话时才创建。
+    okData(await hub.api.pokeBot(bot.id));
     expect(ctx.host.calls.find(call => call.method === 'createSession')?.args[0]).toMatchObject({ model: choice });
     expect(okData(await hub.api.updateBot(bot.id, { model: null })).model).toBeNull();
     expect(okData(await hub.api.updateBot(bot.id, { model: choice })).model).toEqual(choice);

@@ -9,6 +9,7 @@ import { enqueue } from '../src/scheduler/queue.js';
 import { buildCandidate } from '../src/appraisal/think.js';
 import { recordOwnerMessage } from '../src/perception/sources.js';
 import { onQuotaError } from '../src/quota/window.js';
+import { raiseAlert } from '../src/health/alerts.js';
 import { botFixture } from './model-fixtures.js';
 const minute = 60_000;
 
@@ -199,6 +200,14 @@ it('M03 [9] notify 持续不返回时后续 tick 仍到达调度，原调用结�
   const { ctx, hub, bots } = await setup(2);
   const called = deferred(); const release = deferred();
   const notify = vi.spyOn(ctx.host, 'notify').mockImplementation(() => { called.resolve(); return release.promise; });
+  // P76c：原来让宿主通知挂住的是每天的日报（tick 里的「日报」一项）；日报不再推送，改用一条会推送系统通知的中心告警触发同一件事
+  // （告警同步里的推送），其余断言原样保留：通知持续不返回时，后续 tick 仍到达调度；原调用结束后通知自动恢复。
+  // P76h：只有四类事和鉴权告警推送系统通知。第一次改用通知队列里一行等待中的审批通知触发（原为 protected_verify 告警；
+  // 鉴权告警会让员工整体停工，不能在这里用）；第二次仍用告警，但改用鉴权代码（原为 host_approval_wait），放在断言之后。
+  // 直接在通知队列里放一行等待发送的审批通知（由 hub 自己的 tick 经受保护的宿主发出；
+  // 不能在测试里直接建条目，那样通知会经测试手里没有保护的宿主发出，测不到这个场景）。
+  ctx.store.table('pushQueue').put({ id: 'pq_m030000001', category: 'approval', title: '批准：测试动作', body: '正文', subjectKey: 'approval:ap_m03',
+    botId: null, createdAt: ctx.clock.now(), sendAfter: ctx.clock.now(), state: 'waiting', sentAt: null, mergedInto: null });
   owner(ctx, bots[0]!.id);
   const first = hub.tick(); await called.promise;
   ctx.clock.advance(6 * minute); await hub.tick(); await first;
@@ -210,6 +219,8 @@ it('M03 [9] notify 持续不返回时后续 tick 仍到达调度，原调用结�
   expect(ctx.store.table('wakes').list(w => w.botId === bots[1]!.id && w.status === 'running')).toHaveLength(1);
   expect(notify).toHaveBeenCalledTimes(1);
   release.resolve(); await Promise.resolve(); await Promise.resolve();
+  // 原来下一次 tick 会因日报再次通知；现在换成又一条告警，证明通知通道在原调用结束后恢复可用。
+  raiseAlert(ctx, { code: 'auth', botId: null, text: '宿主审批等待', level: 'P0', immediate: true });
   ctx.clock.advance(minute); await hub.tick();
   expect(notify.mock.calls.length).toBeGreaterThan(1);
 });

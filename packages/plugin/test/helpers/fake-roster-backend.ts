@@ -34,6 +34,11 @@ export interface FakeRosterBackend {
   releaseOverviews(): void
   /** 全部请求的路径（去掉 api/agent-hub/ 前缀），按发出顺序。 */
   calls: string[]
+  /**
+   * P76k：命令名，按发出顺序（从 command 请求体里取 name）。
+   * 页面挂载时会多发一条 ownerSeen，只数路径会把它和「标已读」混在一起，所以按命令名分开看。
+   */
+  commands: string[]
   /** 取出按 id 请求某种接口的记录，kind 是 bot 或 thread。 */
   byId(kind: 'bot' | 'thread', id: string): string[]
 }
@@ -81,14 +86,19 @@ export function fakeRosterBackend(ids: readonly string[] = []): FakeRosterBacken
     pauseOverview: false,
     releaseOverviews() { paused.splice(0).forEach(release => release()) },
     calls: [],
+    commands: [],
     byId(kind, id) {
       return backend.calls.filter(path => path.startsWith(`${kind}?`) && new URLSearchParams(path.slice(kind.length + 1)).get('id') === id)
     },
   }
 
-  vi.stubGlobal('fetch', async (input: unknown): Promise<Response> => {
+  vi.stubGlobal('fetch', async (input: unknown, init?: { body?: unknown }): Promise<Response> => {
     const path = String(input).replace(/^.*agent-hub\//, '')
     backend.calls.push(path)
+    // P76k：顺手记下命令名，测试按名字区分「标已读」与挂载时的 ownerSeen。
+    if (path.startsWith('command') && typeof init?.body === 'string') {
+      try { backend.commands.push((JSON.parse(init.body) as { name?: string }).name ?? '') } catch { backend.commands.push('') }
+    }
     if (backend.offline) throw new TypeError('Failed to fetch')
     const answer = respond(path)
     if (path.startsWith('overview') && backend.pauseOverview) await new Promise<void>(resolve => paused.push(resolve))

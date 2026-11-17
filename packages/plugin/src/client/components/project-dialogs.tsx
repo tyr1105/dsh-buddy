@@ -131,7 +131,7 @@ export function ProjectFormDialog(props: {
         <legend>成员（{values.memberBotIds.length}/{PROJECT_MEMBER_MAX}）</legend>
         {props.options.length === 0 ? (
           <p className="ah-right-kv">
-            {props.botsLoaded === false ? '队友列表加载中，请稍候。' : '暂无可选队友（已退役不计入）。请先在左侧「队友」组点击「＋」新建，再回来勾选。'}
+            {props.botsLoaded === false ? '员工列表加载中，请稍候。' : '暂无可选员工（已归档不计入）。请先在左侧「员工」组点击「＋」新建，再回来勾选。'}
           </p>
         ) : (
           <div className="ah-prj-check-list">

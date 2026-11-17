@@ -5,13 +5,18 @@
  */
 import { describe, expect, test } from 'vitest';
 import { MBTI_TYPE_LABELS, MBTI_TYPES, MbtiTypeSchema } from '../src/model/enums.js';
-import { MBTI_AXIS_TEXT, MBTI_UNSET_LABEL, mbtiLabel, mbtiPrompt, mbtiTendency } from '../src/model/mbti.js';
+import { MBTI_AXIS_TEXT, MBTI_BEHAVIOR_TEXT, MBTI_UNSET_LABEL, mbtiLabel, mbtiPrompt, mbtiTendency } from '../src/model/mbti.js';
 import type { Bot } from '../src/model/bot.js';
 import { botFixture } from './model-fixtures.js';
 import { BotSchema } from '../src/model/bot.js';
 import { BotProfileSchema } from '../src/model/bot-profile.js';
 import { botMbti, migrateBotMbti, saveBotMbti } from '../src/personality/profile.js';
-import { MBTI_DEFAULTS, botBudgetFor, dailyThinkCapFor, resolveSettings } from '../src/config/defaults.js';
+import { MBTI_DEFAULTS, resolveSettings } from '../src/config/defaults.js';
+import { createTestContext } from '../src/io/testing/create-test-context.js';
+import { buildCandidate, fatigueFor } from '../src/appraisal/think.js';
+import { enqueue } from '../src/scheduler/queue.js';
+import { buildSnapshot, evaluateGates } from '../src/scheduler/gates.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 import { buildWakePacket } from '../src/wake/packet.js';
 import { byteLength } from '../src/util/text.js';
 import { turnContext } from './c03-turn-fixtures.js';
@@ -122,7 +127,8 @@ describe('MBTI 领域模型与独立存储', () => {
     for (const type of MBTI_TYPES) {
       const prompt = mbtiPrompt(type)!;
       expect(prompt).toContain(type);
-      expect(prompt).toContain(MBTI_TYPE_LABELS[type]);
+      // P73b：提示词改为「你的性格是 类型」加四句行为说明，不再带昵称。
+      expect(prompt).toContain(`你的性格是 ${type}`);
       expect(prompt).toContain('不改变权限');
       expect(prompt).toContain('审批');
       expect(prompt).toContain('安全规则');
@@ -132,7 +138,8 @@ describe('MBTI 领域模型与独立存储', () => {
     }
     // 四个维度各自的关键措辞都要出现。
     const prompt = mbtiPrompt('INTJ')!;
-    for (const code of ['I', 'N', 'T', 'J'] as const) expect(prompt).toContain(MBTI_AXIS_TEXT[code]);
+    // P73b：四个维度的措辞改读四句行为总表（去句号）。
+    for (const code of ['I', 'N', 'T', 'J'] as const) expect(prompt).toContain(MBTI_BEHAVIOR_TEXT[code].replace(/。$/, ''));
   });
 });
 
@@ -308,12 +315,24 @@ describe('MBTI 不改变权限、审批、额度与唤醒判断', () => {
     }
   });
 
-  test('额度与每日思考上限只由等级和生命周期决定', () => {
+  // P76c：原用例对着 botBudgetFor、dailyThinkCapFor 两个函数断言「预算只由等级和生命周期决定」（与自身比较，本质是确认没人把 MBTI 接进去）。
+  // 两个函数已删除，每天上限只剩设置里的一个数（botDailyTurnBudget），所以改为用真实的疲劳计算和闸门证明同一件事：
+  // 两个只差 MBTI 的员工，同样的用量得到同样的疲劳，同样的快照得到同样的 daily_cap 判断。
+  test('每天上限与疲劳只由设置和回合数决定，不随 MBTI 变化', () => {
     const settings = resolveSettings({ rootDir: '/hub' });
-    expect(botBudgetFor('active', settings)).toEqual(botBudgetFor('active', settings));
-    expect(dailyThinkCapFor('L1', 'probation', settings)).toBe(dailyThinkCapFor('L1', 'probation', settings));
-    // 试岗减半与 MBTI 无关：同一生命周期下预算固定。
-    expect(botBudgetFor('probation', settings).dailyTurns).toBe(Math.floor(settings.botDailyTurnBudget * settings.probationBudgetMultiplier));
+    const outcomes = (['INTJ', 'ESFP'] as const).map(type => {
+      const ctx = createTestContext();
+      ctx.store.table('bots').put({ ...botFixture, autonomy: 'L3' });
+      setMbti(ctx, botFixture.id, type);
+      addSelfTurns(ctx, 1);
+      const now = ctx.clock.now();
+      const entry = enqueue(ctx, buildCandidate(ctx, { botId: botFixture.id, kind: 'percept', score: 0.99, summary: '资料变化', subjectKey: 'watch:one' }))!;
+      const snapshot = { ...buildSnapshot(ctx, botFixture.id, now), selfTurnsToday: settings.botDailyTurnBudget };
+      return { fatigue: fatigueFor(ctx, botFixture.id, now), gate: evaluateGates(entry, snapshot, now, ctx.settings) };
+    });
+    expect(outcomes[0]).toEqual(outcomes[1]);
+    expect(outcomes[0]!.fatigue).toBe(1 / settings.botDailyTurnBudget);
+    expect(outcomes[0]!.gate).toMatchObject({ pass: false, by: 'daily_cap' });
   });
 
   test('两个只差 MBTI 的机器人唤醒包去掉性格段后逐字相同', async () => {

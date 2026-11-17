@@ -32,6 +32,13 @@ import { enqueue, removeEntry } from '../scheduler/queue.js';
 import { isOpenWake } from '../turn/session.js';
 import { newId } from '../util/ids.js';
 import { optionalMessageText } from '../util/text.js';
+import { confirmByText, isConfirmPhrase } from './agreement-confirm.js';
+import { acceptByText, wouldAcceptByText } from '../job/accept.js';
+import { activeJobOfAgreement } from '../job/agreement-hooks.js';
+import { chiefMentionVerdict, dispatchBlockFor } from './agreement-gate.js';
+import { agreementForTopic } from './agreements.js';
+import { noteSetupBusy, setupAskingFor } from '../team/setup-hold.js';
+import { claimTextUndo, wouldClaimTextUndo } from '../memory/undo.js';
 import { pickDefaultOwnerId } from './owner-rules.js';
 import { parseMentions } from './topic-mentions.js';
 import { decideAfterAgentTurn, planOwnerTurn } from './topic-rounds.js';
@@ -152,7 +159,7 @@ function wakeTopicBot(ctx: HubContext, topic: ProjectTopic, botId: string, kind:
 function planOwnerMessage(ctx: HubContext, project: Project, text: string) {
   const ownerId = resolveOwnerId(ctx, project);
   if (ownerId === null) {
-    throw new Error('这个项目还没有能当负责人的成员，请先在项目设置里加一位在岗的队友（建议风格不能当负责人）');
+    throw new Error('这个项目还没有能当负责人的成员，请先在项目设置里加一位在岗的员工（建议风格不能当负责人）');
   }
   const { reachable, note } = splitMentions(project, parseMentions(text, ctx.store.table('bots').list()));
   const owner = ctx.store.table('bots').get(ownerId);
@@ -160,8 +167,8 @@ function planOwnerMessage(ctx: HubContext, project: Project, text: string) {
     ownerBotId: ownerId, ownerOnDuty: owner !== null && isBotOnTeam(owner),
     mentions: reachable.map(bot => bot.id), cap: topicTurnCap(ctx),
   });
-  const ownerName = owner?.name ?? '已删除的队友';
-  const ownerNote = plan.ownerUnavailable ? `负责人「${ownerName}」现在不在岗，消息已保留；等它恢复后再说一句，或 @ 在岗的队友。` : null;
+  const ownerName = owner?.name ?? '已删除的员工';
+  const ownerNote = plan.ownerUnavailable ? `负责人「${ownerName}」现在不在岗，消息已保留；等它恢复后再说一句，或 @ 在岗的员工。` : null;
   return { ownerId, ownerName, targets: plan.targets, notes: [note, ownerNote].filter(item => item !== null) };
 }
 
@@ -169,15 +176,19 @@ function planOwnerMessage(ctx: HubContext, project: Project, text: string) {
  * 主人的话落楼并开启新一轮：发言计数清零，等待名单换成这次叫的人。
  * 上一轮排队还没开始的唤醒，如果这次没被点到就取消：主人已经换了话题或换了人。
  */
-function deliverOwnerMessage(ctx: HubContext, topic: ProjectTopic, text: string, plan: ReturnType<typeof planOwnerMessage>): ThreadMessage {
+function deliverOwnerMessage(ctx: HubContext, topic: ProjectTopic, text: string, plan: ReturnType<typeof planOwnerMessage>, omitBotIds: readonly string[] = []): ThreadMessage {
   const message = postThread(ctx, { thread: topic.id, from: 'owner', kind: 'chat', text });
   ctx.runtime.ownerActiveAt = ctx.clock.now();
-  for (const entry of ctx.store.table('queue').list(row => row.topicId === topic.id && !plan.targets.includes(row.botId))) {
+  // P73r3 S3：三问进行中的总管不被叫醒；话照常保存，由中心在这个主题里落一句固定的话（连续几句只落一次）。
+  // P74e：omitBotIds 是这句话不用叫的人（正在做的事的约定被确认，总管不用再出回合）；他们也不进等待名单。
+  const targets = plan.targets.filter(botId => setupAskingFor(ctx, botId) === null && !omitBotIds.includes(botId));
+  for (const entry of ctx.store.table('queue').list(row => row.topicId === topic.id && !targets.includes(row.botId))) {
     removeEntry(ctx, entry.id);
   }
-  ctx.store.table('projectTopics').patch(topic.id, { agentTurnsSinceOwner: 0, pendingBotIds: plan.targets, updatedAt: ctx.clock.now() });
+  ctx.store.table('projectTopics').patch(topic.id, { agentTurnsSinceOwner: 0, pendingBotIds: targets, updatedAt: ctx.clock.now() });
   for (const note of plan.notes) systemNote(ctx, topic.id, note, message.id);
-  for (const botId of plan.targets) wakeTopicBot(ctx, topic, botId, 'owner_message', message.id);
+  if (targets.length < plan.targets.filter(botId => !omitBotIds.includes(botId)).length) noteSetupBusy(ctx, topic.id);
+  for (const botId of targets) wakeTopicBot(ctx, topic, botId, 'owner_message', message.id);
   return message;
 }
 
@@ -212,9 +223,32 @@ export function sendOwnerTopicMessage(ctx: HubContext, topicId: string, text: st
     throw new Error(`一条消息不能超过 ${V2_DEFAULTS.TOPIC_MESSAGE_MAX_CHARS} 字，长内容请放到项目目录再说路径`);
   }
   const project = requireActiveProject(ctx, topic.projectId);
+  // P75c：整句「撤销」「撤回」，且「已记住」所挂的回复就是这个主题里紧挨着这句话的上一条（P75r1：只认紧接着的一句）时，
+  // 由记忆认领：话照常落楼，撤销那条回复下面的全部「已记住」，
+  // 不叫醒任何人（不改变等待名单和发言计数）。放在叫人的判断之前；不满足条件时不认领，下面照原流程走，行为不变。
+  // 认领只看「撤销」「撤回」这两个整句，与「定了」「验收通过」不重叠，所以不影响那两种口令。
+  if (wouldClaimTextUndo(ctx, topicId, text)) {
+    const message = postThread(ctx, { thread: topicId, from: 'owner', kind: 'chat', text });
+    ctx.runtime.ownerActiveAt = ctx.clock.now();
+    claimTextUndo(ctx, topicId, message);
+    return message;
+  }
   const plan = planOwnerMessage(ctx, project, text);
   persistOwner(ctx, project, plan.ownerId);
-  return deliverOwnerMessage(ctx, topic, text, plan);
+  // P74e：这句话是「定了」，且这个主题的约定正等着确认、挂着一件正在做的事（B2 重新确认）：固定它不需要总管再出一个回合，
+  // 所以这条消息不叫醒这份约定的总管（别的被叫到的人不受影响）。判断只看事实（口令、待确认、有事），不依赖固定是否成功。
+  const agreement = agreementForTopic(ctx, topicId);
+  const skipChief = isConfirmPhrase(text) && agreement !== null && agreement.state === 'pending'
+    && agreement.versions[agreement.versions.length - 1]!.cardMessageId !== null && activeJobOfAgreement(ctx, agreement.id) !== null;
+  // P74f：这句话是验收口令、这个主题的事在等验收（交付卡已落楼、约定没有新版本在等确认）：验收不需要总管再出一个回合，也不叫醒总管。
+  const acceptJobNow = wouldAcceptByText(ctx, topicId, text);
+  const skip = skipChief ? [agreement!.botId] : acceptJobNow !== null ? [acceptJobNow.chiefId] : [];
+  const message = deliverOwnerMessage(ctx, topic, text, plan, skip);
+  // P72c：在约定所在主题里整句打「定了」，固定这个主题的约定；出错只记日志，不影响发消息。
+  confirmByText(ctx, topicId, message);
+  // P74f：整句验收口令，验收这个主题的事（识别条件再核对一遍：口令、交付卡落楼、这句话不早于卡片）。
+  if (acceptJobNow !== null) acceptByText(ctx, topicId, message, 'topic_text');
+  return message;
 }
 
 /** 回合的结局：说了话（带原文，用来解析 @），或者没说话（可带一句给主人看的说明）。 */
@@ -245,9 +279,18 @@ export function advanceTopicTurn(ctx: HubContext, topicId: string, botId: string
   }
 
   const roster = ctx.store.table('bots').list();
-  const { reachable, note } = spoke
+  let { reachable, note } = spoke
     ? splitMentions(project, parseMentions(end.text, roster).filter(bot => bot.id !== botId))
-    : { reachable: [], note: null };
+    : { reachable: [] as Bot[], note: null as string | null };
+  // P72b 闸门，P74b 改为按事情区分：发言人是总管，且这个主题挂的约定还没确认（或为它加人的组队卡在等主人）时，
+  // 不叫醒被点名的人，只落一句旁白；主题没有约定时不拦；负责人接棒等其他逻辑照旧。
+  // P74r1（R1）：再加两层——总管名下任何新约定或组队卡在等主人时都不叫（不只看当前主题）；被点名的员工正在做某件事时也不叫他。
+  if (spoke && reachable.length > 0 && roster.find(bot => bot.id === botId)?.role === 'chief') {
+    const agreement = agreementForTopic(ctx, topicId);
+    const verdict = chiefMentionVerdict(ctx, botId, agreement === null ? null : dispatchBlockFor(ctx, botId, agreement.id), reachable);
+    for (const line of verdict.notes) systemNote(ctx, topicId, line);
+    reachable = verdict.reachable;
+  }
   const ownerId = resolveOwnerId(ctx, project) ?? '';
   const owner = roster.find(bot => bot.id === ownerId);
   const cap = topicTurnCap(ctx);
@@ -267,7 +310,7 @@ export function advanceTopicTurn(ctx: HubContext, topicId: string, botId: string
   }
   if (note !== null) systemNote(ctx, topicId, note);
   if (decision.ownerUnavailable) {
-    systemNote(ctx, topicId, `需要负责人「${owner?.name ?? '已删除的队友'}」接着说，但它现在不在岗，这一轮先停在这里，等你下一句。`);
+    systemNote(ctx, topicId, `需要负责人「${owner?.name ?? '已删除的员工'}」接着说，但它现在不在岗，这一轮先停在这里，等你下一句。`);
   }
   if (decision.reachedCap) systemNote(ctx, topicId, `这轮讨论已到 ${cap} 次发言，等你下一句`);
   const messageId = latestFloorId(ctx, topicId);
@@ -283,7 +326,7 @@ function spokenText(reply: string | null, report: string | null): string | null 
 /** 回合正常收尾（含出错、超时、没交账）时推进讨论：finishTurn 是唯一同时看到终态和交账的位置。 */
 export function settleFinishedTopicWake(ctx: HubContext, wake: WakeTicket): void {
   if (!wake.topicId) return;
-  const name = ctx.store.table('bots').get(wake.botId)?.name ?? '这位队友';
+  const name = ctx.store.table('bots').get(wake.botId)?.name ?? '这位员工';
   const commit = wake.commitId ? ctx.store.table('commits').get(wake.commitId) : null;
   const spoken = commit && !wake.syntheticCommit ? spokenText(commit.reply, commit.report) : null;
   if (spoken !== null) {
@@ -298,14 +341,14 @@ export function settleFinishedTopicWake(ctx: HubContext, wake: WakeTicket): void
 
 /** 投递失败（根本没开始想）时跳过这一棒。 */
 export function settleFailedTopicDelivery(ctx: HubContext, topicId: string, botId: string): void {
-  const name = ctx.store.table('bots').get(botId)?.name ?? '这位队友';
+  const name = ctx.store.table('bots').get(botId)?.name ?? '这位员工';
   advanceTopicTurn(ctx, topicId, botId, { kind: 'silent', note: `${name} 这次没有接上，这一棒先跳过。` });
 }
 
 /** 排队中的唤醒被调度丢弃（队友暂停、退役、隔离）时跳过这一棒。 */
 export function settleDroppedTopicEntry(ctx: HubContext, entry: QueueEntry): void {
   if (!entry.topicId) return;
-  const name = ctx.store.table('bots').get(entry.botId)?.name ?? '这位队友';
+  const name = ctx.store.table('bots').get(entry.botId)?.name ?? '这位员工';
   advanceTopicTurn(ctx, entry.topicId, entry.botId, { kind: 'silent', note: `${name} 现在不在岗，这一棒先跳过。` });
 }
 

@@ -12,7 +12,15 @@ describe('C03 工具分类适配', () => {
   it.each(['read', 'read_file', 'list_directory', 'search_files'])('%s 只读工具', tool => expect(classifyToolCall(tool, { path: `${home}/work/a` }, gctx).cls).toBe('A'));
   it.each(['write', 'write_file', 'edit', 'edit_file'])('%s 允许家目录 work', tool => expect(classifyToolCall(tool, { file_path: `${home}/work/a` }, gctx).cls).toBe('A'));
   it.each(['AGENTS.md', 'mind/goals.md', 'mind/agenda.md', 'memory/journal/2026-11-05.md'])('保护 %s', path => expect(classifyToolCall('write', { path: `${home}/${path}` }, gctx).cls).toBe('protected'));
-  it.each(['work/a', 'memory/MEMORY.md', 'playbooks/r.md', '.agents/skills/x.md'])('允许 %s', path => expect(classifyToolCall('write', { path: `${home}/${path}` }, gctx).cls).toBe('A'));
+  // P75e：技能库三处（技能目录、playbooks、MEMORY.md）由「允许写」改为「拒绝、不计越界」（子类 skill_dir_readonly）；work/ 仍允许。
+  it('允许 work，拒绝技能库三处（P75e 只读）', () => {
+    expect(classifyToolCall('write', { path: `${home}/work/a` }, gctx).cls).toBe('A');
+    for (const path of ['memory/MEMORY.md', 'playbooks/r.md', '.agents/skills/x.md']) {
+      const result = classifyToolCall('write', { path: `${home}/${path}` }, gctx);
+      expect(result.cls).toBe('protected');
+      expect(result.subclass).toBe('skill_dir_readonly');
+    }
+  });
   it('shared 明确允许；相似前缀不算 shared', () => {
     expect(classifyToolCall('write', { path: '/hub/shared/a' }, gctx).cls).toBe('A');
     expect(classifyToolCall('write', { path: '/hub/shared-else/a' }, gctx).cls).toBe('C');
@@ -68,10 +76,10 @@ describe('C03 shell 命令分段', () => {
   it('多层命令替换保持最危险子段', () => expect(classifyCommand('echo $(echo $(git push --force))', gctx).cls).toBe('D'));
   it('词法器保留空参数和引号中的管道', () => expect(lexShell("echo '' 'a|b'").parts[0]?.words).toEqual(['echo', '', 'a|b']));
   it('动态变量的最终路径不能直接放行', () => expect(classifyCommand('cat "$TARGET"', gctx).cls).toBe('C'));
-  it('M02 复盘允许 memory、套路与 work，中心状态仍保护', () => {
+  it('M02 复盘允许 work，技能库三处照旧只读（P75e），中心状态仍保护', () => {
     const reflection = { ...gctx, reflection: true };
-    expect(classifyCommand('echo lesson > memory/MEMORY.md', reflection).cls).toBe('A');
-    expect(classifyToolCall('write', { path: `${home}/playbooks/test.md` }, reflection).cls).toBe('A');
+    expect(classifyCommand('echo lesson > memory/MEMORY.md', reflection).cls).toBe('protected');
+    expect(classifyToolCall('write', { path: `${home}/playbooks/test.md` }, reflection).cls).toBe('protected');
     expect(classifyCommand('touch work/a', reflection).cls).toBe('A');
     expect(classifyCommand('touch mind/goals.md', reflection).cls).toBe('protected');
   });
@@ -94,8 +102,8 @@ describe('C03 自主等级矩阵', () => {
     expect(decide('B', 'L3', 'probation', [])).toBe('approval');
     expect(decide('A', 'L0', 'probation', [])).toBe('allow');
   });
-  it('L0 仅允许读、work 和 MEMORY', () => {
-    expect(decide(classifyToolCall('write', { path: `${home}/memory/MEMORY.md` }, gctx), 'L0', 'active', [])).toBe('allow');
+  it('L0 仅允许读和 work；技能库三处只读（P75e）', () => {
+    expect(decide(classifyToolCall('write', { path: `${home}/memory/MEMORY.md` }, gctx), 'L0', 'active', [])).toBe('deny');
     expect(decide(classifyToolCall('write', { path: `${home}/playbooks/r.md` }, gctx), 'L0', 'active', [])).toBe('deny');
   });
   it('protected 不受任何等级或授权豁免', () => expect(decide('protected', 'L3', 'active', ['*'])).toBe('deny'));
@@ -113,8 +121,8 @@ describe('C03 命令间接写入不能绕过边界', () => {
   ] as const)('%s -> %s', (command, expected) => expect(classifyCommand(command, gctx).cls).toBe(expected));
   it('工作目录本身在受限范围时，无参数 ls 也拒绝', () => expect(classifyCommand('ls', { ...gctx, cwd: '/company' }).cls).toBe('D'));
   it('读工具传入 cwd 时按实际目录检查', () => expect(classifyToolCall('read_file', { path: 'secret', cwd: '/company' }, gctx).cls).toBe('D'));
-  it('反思可复制只读材料到 MEMORY，不能执行套路目录里的脚本', () => {
-    expect(classifyCommand('cp work/a memory/MEMORY.md', { ...gctx, reflection: true }).cls).toBe('A');
+  it('反思也只能写 work，不能写技能库三处（P75e）；技能目录里的脚本照旧不能执行', () => {
+    expect(classifyCommand('cp work/a memory/MEMORY.md', { ...gctx, reflection: true }).cls).toBe('protected');
     expect(classifyToolCall('exec', { cmd: 'node', args: ['playbooks/task.js'] }, { ...gctx, reflection: true }).cls).toBe('protected');
   });
 });

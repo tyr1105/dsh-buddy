@@ -86,6 +86,9 @@ describe('D07 第 5 条：DSH 另铸会话 id 时经 wireIfBot 补装工具（�
     })
     expect(created.ok).toBe(true)
     const botId = created.data?.id as string
+    // P72h H3：新建员工不再自动试跑，会话要等主人发话时才创建。
+    expect((await service.api.command('pokeBot', { botId })).ok).toBe(true)
+    await vi.waitFor(async () => expect((await service.api.bot(botId)).profile.sessionId).toBeTruthy(), { timeout: 15_000 })
     const bot = await service.api.bot(botId)
     const sessionId = bot.profile.sessionId as string
 

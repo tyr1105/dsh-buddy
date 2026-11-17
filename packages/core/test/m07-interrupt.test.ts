@@ -19,6 +19,8 @@ async function fixture() {
   const hub = createHub(ctx);
   await hub.start();
   const bot = okData(await hub.api.createBot({ name: '中断测试', role: 'researcher', persona: '认真核实', aspirations: ['观察公开变化'] }));
+  // P72h H3：新建员工不再自动试跑，这里由主人发一句话来制造「一轮正在执行的回合」。
+  okData(await hub.api.pokeBot(bot.id));
   const current = () => ctx.store.table('wakes').list(w => w.endedAt === null)[0]!;
   return { ctx, hub, bot, current };
 }
@@ -56,7 +58,8 @@ describe('M07 主人打断', () => {
       const wake = current(); oldSessions.push(wake.sessionId!);
       expect(await hub.api.interruptBot({ botId: bot.id })).toMatchObject({ ok: true, data: { status: 'canceled', canceledBy: 'owner' } });
       expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ consecutiveNoCommit: 0, consecutiveErrors: 0,
-        lifecycle: 'probation', activity: 'watching', retryAt: null });
+        // P73a（5.1 第 1 类）：原预期新建员工 lifecycle 为 probation；新预期 active。
+        lifecycle: 'active', activity: 'watching', retryAt: null });
       expect(ctx.store.table('commits').count()).toBe(0);
       ctx.clock.advance(1);
       expect(await hub.api.sendMessage(bot.id, `继续第 ${i + 1} 件事`)).toMatchObject({ ok: true });

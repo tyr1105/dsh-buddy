@@ -117,16 +117,16 @@ describe('activeRows / archivedRows：分行且保持视图顺序', () => {
 
 describe('accessConclusion：一行资料的访问结论', () => {
   it('全员可读的资料不看授权条数', () => {
-    expect(accessConclusion(viewRow({ sensitivity: 'normal', grants: [grantRow()] }))).toBe('在岗队友都能读')
+    expect(accessConclusion(viewRow({ sensitivity: 'normal', grants: [grantRow()] }))).toBe('在岗员工都能读')
   })
   it('受限资料报授权对象个数（样例手册 2 个、看板 1 个）', () => {
     const playbook = fixtureResource.resources.find(r => r.resource.id === 'res_playbook')!
     const dashboard = fixtureResource.resources.find(r => r.resource.id === 'res_dashboard')!
-    expect(accessConclusion(playbook)).toBe('2 位队友能读')
-    expect(accessConclusion(dashboard)).toBe('1 位队友能读')
+    expect(accessConclusion(playbook)).toBe('2 位员工能读')
+    expect(accessConclusion(dashboard)).toBe('1 位员工能读')
   })
   it('反例：受限资料 0 授权也要如实说，不冒充「全队可读」', () => {
-    expect(accessConclusion(viewRow({ sensitivity: 'restricted' }))).toBe('暂未选择队友，当前无人可读')
+    expect(accessConclusion(viewRow({ sensitivity: 'restricted' }))).toBe('暂未选择员工，当前无人可读')
   })
 })
 
@@ -143,8 +143,8 @@ describe('grantSubjectText / grantChipText：授权 chip 文案', () => {
   it('反例：subjectName 为 null（对象已删除或退役）显示固定占位，不显示裸 id', () => {
     const gone = fixtureResource.grants.find(g => g.grant.id === 'gr_bot_gone')!
     expect(gone.subjectName).toBeNull()
-    expect(grantChipText(gone)).toBe('队友：队友已删除或退役（只读）')
-    expect(grantSubjectText(gone)).toBe('队友已删除或退役')
+    expect(grantChipText(gone)).toBe('员工：员工已删除或归档（只读）')
+    expect(grantSubjectText(gone)).toBe('员工已删除或归档')
   })
 })
 
@@ -177,9 +177,10 @@ describe('grantSubjectGroups：授权对象只有队友一组', () => {
     const groups = grantSubjectGroups(bots)
     expect(groups.bot.map(o => o.id)).toEqual(['b_1', 'b_3', 'b_4', 'b_5'])
     expect(groups.bot.find(o => o.id === 'b_1')!.label).toBe('探路')
-    expect(groups.bot.find(o => o.id === 'b_3')!.label).toBe('隔离者（隔离中）')
-    expect(groups.bot.find(o => o.id === 'b_4')!.label).toBe('暂停者（已暂停）')
-    expect(groups.bot.find(o => o.id === 'b_5')!.label).toBe('草稿（草稿）')
+    // P73f：状态只有在岗、停用、归档三种：隔离和暂停都显示「停用」，草稿按在岗算（不加后缀）。
+    expect(groups.bot.find(o => o.id === 'b_3')!.label).toBe('隔离者（停用）')
+    expect(groups.bot.find(o => o.id === 'b_4')!.label).toBe('暂停者（停用）')
+    expect(groups.bot.find(o => o.id === 'b_5')!.label).toBe('草稿')
   })
   it('反例：总览还没加载（空数组）时队友组为空，不抛错', () => {
     const groups = grantSubjectGroups([])
@@ -279,7 +280,7 @@ describe('静态选项与边界横幅', () => {
     expect(RESOURCE_KIND_OPTIONS.map(o => o.label)).toEqual(['目录', '文件', '链接'])
     expect(RESOURCE_SENSITIVITY_OPTIONS.map(o => [o.value, o.label])).toEqual([
       ['normal', '全员可读'],
-      ['restricted', '指定队友可读'],
+      ['restricted', '指定员工可读'],
     ])
     expect(GRANT_SUBJECT_OPTIONS.map(o => o.value)).toEqual(['bot'])
     expect(GRANT_LEVEL_OPTIONS.map(o => [o.value, o.label])).toEqual([['read', '只读'], ['write', '读写']])
@@ -289,7 +290,7 @@ describe('静态选项与边界横幅', () => {
     expect(GRANT_LEVEL_OPTIONS.map(o => o.value)).not.toContain('readwrite')
   })
   it('边界横幅为 U11 文案定稿：只管插件读资料要不要批准（#30）', () => {
-    expect(RESOURCE_BOUNDARY_TEXT).toBe('这里只管一件事：队友通过插件读资料时，要不要你批准。它自己在 DSH 里打开文件，不归这里管。')
+    expect(RESOURCE_BOUNDARY_TEXT).toBe('这里只管一件事：员工通过插件读资料时，要不要你批准。它自己在 DSH 里打开文件，不归这里管。')
   })
 })
 
@@ -303,7 +304,7 @@ describe('样例资料夹具形状（fixture-resource）', () => {
   })
   it('全部授权对象都是队友；含一条对象找不到的历史授权（subjectName=null）但级别标签齐全', () => {
     expect(fixtureResource.grants.every(g => g.subjectKind === 'bot')).toBe(true)
-    expect(fixtureResource.grants.every(g => g.subjectKindLabel === '队友')).toBe(true)
+    expect(fixtureResource.grants.every(g => g.subjectKindLabel === '员工')).toBe(true)
     const gone = fixtureResource.grants.filter(g => g.subjectName === null)
     expect(gone).toHaveLength(1)
     expect(gone[0]!.levelLabel).toBe('只读')

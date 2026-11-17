@@ -49,8 +49,10 @@ describe('M09 真实 Hub 整周日报', () => {
         await world.hub.tick(); await world.host.settle();
         world.clock.set(local(`${date(day)} 08:30`));
         await world.hub.tick(); await world.host.settle();
-        const digests = world.store.log('thread').all().filter(row => row.kind === 'digest' && row.refId === `digest:${date(day)}`);
-        expect(digests).toHaveLength(1);
+        // P76c：日报不再由 tick 生成并存进审计（tick 里的「日报」一项已删除）。这里改为在每个检查日 08:30 直接用 buildDigest 拼出
+        // 当天的日报正文：引擎侧的事实（真实文件监听、两分钟去抖、落空感知）仍经过上面三次真实 tick 产生，被断言的日报文字由同一个函数、
+        // 同一个时刻生成，所以「每个检查日的结果出现在次日日报」这件事证明的内容不变。
+        const digests = [{ day: date(day), text: buildDigest(world as never, world.clock.now()) }];
         if (index > 0) {
           const line = expectationLine(digests[0]!.text);
           expect(digests[0]!.text).toContain(`统计昨日：${date(days[index - 1]!)}`);

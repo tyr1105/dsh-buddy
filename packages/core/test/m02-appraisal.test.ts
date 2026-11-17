@@ -10,6 +10,7 @@ import { selectNext } from '../src/scheduler/select.js';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { resolveSettings } from '../src/config/defaults.js';
 import { botFixture, goalFixture, watchFixture, modelFixtures } from './model-fixtures.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 import type { QueueEntry } from '../src/model/index.js';
 function setup() { const ctx = createTestContext(); ctx.store.table('bots').put(botFixture); return ctx; }
 function input(ctx: ReturnType<typeof setup>, patch: Partial<PerceptInput> = {}): PerceptInput {
@@ -58,7 +59,13 @@ describe('M02 [32] 每种拦截与决策都有可读解释', () => {
   const keywords: Record<SuppressedBy, string> = {
     paused: '尚未在岗', waiting_owner_same_subject: '在等你回复同一件事', waiting_owner: '有提问或审批在等你回复', cooldown: '冷却期', pace_min: '距上次思考太近',
     daily_cap: '今天已想了 6 次', bot_budget: '回合或 token 预算', quota: '额度或鉴权保护', concurrency: '等待空位',
-    dispatch_gap: '距上次放行太近', startup_quiet: '启动对账', dedup: '同一指纹已经记录', retry_backoff: '等待重排时间',
+    dispatch_gap: '距上次放行太近', startup_quiet: '启动对账', dedup: '同一指纹已经记录', retry_backoff: '等待重排时间', on_demand: '听吩咐',
+    // P74a：新增两个拦截原因，对应说明文字见 appraisal/log.ts。
+    job_cap: '这件事的回合用到上限，移出队列', job_inactive: '这件事已不需要这次唤醒，移出队列',
+    // P75b：新增三个技能类回合的拦截原因（类型要求 Record 补全；只增加条目，原有条目不变）。
+    skill_cap: '这次复盘、技能核对、学习或整理的回合已用完', skill_daily_cap: '全队今天的复盘与整理回合已用完', skill_expired: '等待超过 7 天，已放弃',
+    // P75r5b 同步：拦截原因名单加 skill_stale，这里的完整名单跟着加一项。
+    skill_stale: '这次记录里已没有这位员工要做的事，不再进行',
   };
   it.each(Object.entries(keywords))('%s 解释含原因与实际恢复时间', (key, expected) => {
     const ctx = setup(); const entry = modelFixtures.QueueEntry.valid as QueueEntry;
@@ -73,10 +80,13 @@ describe('M02 [32] 每种拦截与决策都有可读解释', () => {
     expect(ctx.store.log('appraisals').recent(1)[0]).toMatchObject({ decision: 'suppressed', text: expect.stringContaining('思考分 0.10 低于门槛 0.60') });
     enqueue(ctx, { ...low, reason: { ...low.reason, score: 0.8 } });
     expect(ctx.store.log('appraisals').recent(1)[0]).toMatchObject({ decision: 'queued', text: expect.stringContaining('思考分 0.80，门槛 0.60，排队') });
-    ctx.settings = resolveSettings({ botWindowTurnBudget: 10 }); ctx.runtime.startedAt -= 3_600_000;
-    for (let i = 0; i < 6; i++) ctx.store.log('ledger').append({ id: `le_${i}`, who: botFixture.id, wakeId: null, tokens: 1, kind: 'turn', at: ctx.clock.now() });
+    // P76c：每窗口回合上限已取消（原来这里把它调到 10 以免先被它拦住），每天上限只数「员工自己发起的回合」（默认 2），
+    // 所以写满 2 张自己发起的唤醒单（原来写 6 行账本凑旧上限 6），文字里的次数跟着变成 2；证明的仍是「实际日限文本写真实的次数和恢复时刻」。
+    ctx.settings = resolveSettings(); ctx.runtime.startedAt -= 3_600_000;
+    // 这两张唤醒单用别的事项键、不带证据，免得先触发同事项冷却（原来的账本行没有唤醒单，不涉及冷却）。
+    addSelfTurns(ctx, 2, { subjectKey: 'other:subject', reason: { kind: 'percept', score: 0.8, threshold: 0.6, summary: '别的事项', evidence: [] } });
     expect(selectNext(ctx, ctx.clock.now())).toBeNull();
     expect(ctx.store.log('appraisals').recent(1)[0]).toMatchObject({ decision: 'suppressed', suppressedBy: 'daily_cap',
-      text: expect.stringContaining('今天已想了 6 次，到上限，等到明天 00:00') });
+      text: expect.stringContaining('今天已想了 2 次，到上限，等到明天 00:00') });
   });
 });

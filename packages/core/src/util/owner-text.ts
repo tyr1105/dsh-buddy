@@ -2,7 +2,7 @@
 import type { HubContext } from '../engine/context.js';
 import type { Approval, Bot, Percept, WakeReason } from '../model/index.js';
 import { approvalActionText } from './action-text.js';
-import { approvedOutboxResult, outboxOwnerResult } from './outbox-text.js';
+import { approvedActionText, approvedOutboxResult, outboxOwnerResult } from './outbox-text.js';
 
 /** 执行指令只供机器人读取；唤醒时按当前状态重新生成，已经用过的票不能复活成再执行一次。 */
 export function approvalModelSummary(row: Approval, status: 'approved' | 'rejected' | 'expired', note = ''): string {
@@ -15,19 +15,26 @@ export function approvalOwnerSummary(row: Approval, status: Approval['status'], 
   const outbox = ctx?.store.table('outbox').list(item => item.approvalId === row.id)[0];
   // 中心因内容改变作废批准票是“未执行”，不能在状态栏或重新唤醒时误写成主人拒绝。
   if (outbox?.status === 'rejected' && outbox.executionStarted === false && outbox.ownerFailureReason === '脚本在批准后被改动') {
-    return approvedOutboxResult(outbox, ctx?.settings.c03.actionCommandMaxChars);
+    return approvedOutboxResult(outbox, ctx?.settings.c03.actionCommandMaxChars, approvedActionText(ctx, outbox));
   }
   if ((status === 'approved' || status === 'used') && outbox && ['done', 'failed'].includes(outbox.status)) {
     // M09 旧失败没有执行标记；未消费批准票就没有执行证据，升级后不能把复查拒绝说成已经执行。
     const result = outbox.executionStarted === undefined && status !== 'used' ? { ...outbox, executionStarted: false } : outbox;
-    return approvedOutboxResult(result, ctx?.settings.c03.actionCommandMaxChars);
+    return approvedOutboxResult(result, ctx?.settings.c03.actionCommandMaxChars, approvedActionText(ctx, result));
+  }
+  // P74r13：这张审批是一件事的发布审批（审批旁表记着事的编号，而且这件事的发布审批就是它）时，主人点按钮之后的那一句
+  // 与按钮说法一致：点「批准发布」写「你批准了发布：…」，点「暂不发布」写「你选择了暂不发布：…」；普通审批的两句不变。
+  const noteJobId = ctx?.store.table('approvalNotes').get(row.id)?.jobId;
+  const noteJob = ctx === undefined || noteJobId == null ? null : ctx.store.table('jobs').get(noteJobId);
+  if (noteJob !== null && noteJob.launch.approvalId === row.id && (status === 'approved' || status === 'rejected')) {
+    return `${status === 'approved' ? '你批准了发布' : '你选择了暂不发布'}：${action}${note ? `。你的附言：${note}` : ''}`;
   }
   const priorApproval = row.status === 'approved' || approvalDecisions(ctx, row.id).some(item => item.status === 'approved');
   const inactive = ctx && !['active', 'probation'].includes(ctx.store.table('bots').get(row.botId)?.lifecycle ?? '');
   if (status === 'used' && row.tool === 'hub_outbox_execute') return `正在确认你批准的动作结果：${action}`;
   const summary = status === 'approved' || status === 'used'
     ? `你批准了：${action}${row.tool === 'hub_outbox_execute' ? inactive
-      ? '，队友恢复在岗后由中心执行（24 小时内有效）' : '，中心会在下次巡检时执行' : ''}`
+      ? '，员工恢复在岗后由中心执行（24 小时内有效）' : '，中心会在下次巡检时执行' : ''}`
     : status === 'expired' ? `${priorApproval && outbox ? '批准已过期，未执行' : '审批已过期'}：${action}`
       : status === 'rejected' ? `你拒绝了：${action}` : `等待你批准：${action}`;
   return `${summary}${note ? `。你的附言：${note}` : ''}`;
@@ -53,7 +60,7 @@ export function ownerPerceptSummary(ctx: HubContext, percept: Pick<Percept, 'kin
   if (percept.kind === 'inbox_reply') return '收件箱事项已有回复';
   if (percept.kind === 'outbox_done') {
     const action = percept.location ? ctx.store.table('outbox').get(percept.location) : null;
-    return action ? outboxOwnerResult(action, ctx.settings.c03.actionCommandMaxChars) : '出站动作已有执行结果';
+    return action ? outboxOwnerResult(action, ctx.settings.c03.actionCommandMaxChars, approvedActionText(ctx, action)) : '出站动作已有执行结果';
   }
   return percept.summary || percept.kind;
 }
@@ -79,7 +86,7 @@ export function ownerReasonSummary(reason: WakeReason, ctx?: HubContext): string
     .find(percept => percept?.kind === 'outbox_done' && percept.summary === reason.summary);
   if (result) return ownerPerceptSummary(ctx!, result);
   // 升级前排队的试跑、教学和内驱也没有主人摘要，不能等它们被重新生成才隐藏执行提示。
-  if (reason.kind === 'trial') return '新队友开始试跑';
+  if (reason.kind === 'trial') return '新员工开始试跑';
   if (reason.kind === 'teach') return '已收到教学会话';
   if (reason.kind === 'drive') return '复查目标与待办进展';
   if (reason.kind === 'reflection') return '复盘目标与做事方式';

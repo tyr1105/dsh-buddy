@@ -7,6 +7,7 @@ import { onExternalSessionEvent } from '../src/perception/sessions.js';
 import { PerceptSchema } from '../src/model/perception.js';
 import { botFixture, goalFixture, watchFixture } from './model-fixtures.js';
 import { perceptionContext, hour, minute } from './perception-fixtures.js';
+import { addSelfTurns } from './p76c-fixtures.js';
 
 function input(ctx: ReturnType<typeof perceptionContext>, patch: Partial<PerceptInput> = {}): PerceptInput {
   return { botId: botFixture.id, watchId: null, source: 'file', kind: 'changed', summary: '文件有新内容', location: '/hub/file',
@@ -144,8 +145,10 @@ describe('期望与会话事件', () => {
 describe('实时门槛和独立新奇度窗口', () => {
   it('没有 DriveState 但今天已用 3/6 回合时日志门槛为 0.75', () => {
     const ctx = perceptionContext();
-    for (let i = 1; i <= 3; i++) ctx.store.log('ledger').append({ id: `le_000000000${i}`, who: botFixture.id,
-      wakeId: null, tokens: 1000, kind: 'turn', at: ctx.clock.now() });
+    // 设为 6 只为让 3 个回合恰好得到 3/6（P76b 加的显式设置；默认值现在是 2，本条测的是比例与默认值无关）。
+    // P76c：门槛里的疲劳改数唤醒单口径的「员工自己发起的回合」（原来数账本行）；证明的仍是「没有缓存状态时按此刻的实际用量算门槛」。
+    ctx.settings.botDailyTurnBudget = 6;
+    addSelfTurns(ctx, 3);
     expect(ctx.store.table('drives').get(botFixture.id)).toBeNull();
     recordPercept(ctx, input(ctx));
     expect(ctx.store.log('appraisals').recent(1)[0]?.threshold).toBeCloseTo(0.75);

@@ -18,7 +18,6 @@ import { openNewTopic } from '../logic/topics.js'
 import { sidebarSelectedThread } from '../logic/topic-draft.js'
 import { watchHostNavigation } from '../logic/host-navigation.js'
 import { TeamSidebarNav, type NewSessionInput } from './team-sidebar-nav.js'
-import type { ArchiveCheckInfo } from './bot-archive-dialog.js'
 import { BlockBoundary } from './ErrorBoundary.js'
 
 export function TeamSidebar(props: {
@@ -59,17 +58,7 @@ export function TeamSidebar(props: {
     return openNewTopic(props.hub, input.projectId, input.text)
   }
 
-  /** P48：归档前置校验；命令失败转成中文错误字符串，左栏据此弹拦截框。 */
-  const checkArchive = async (botId: string): Promise<ArchiveCheckInfo | string> => {
-    try {
-      const result = await props.hub.command('archiveBotCheck', { botId })
-      if (!result.ok) return result.error
-      return result.data as ArchiveCheckInfo
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e)
-    }
-  }
-  /** 归档 / 恢复 / 删除共用：成功后刷新总览、项目与办公室；失败把中文错误交回弹窗。 */
+  /** 删除已归档员工：成功后刷新总览、项目与办公室；失败把中文错误交回弹窗。（P73f：归档改在编辑员工弹窗里做。） */
   const runBotArchiveCommand = async (name: string, botId: string): Promise<string | null> => {
     try {
       const result = await props.hub.command(name, { botId })
@@ -112,9 +101,6 @@ export function TeamSidebar(props: {
         onCreateSession={createSession}
         // P60：项目行加号先确保中心面板被选中，再进这个项目的草稿主题（空聊天，不发命令）。
         onOpenTopicDraft={projectId => navigate(() => props.hub.openTopicDraft(projectId))}
-        onCheckArchive={checkArchive}
-        onArchiveBot={botId => runBotArchiveCommand('archiveBot', botId)}
-        onRestoreArchivedBot={botId => runBotArchiveCommand('restoreArchivedBot', botId)}
         onDeleteArchivedBot={botId => runBotArchiveCommand('deleteArchivedBot', botId)}
       />
     </BlockBoundary>,

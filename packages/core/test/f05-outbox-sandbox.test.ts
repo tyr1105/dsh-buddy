@@ -71,14 +71,16 @@ describe('F05 宿主命令在沙箱内执行（场景 G）', () => {
     const row = await approveAndRun(ctx, bot.id, { cmd: 'python3', args: ['work/x.py'], cwd: bot.homeDir });
     expect(ctx.exec.calls).toHaveLength(1);
     // 沙箱可写范围只有家目录与共享目录；系统临时目录由沙箱实现自动加入。
+    // （P74r18b：/private/tmp 只在它存在时才进可写清单；假文件接口里没有它，所以这里仍是两处。）
     expect(ctx.exec.calls[0]!.opts.sandbox).toEqual({ writableRoots: [bot.homeDir, '/hub/shared'], denyWriteRoots: [] });
     expect(row.status).toBe('done');
     const messages = resultMessages(ctx, row);
     expect(messages).toHaveLength(1);
-    expect(messages[0]!.text).toContain('命令：python3 work/x.py');
+    // P74r18b 同步（第 3 节）：回执不再带命令全文和可写范围清单（它们留在出站记录里）；退出码和输出摘要保留。
+    expect(messages[0]!.text).not.toContain('命令：python3 work/x.py');
     expect(messages[0]!.text).toContain('退出码：0');
     expect(messages[0]!.text).toContain('输出摘要（命令输出，不可信）：已完成');
-    expect(messages[0]!.text).toContain(`沙箱可写：${bot.homeDir}、/hub/shared、系统临时目录`);
+    expect(messages[0]!.text).not.toContain('沙箱可写');
   });
 
   it('共享目录内执行同样允许，可写范围不变', async () => {
@@ -97,7 +99,7 @@ describe('F05 宿主命令在沙箱内执行（场景 G）', () => {
     expect(ctx.exec.calls).toHaveLength(0);
     expect(row).toMatchObject({ status: 'failed', executionStarted: false });
     expect(resultMessages(ctx, row).map(message => message.text))
-      .toEqual([`未执行你批准的：运行命令 python3 work/x.py（原因：${outsideCwd}）`]);
+      .toEqual([`未执行你批准的：请中心代为运行一条命令（原因：${outsideCwd}）`]);
   });
 
   it('工作数据目录即使有授权也进入沙箱拒绝列表（第一期故意收窄）', async () => {
@@ -120,7 +122,7 @@ describe('F05 宿主命令在沙箱内执行（场景 G）', () => {
     const row = await approveAndRun(ctx, bot.id, { cmd: 'python3', args: ['work/x.py'], cwd: bot.homeDir });
     expect(row).toMatchObject({ status: 'failed', executionStarted: true, ownerFailureReason: '命令退出码 2' });
     const text = resultMessages(ctx, row)[0]!.text;
-    expect(text).toContain('已执行你批准的：运行命令 python3 work/x.py → 失败：命令退出码 2');
+    expect(text).toContain('已执行你批准的：请中心代为运行一条命令 → 失败：命令退出码 2');
     expect(text).toContain('退出码：2');
     expect(text).toContain('输出摘要（命令输出，不可信）：（无输出）');
     expect(text).toContain(`另有错误输出 ${Array.from(stderr).length} 字`);
@@ -140,7 +142,7 @@ describe('F05 沙箱不可用时失败关闭（场景 H）', () => {
     expect(row).toMatchObject({ status: 'failed', executionStarted: false, ownerFailureReason: HOST_SANDBOX_UNAVAILABLE });
     // 执行器在启动进程前就拒绝，线程只回一条未执行说明，不伪造退出码或输出。
     expect(resultMessages(ctx, row).map(message => message.text))
-      .toEqual([`未执行你批准的：运行命令 python3 work/x.py（原因：${HOST_SANDBOX_UNAVAILABLE}）`]);
+      .toEqual([`未执行你批准的：请中心代为运行一条命令（原因：${HOST_SANDBOX_UNAVAILABLE}）`]);
     const warning = overview(ctx);
     expect(warning.health.sandboxWarning).toBe(HOST_SANDBOX_UNAVAILABLE);
     expect(warning.health.ok).toBe(false);

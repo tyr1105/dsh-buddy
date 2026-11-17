@@ -73,7 +73,7 @@ describe('三组的顺序与标题', () => {
   it('顺序固定为办公室 → 队友 → 工作区', () => {
     expect([...SIDEBAR_GROUP_ORDER]).toEqual(['office', 'teammates', 'workspaces'])
     expect(SIDEBAR_GROUP_TITLES.office).toBe('办公室')
-    expect(SIDEBAR_GROUP_TITLES.teammates).toBe('队友')
+    expect(SIDEBAR_GROUP_TITLES.teammates).toBe('员工')
     expect(SIDEBAR_GROUP_TITLES.workspaces).toBe('工作区')
   })
 })
@@ -230,30 +230,30 @@ describe('左栏组件契约（P44 复审）', () => {
 })
 
 /**
- * 队友行第三行活动句（U01 第 46 轮）：退役时 core 把活动句改写成「已退役」，
- * 名字旁标签已经是「已退役」，第三行再写一遍是纯重复。正例反例各锁一条，
- * 防止去重时误伤非退役队友的真实活动句。
+ * 队友行第三行活动句（U01 第 46 轮；P73f 起退役统一为归档）：归档时 core 把活动句改写成「已归档」，
+ * 状态文字已经写了归档，第三行再写一遍是纯重复。正例反例各锁一条，
+ * 防止去重时误伤非归档队友的真实活动句。
  */
 describe('队友行活动句 rowActivityText', () => {
   const tanlu = fixtureOverview.bots.find(b => b.id === 'bot-tanlu') as BotCard
   const retired = (over: Partial<BotCard>): BotCard =>
-    ({ ...tanlu, lifecycle: 'retired' as const, activity: 'resting' as const, activityText: '已退役', ...over })
+    ({ ...tanlu, lifecycle: 'retired' as const, staffStatus: 'archived' as const, staffStatusLabel: '归档', activity: 'resting' as const, activityText: '已归档', ...over })
 
   it('在岗队友：原样返回活动句，不做任何改写', () => {
     expect(rowActivityText(tanlu)).toBe('正在处理：数据日报没出（第 12/30 步）')
   })
 
-  it('退役且活动句与标签重复：改成「最后活动：…」，不再出现第二遍已退役', () => {
+  it('归档且活动句与状态重复：改成「最后活动：…」，不再出现第二遍已归档', () => {
     const text = rowActivityText(retired({ lastActiveText: '2 天前' }))
     expect(text).toBe('最后活动：2 天前')
-    expect(text).not.toContain('已退役')
+    expect(text).not.toContain('已归档')
   })
 
-  it('退役但没有最后活动时间：返回空串（调用方整行不渲染，不用空话占位）', () => {
+  it('归档但没有最后活动时间：返回空串（调用方整行不渲染，不用空话占位）', () => {
     expect(rowActivityText(retired({ lastActiveText: null }))).toBe('')
   })
 
-  it('退役但活动句不是「已退役」（例如预览桩的归档演示句）：原样保留', () => {
-    expect(rowActivityText(retired({ activityText: '已归档' }))).toBe('已归档')
+  it('归档但活动句不是「已归档」（例如预览桩的演示句）：原样保留', () => {
+    expect(rowActivityText(retired({ activityText: '最后一次交接已完成' }))).toBe('最后一次交接已完成')
   })
 })

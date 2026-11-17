@@ -36,6 +36,13 @@ describe('probeHarness（纯探测，不调用宿主方法）', () => {
     ]))
   })
 
+  it('P69：宿主没有 sandboxPolicy.resolve 时，降级清单里能看到它（钩子会一直报未沙箱）', () => {
+    const { ctx } = createFakeCtx(engineHarnessServices())
+    const report = probeHarness(ctx)
+    expect(report.degradedOptional).toContain('沙箱档位查询（sandboxPolicy.resolve）')
+    expect(hasCapability(report, 'sandboxPolicy.resolve')).toBe(false)
+  })
+
   it('缺外壳能力：shellOk 为假，并说清缺哪一项', () => {
     const { ctx } = createFakeCtx(engineHarnessServices())
     delete ctx.inject
@@ -93,7 +100,9 @@ describe('apply 的 E04 接线', () => {
       const service = made.provided.get('agentHub') as any
       expect(service.status()).toEqual({ ok: false, mode: 'disabled' })
       expect(service.compat().shellOk).toBe(false)
-      expect(made.fetchRoutes).toHaveLength(13)
+      // 原 13 条；P75j 加 skill-library、skill-detail；P75k 加 memory-page；P76j 加 active-jobs；
+      // P76k 加 weekly-usage；P75r7 删去 recent-sessions。
+      expect(made.fetchRoutes).toHaveLength(17)
       await made.ctx.dispose()
     } finally { rmSync(root, { recursive: true, force: true }) }
   })

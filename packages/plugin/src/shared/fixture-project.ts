@@ -16,6 +16,11 @@ import type {
   ProjectTaskArtifactView, ProjectTaskView, ProjectTaskWakeView, ProjectTopicView, ProjectView, ProjectViewRow, Role, TaskStatus,
   ThreadMessageView, ThreadView,
 } from './views.js'
+// P74i-m1（走查 S-4）：状态词直接引用 core 的对照表，不再自己抄一份——core 改口径时样例跟着变。
+import { CRITERION_STATUS_LABELS as CRITERION_STATUS_LABEL, PROJECT_STATUS_LABELS as PROJECT_STATUS_LABEL, TASK_STATUS_LABELS as TASK_STATUS_LABEL } from '@agent-hub/core'
+import {
+  SAMPLE_AGREEMENT_PROJECT_ID, SAMPLE_AGREEMENT_TITLE, SAMPLE_AGREEMENT_TOPIC_ID, SAMPLE_AGREEMENT_TOPIC_TITLE, sampleAgreementPanel,
+} from './fixture-agreement.js'
 
 /** 样例基准时刻：与样例办公室/资料一致（2026-11-06 14:20 UTC），避免每次刷新漂移。 */
 const NOW = Date.UTC(2026, 10, 6, 14, 20)
@@ -36,19 +41,8 @@ const BOT_ROLE: Readonly<Record<string, { role: Role; roleLabel: string }>> = {
   'bot-zongguan': { role: 'chief', roleLabel: '总管' },
 }
 
-/** 项目状态中文标签（手工对齐 core PROJECT_STATUS_LABELS）。 */
-const PROJECT_STATUS_LABEL: Record<Project['status'], string> = {
-  active: '进行中', paused: '已暂停', done: '已完成', archived: '已归档',
-}
-/** 任务状态中文标签（手工对齐 core TASK_STATUS_LABELS）。 */
-const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
-  todo: '待办', doing: '进行中', blocked: '受阻',
-  done_pending_check: '待验收', accepted: '已通过', rejected: '已驳回',
-}
-/** 验收项状态中文标签（手工对齐 core CRITERION_STATUS_LABELS）。 */
-const CRITERION_STATUS_LABEL: Record<ProjectCriterionView['status'], string> = {
-  open: '待验收', met: '已满足',
-}
+// 状态中文标签：P74i-m1（走查 S-4）起直接用 core 的对照表（与「一件事」的状态词统一：
+// 待开工、执行中、受阻、待你验收、已完成、返工中），本文件不再自己维护一份旧的写法。
 
 /** 造一条项目事实：样例只关心展示字段，时间戳显式给。 */
 function project(input: {
@@ -213,7 +207,8 @@ const FLOOR_SENDER: Readonly<Record<string, { fromName: string; fromColor: strin
   hub: { fromName: 'Agent 中心', fromColor: null },
   'bot-tanlu': { fromName: '探路', fromColor: 'var(--dsw-alias-success)' },
   'bot-xunjian': { fromName: '巡检员', fromColor: 'var(--dsw-alias-accent)' },
-  'bot-gone': { fromName: '已删除的队友', fromColor: null },
+  'bot-zongguan': { fromName: '总管', fromColor: 'var(--dsw-alias-warning)' },
+  'bot-gone': { fromName: '已删除的员工', fromColor: null },
 }
 
 /** 造一层楼：样例只关心谁说的、说了什么、几点说的。 */
@@ -243,9 +238,20 @@ export const fixtureTopicThreads: ThreadView[] = [
       floor(TOPIC_SOURCES, 1, 'owner', 'chat', '信源要不要加上公众号？你们讨论一下给我结论。', 25),
       floor(TOPIC_SOURCES, 2, 'bot-tanlu', 'reply', '我倾向加，竞品的促销大多先发公众号。@巡检员 抓取上有风险吗？', 24),
       floor(TOPIC_SOURCES, 3, 'bot-xunjian', 'reply', '有风险，公众号没有稳定的公开入口，容易断。可以先手工收，一周看一次。', 22),
-      floor(TOPIC_SOURCES, 4, 'bot-gone', 'reply', '（这位队友已经不在了，历史发言还留着。）', 21),
+      floor(TOPIC_SOURCES, 4, 'bot-gone', 'reply', '（这位员工已经不在了，历史发言还留着。）', 21),
       floor(TOPIC_SOURCES, 5, 'bot-tanlu', 'report', '结论：先加两家核心竞品的公众号，手工收，一周一次；稳定了再考虑自动。', 20),
       floor(TOPIC_SOURCES, 6, 'hub', 'system', '这轮讨论已到 8 次发言，等你下一句', 20),
+    ],
+  },
+  // P72：有约定的主题。第一层是约定面板（agreement）。
+  // P72g B4：约定卡只发在总管私聊里（core 的 originThread 固定是总管 id），主题楼层里不放约定卡；
+  // 此前这里手写了两张约定卡，面板在上、楼层里又是完整的第 2 版卡，重复出现——是示例数据的问题，不是实现的问题。
+  {
+    threadId: SAMPLE_AGREEMENT_TOPIC_ID, title: SAMPLE_AGREEMENT_TOPIC_TITLE, hasMore: false, oldestId: `${SAMPLE_AGREEMENT_TOPIC_ID}_m1`,
+    agreement: sampleAgreementPanel,
+    messages: [
+      floor(SAMPLE_AGREEMENT_TOPIC_ID, 1, 'owner', 'chat', '下周三要上线一个活动报名页，帮我安排一下。', 12),
+      floor(SAMPLE_AGREEMENT_TOPIC_ID, 2, 'hub', 'system', `总管为这件事建立了主题「${SAMPLE_AGREEMENT_TOPIC_TITLE}」，后续进展都记在那里。`, 11),
     ],
   },
 ]
@@ -382,7 +388,7 @@ const wakeWk1 = wake({
 const wakeRetired = wake({
   wakeId: 'wk_retired', botId: 'bot-retired', botName: null, ledgerId: 'wl_retired',
   variantLabel: '常规', statusLabel: '已交账', triggerLabel: '感知',
-  summary: '已退役队友当时的一次唤醒', openedAt: NOW - 9 * DAY, openedText: '10月28日 14:20',
+  summary: '已归档员工当时的一次唤醒', openedAt: NOW - 9 * DAY, openedText: '10月28日 14:20',
 })
 
 // 样例产物：待验收的周报挂两版（v1 是更早的通过版本，v2 最新且未单独验收）；
@@ -412,11 +418,11 @@ const weeklyIssues: ProjectIssueView[] = [
   // 文案与 core 一致：正文只说人话，失效队友的 id 只放进 subjectBotId（界面放到悬停 title）。
   {
     level: 'warning', code: 'member_bot_invalid', subjectBotId: 'bot-gone',
-    text: '项目「竞品周报自动化」有一名成员已删除或退役，请调整成员名单',
+    text: '项目「竞品周报自动化」有一名成员已删除或归档，请调整成员名单',
   },
   {
     level: 'error', code: 'task_assignee_invalid', subjectBotId: 'bot-gone',
-    text: '任务「整理历史发布记录格式」指派的队友已删除或退役',
+    text: '任务「整理历史发布记录格式」指派的员工已删除或归档',
   },
 ]
 
@@ -426,9 +432,9 @@ const weeklyRevisionViews: ProjectContextRevisionView[] = [...prjWeekly.contextR
   .sort((a, b) => b.at - a.at)
   .map(revision => ({
     revision,
-    editorName: revision.editorKind === 'owner' ? '主人' : (BOT_NAME[revision.editorId] ?? '已删除的队友'),
-    editorKindLabel: revision.editorKind === 'owner' ? '主人' : '队友',
-    sourceLabel: revision.source === 'owner_edit' ? '主人编辑' : '采纳队友建议',
+    editorName: revision.editorKind === 'owner' ? '主人' : (BOT_NAME[revision.editorId] ?? '已删除的员工'),
+    editorKindLabel: revision.editorKind === 'owner' ? '主人' : '员工',
+    sourceLabel: revision.source === 'owner_edit' ? '主人编辑' : '采纳员工建议',
     timeText: revision.at === NOW - 9 * DAY ? '10月28日 14:20' : '10月21日 14:20',
     hashShort: revision.hash.slice(0, 8),
   }))
@@ -484,6 +490,37 @@ const rowWeekly: ProjectViewRow = {
   layers: layersOf(prjWeekly),
   ...contextOf(prjWeekly, { revisions: weeklyRevisionViews, proposals: [weeklyProposal] }),
   ...pageOf(prjWeekly, [topicRow(fixtureTopicThreads[1]!, 2), topicRow(fixtureTopicThreads[0]!, 0)]),
+}
+
+// ---------- 项目 P72g B6：总管负责的项目，样例约定和它的主题挂在这里 ----------
+
+const prjSignup = project({
+  id: SAMPLE_AGREEMENT_PROJECT_ID,
+  name: SAMPLE_AGREEMENT_TITLE,
+  charter: '',
+  status: 'active',
+  ownerBotId: 'bot-zongguan',
+  members: ['bot-zongguan'],
+  createdAt: NOW - 12 * MIN,
+  updatedAt: NOW - 11 * MIN,
+})
+
+/** 约定只能建在总管自己负责的项目里（P72g A4）：负责人是总管，主题输入框默认发给总管。 */
+const rowSignup: ProjectViewRow = {
+  project: prjSignup,
+  statusLabel: PROJECT_STATUS_LABEL.active,
+  ownerBotId: 'bot-zongguan',
+  ownerName: '总管',
+  ownerInvalid: false,
+  members: [member('bot-zongguan', true)],
+  criteria: [],
+  tasks: [],
+  taskCounts: { todo: 0, doing: 0, blocked: 0, done_pending_check: 0, accepted: 0, rejected: 0, total: 0 },
+  progress: 0,
+  issues: [],
+  layers: layersOf(prjSignup),
+  ...contextOf(prjSignup),
+  ...pageOf(prjSignup, [topicRow(fixtureTopicThreads[2]!, 1)]),
 }
 
 // ---------- 项目二：进行中的空项目（没有负责人、成员、验收项与任务） ----------
@@ -550,8 +587,8 @@ const rowMigrate: ProjectViewRow = {
 
 const prjOnboard = project({
   id: 'prj_onboard',
-  name: '新队友入职流程',
-  charter: '新队友上岗第一天要走完的固定动作。',
+  name: '新员工入职流程',
+  charter: '新员工上岗第一天要走完的固定动作。',
   status: 'done',
   ownerBotId: 'bot-zongguan',
   members: ['bot-zongguan', 'bot-tanlu'],
@@ -559,7 +596,7 @@ const prjOnboard = project({
   updatedAt: NOW - 4 * DAY,
 })
 const tOnboard1 = task({ id: 'pt_onboard_1', projectId: 'prj_onboard', title: '写出入职清单', assigneeBotId: 'bot-zongguan', status: 'accepted', createdAt: NOW - 28 * DAY })
-const tOnboard2 = task({ id: 'pt_onboard_2', projectId: 'prj_onboard', title: '第一次试跑走查', assigneeBotId: 'bot-tanlu', status: 'todo', createdAt: NOW - 6 * DAY, detail: '试岗结束后补做。' })
+const tOnboard2 = task({ id: 'pt_onboard_2', projectId: 'prj_onboard', title: '第一次试跑走查', assigneeBotId: 'bot-tanlu', status: 'todo', createdAt: NOW - 6 * DAY, detail: '入职后补做。' })
 
 const rowOnboard: ProjectViewRow = {
   project: prjOnboard,
@@ -617,19 +654,19 @@ const rowOld: ProjectViewRow = {
 }
 
 /**
- * 样例项目全貌：4 个未归档（进行中 2、暂停 1、完成 1）+ 1 个归档；
+ * 样例项目全貌：5 个未归档（进行中 3、暂停 1、完成 1）+ 1 个归档（其中「活动报名页」是总管负责的、挂着样例约定，P72g）；
  * 任务合计 10 条，其中 1 条待主人验收。
  */
 export const fixtureProject: ProjectView = {
   asOf: NOW,
   // 非归档在前（按创建时间）、归档沉底，与 core sortProjectsForView 的顺序一致。
-  projects: [rowWeekly, rowEmpty, rowMigrate, rowOnboard, rowOld],
+  projects: [rowWeekly, rowEmpty, rowMigrate, rowOnboard, rowSignup, rowOld],
   counts: {
-    active: 2,
+    active: 3,
     paused: 1,
     done: 1,
     archived: 1,
-    total: 5,
+    total: 6,
     tasksTotal: 10,
     tasksPendingCheck: 1,
   },

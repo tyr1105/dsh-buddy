@@ -14,6 +14,8 @@ async function world() {
   const hub = createHub(ctx);
   await hub.start();
   const created = okData(await hub.api.createBot({ name: '权限核验员', role: 'sentinel', persona: '先核验再处理', aspirations: ['关注已授权变化'] }));
+  // P72h H3：新建员工不再自动试跑，由主人发一句话让它跑起一个回合。
+  okData(await hub.api.pokeBot(created.id));
   const bot = ctx.store.table('bots').get(created.id)!;
   return { ctx, hub, bot };
 }

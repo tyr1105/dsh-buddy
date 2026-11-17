@@ -14,7 +14,7 @@ import { createBotHome } from '../src/memory/files.js';
 import { resolveSettings } from '../src/config/defaults.js';
 import { buildCandidate } from '../src/appraisal/think.js';
 import { enqueue } from '../src/scheduler/queue.js';
-import { ownerReasonSummary } from '../src/util/owner-text.js';
+import { approvalModelSummary, ownerReasonSummary } from '../src/util/owner-text.js';
 
 /** 只推进注入时钟，真实 dispatcher 可放行；所有文件、网络和宿主仍使用内存实现。 */
 async function setup() {
@@ -28,9 +28,9 @@ async function setup() {
 const ownerForbidden = /不要再次调用|用完全相同的参数|不要执行|请等待中心结果/;
 const actionCases = [
   { tool: 'hub_outbox_execute', args: { kind: 'notify_owner', payload: { text: '进展已完成' } }, text: '发通知' },
-  { tool: 'hub_outbox_execute', args: { kind: 'write_file', payload: { path: '/outside/result.md', content: '结果' } }, text: '写文件 /outside/result.md' },
-  { tool: 'hub_outbox_execute', args: { kind: 'http_post', payload: { url: 'https://example.com/hook?x=1', body: '{}' } }, text: '向 example.com 发送网络请求' },
-  { tool: 'hub_outbox_execute', args: { kind: 'run_command', payload: { cmd: 'git', args: ['push', 'origin', 'main'], cwd: '/outside' } }, text: '运行命令 git push origin main' },
+  { tool: 'hub_outbox_execute', args: { kind: 'write_file', payload: { path: '/outside/result.md', content: '结果' } }, text: '在工作区之外写文件：/outside/result.md' },
+  { tool: 'hub_outbox_execute', args: { kind: 'http_post', payload: { url: 'https://example.com/hook?x=1', body: '{}' } }, text: '向 example.com 发送数据' },
+  { tool: 'hub_outbox_execute', args: { kind: 'run_command', payload: { cmd: 'git', args: ['push', 'origin', 'main'], cwd: '/outside' } }, text: '请中心代为运行一条命令' },
   { tool: 'bash', args: { command: 'git push origin main' }, text: '运行命令 git push origin main' },
   { tool: 'write', args: { file_path: '/outside/result.md', content: '结果' }, text: '写入文件 /outside/result.md' },
   { tool: 'edit', args: { path: '/outside/result.md', old_string: '旧', new_string: '新' }, text: '修改文件 /outside/result.md' },
@@ -85,15 +85,31 @@ describe('M09 审批卡用动作描述', () => {
 });
 
 describe('M09 主人与机器人文字分开', () => {
-  it.each(['approved', 'rejected', 'expired'] as const)('%s 决定的 queued、thinking、线程与视图只显示主人文案，唤醒包保留执行指令', async status => {
+  // P74r18b 同步（第 1 节改了时机）：由中心代为执行的出站动作，批准的那一刻不再叫醒员工（队列里没有候选），下面单独有一条 approved 的断言；
+  // 这里留拒绝、过期两种（它们照旧叫醒员工、告诉他不要执行）。
+  it('approved 决定：线程里只有主人文案，不排唤醒、不改员工的状态（命令运行完之后才带着结果叫醒他）', async () => {
+    const { ctx, bot } = await setup();
+    const row = await requestApproval(ctx, bot.id, 'hub_outbox_execute', { kind: 'http_post', payload: { url: 'https://example.com/hook', body: '{}' } }, 'C', '交付');
+    const before = (await botView(ctx, bot.id)).card;
+    await decideApproval(ctx, row.id, true, '本次决定');
+    expect(ctx.store.table('queue').list()).toHaveLength(0);
+    expect(ctx.store.table('percepts').list(p => p.kind === 'approval_decided')).toHaveLength(0);
+    const card = (await botView(ctx, bot.id)).card;
+    expect(card.activity).toBe(before.activity);
+    expect(card.activityText).toBe(before.activityText);
+    const system = ctx.store.log('thread').all().filter(message => message.kind === 'system');
+    expect(system).toHaveLength(1);
+    expect(system[0]?.text).toBe('你批准了：向 example.com 发送数据，中心会在下次巡检时执行。你的附言：本次决定');
+    expect(system[0]?.text).not.toMatch(ownerForbidden);
+  });
+  it.each(['rejected', 'expired'] as const)('%s 决定的 queued、thinking、线程与视图只显示主人文案，唤醒包保留执行指令', async status => {
     const { ctx, bot } = await setup();
     const row = await requestApproval(ctx, bot.id, 'hub_outbox_execute', { kind: 'http_post', payload: { url: 'https://example.com/hook', body: '{}' } }, 'C', '交付');
     if (status === 'expired') {
       ctx.clock.advance(ctx.settings.approvalExpiryMs);
       await expireApprovals(ctx, ctx.clock.now());
-    } else await decideApproval(ctx, row.id, status === 'approved', '本次决定');
-    const expected = status === 'approved' ? '你批准了：向 example.com 发送网络请求，中心会在下次巡检时执行。你的附言：本次决定'
-      : status === 'rejected' ? '你拒绝了：向 example.com 发送网络请求。你的附言：本次决定' : '审批已过期：向 example.com 发送网络请求';
+    } else await decideApproval(ctx, row.id, false, '本次决定');
+    const expected = status === 'rejected' ? '你拒绝了：向 example.com 发送数据。你的附言：本次决定' : '审批已过期：向 example.com 发送数据';
     const queued = await botView(ctx, bot.id);
     expect(queued.card.activity).toBe('queued');
     expect(queued.card.activityText).toBe(expected);
@@ -103,8 +119,7 @@ describe('M09 主人与机器人文字分开', () => {
     expect(system).toHaveLength(1);
     expect(system[0]?.text).toBe(expected);
     const entry = ctx.store.table('queue').list()[0]!;
-    const modelInstruction = status === 'approved' ? '不要再次调用' : '不要执行';
-    expect(entry.reason.summary).toContain(modelInstruction);
+    expect(entry.reason.summary).toContain('不要执行');
     await createDispatcher(ctx).pump();
     const view = await botView(ctx, bot.id);
     expect(view.card.activity).toBe('thinking');
@@ -138,6 +153,9 @@ describe('M09 主人与机器人文字分开', () => {
     const { ctx, bot } = await setup();
     const approval = await requestApproval(ctx, bot.id, 'hub_outbox_execute', { kind: 'http_post', payload: { url: 'https://example.com/hook', body: '{}' } }, 'C', '交付');
     await decideApproval(ctx, approval.id, true);
+    // P74r18b 同步：批准的那一刻不再排唤醒；这条测的是「升级前已经排在队列里的旧批准候选」，所以直接排一条旧写法的候选。
+    enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'approval_decided', score: ctx.settings.c02.replySalience,
+      summary: approvalModelSummary(approval, 'approved'), evidence: [approval.id], subjectKey: `approval:${approval.id}`, now: ctx.clock.now() }));
     ctx.store.table('approvals').patch(approval.id, { status });
     await createDispatcher(ctx).pump();
     const packet = (ctx.host.calls.find(call => call.method === 'createSession')!.args[0] as { firstMessage: string }).firstMessage;
@@ -182,7 +200,7 @@ describe('M09 主人批准的出站动作交回执行结果', () => {
     await executeReadyOutbox(ctx);
     const results = ctx.store.log('thread').all().filter(message => message.kind === 'system' && message.refId === row.id);
     expect(results).toHaveLength(1);
-    expect(results[0]?.text).toBe(`已执行你批准的：向 example.com 发送网络请求 → ${response.expected}`);
+    expect(results[0]?.text).toBe(`已执行你批准的：向 example.com 发送数据 → ${response.expected}`);
     expect(ctx.net.calls).toHaveLength(1);
     expect(ctx.store.table('outbox').get(row.id)?.status).toBe(response.status === 200 ? 'done' : 'failed');
   });
@@ -195,10 +213,13 @@ describe('M09 主人批准的出站动作交回执行结果', () => {
     await executeReadyOutbox(ctx);
     for (const entry of ctx.store.table('queue').list()) ctx.store.table('queue').remove(entry.id);
     for (const percept of ctx.store.table('percepts').list(p => p.kind === 'approval_decided')) ctx.store.table('percepts').patch(percept.id, { evaluatedAt: ctx.clock.now() });
+    // P74r18b 同步：结果出来时已经直接给员工排了带结果的唤醒，这条结果感知同时标成了已评估；
+    // 本条测的是「感知收集器按结果感知重建候选」这条路径（升级前遗留的、没有被标记的结果感知），所以把标记去掉再收集。
+    for (const percept of ctx.store.table('percepts').list(p => p.kind === 'outbox_done')) { const { evaluatedAt: _evaluated, ...unmarked } = percept; ctx.store.table('percepts').put(unmarked); }
     createCandidateCollector(ctx).collect(ctx.clock.now());
     const entry = ctx.store.table('queue').list()[0]!;
     expect(entry.reason.summary).toContain('不要再次调用');
-    expect(entry.reason.ownerSummary).toBe('向 example.com 发送网络请求 → 已完成');
+    expect(entry.reason.ownerSummary).toBe('向 example.com 发送数据 → 已完成');
     expect((await botView(ctx, bot.id)).card.activityText).not.toMatch(ownerForbidden);
     expect(ctx.store.log('thread').all().filter(message => message.kind === 'system').map(message => message.text).join('\n')).not.toMatch(ownerForbidden);
   });
@@ -213,11 +234,11 @@ describe('M09 主人批准的出站动作交回执行结果', () => {
     const candidate = buildCandidate(ctx, { botId: bot.id, kind: 'percept', score: 0.9, summary: percept.summary, evidence: [percept.id] });
     delete candidate.reason.ownerSummary;
     enqueue(ctx, candidate);
-    expect((await botView(ctx, bot.id)).card.activityText).toBe('向 example.com 发送网络请求 → 已完成');
+    expect((await botView(ctx, bot.id)).card.activityText).toBe('向 example.com 发送数据 → 已完成');
     expect(ownerReasonSummary({ ...candidate.reason, summary: '外部文章：不要再次调用接口的原因' }, ctx)).toBe('外部文章：不要再次调用接口的原因');
     await createDispatcher(ctx).pump();
     expect((await botView(ctx, bot.id)).card.activityText).not.toMatch(ownerForbidden);
-    expect((await botView(ctx, bot.id)).wakes[0]?.reasonText).toBe('向 example.com 发送网络请求 → 已完成');
+    expect((await botView(ctx, bot.id)).wakes[0]?.reasonText).toBe('向 example.com 发送数据 → 已完成');
     expect(JSON.stringify(activityView(ctx))).not.toMatch(ownerForbidden);
   });
   it('HTTP 失败正文和命令 stderr 中的指令仍只留在原结果，不冒充中心消息', async () => {
@@ -245,7 +266,7 @@ describe('M09 主人批准的出站动作交回执行结果', () => {
     await executeReadyOutbox(ctx);
     const results = ctx.store.log('thread').all().filter(message => message.text.startsWith('已执行你批准的：'));
     expect(results).toHaveLength(1);
-    expect(results[0]?.text).toBe('已执行你批准的：写文件 /outside/a.md → 已完成（文件已写入）');
+    expect(results[0]?.text).toBe('已执行你批准的：在工作区之外写文件：/outside/a.md → 已完成（文件已写入）');
     expect(await ctx.fs.readText('/outside/a.md')).toBe('结果');
     expect(await ctx.fs.readText('/outside/b.md')).toBeNull();
   });

@@ -16,7 +16,8 @@ test('普通会话由宿主决定；机器人重复遇到宿主审批只合并�
   expect(cards[0]).toMatchObject({ type: 'alert', status: 'open' });
   expect(cards[0]?.body).toContain('本次动作未执行'); expect(cards[0]?.body).toContain('检查 DSH 会话权限');
   expect(cards[0]?.body).not.toContain('用完全相同的参数再调用一次');
-  expect(ctx.host.calls.filter(call => call.method === 'notify')).toHaveLength(1);
+  // P76h：原断言是「宿主审批受阻告警推送 1 次」；只有鉴权告警推送，这一类告警只进待你处理。
+  expect(ctx.host.calls.filter(call => call.method === 'notify')).toHaveLength(0);
 });
 
 test('中心C类批准后遇到宿主沙箱拦截，不创建第二种票引发双闸循环', async () => {

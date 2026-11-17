@@ -152,7 +152,9 @@ describe('F08 项目视图组装', () => {
     const project = okData(await api.saveProject({ name: '成员失效', memberBotIds: [b1.id, b2.id] }));
     const task = okData(await api.saveTask({ projectId: project.id, title: '派给队友乙', assigneeBotId: b2.id }));
     ctx.store.table('bots').remove(b3.id); // 档案缺失：负责人名字查不到
-    okData(await api.setLifecycle(b2.id, 'retired')); // 退役：档案还在，名字照实显示
+    // 退役：档案还在，名字照实显示。P73r1（R2）：经命令退役会同时把他移出项目成员，
+    // 本用例要的是「旧数据里已退役的成员仍在名单中」，所以直接写成旧数据。
+    ctx.store.table('bots').patch(b2.id, { lifecycle: 'retired' });
 
     const view = api.projectView();
     const ownerRow = view.projects.find(r => r.project.id === ownerProject.id)!;
@@ -189,7 +191,7 @@ describe('F08 项目视图组装', () => {
     expect(row.taskCounts).toMatchObject({ doing: 1, done_pending_check: 1, accepted: 1, total: 3 });
     expect(row.progress).toBeCloseTo(1 / 3, 10);
     const labels = Object.fromEntries(row.tasks.map(x => [x.task.title, x.statusLabel]));
-    expect(labels).toMatchObject({ 进行中: '进行中', 待验收: '待验收', 已通过: '已通过' });
+    expect(labels).toMatchObject({ 进行中: '执行中', 待验收: '待你验收', 已通过: '已完成' }); // P74a：事务状态词改名
   });
 
   it('排序：非归档项目在前、归档沉底；项目内任务按状态分组排序', async () => {

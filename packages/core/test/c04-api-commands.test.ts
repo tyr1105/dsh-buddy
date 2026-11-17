@@ -4,7 +4,6 @@ import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { createUiApi } from '../src/api/index.js';
 import { createInboxItem } from '../src/outreach/inbox.js';
 import { requestApproval } from '../src/gate/approvals.js';
-import { saveRoutine } from '../src/routines/save.js';
 import { proposeWatch } from '../src/tools/hub-watch-propose.js';
 import { WakeTicketSchema } from '../src/model/wake.js';
 import { modelFixtures } from './model-fixtures.js';
@@ -14,15 +13,15 @@ const DAY = 86_400_000;
 const newBot = { name: '小守', role: 'sentinel', persona: '安静盯守', aspirations: ['关注变化'] };
 
 describe('C04 创建与档案命令', () => {
-  it('创建试岗家目录、志向、主人发起 trial 并刷盘审计', async () => {
+  it('创建在岗家目录、志向、不自动排试跑并刷盘审计', async () => {
     const { ctx, bot, after } = await apiFixture();
-    expect(bot.lifecycle).toBe('probation');
-    expect(bot.probationEndsAt).toBe(ctx.clock.now() + ctx.settings.probationMs);
+    // P73a（任务卡 5.1 第 1 类）：原预期 lifecycle 为 probation、probationEndsAt 为创建时间加试岗期；新预期 active、null。
+    expect(bot.lifecycle).toBe('active');
+    expect(bot.probationEndsAt).toBeNull();
     for (const path of ['AGENTS.md', 'memory/MEMORY.md', 'mind/goals.md', 'mind/agenda.md', 'mind/watches.md'])
       expect(await ctx.fs.readText(`${bot.homeDir}/${path}`)).not.toBeNull();
-    const entry = ctx.store.table('queue').list()[0]!;
-    expect(entry).toMatchObject({ variant: 'trial', ownerInitiated: true, priority: 100 });
-    expect(entry.reason.evidence.length).toBeGreaterThan(0);
+    // P72h H3：新建员工不再自动排试跑回合，队列里没有任何待执行的单子。
+    expect(ctx.store.table('queue').list()).toEqual([]);
     expect(after).toHaveBeenCalledOnce();
     expect(ctx.store.isDirty()).toBe(false);
     expect(ctx.store.log('audit').all().some(row => row.action === 'ui_createBot')).toBe(true);
@@ -77,7 +76,8 @@ describe('C04 创建与档案命令', () => {
   it('档案允许主人设 L3，拒绝同名和运行态字段', async () => {
     const { api, ctx, bot } = await apiFixture();
     expect((await api.updateBot(bot.id, { autonomy: 'L3', persona: '核实后执行', workDataAllowed: true })).ok).toBe(true);
-    expect(ctx.store.table('bots').get(bot.id)?.autonomy).toBe('L3');
+    // P73a（5.1 第 5 类）：原预期 L3（执行类采用传入值）；新预期 L1（执行类固定听吩咐，传入值被忽略但不报错）。
+    expect(ctx.store.table('bots').get(bot.id)?.autonomy).toBe('L1');
     const peer = okData(await api.createBot(newBot));
     expect((await api.updateBot(bot.id, { name: peer.name })).ok).toBe(false);
     expect((await api.updateBot(bot.id, { violations: 0 })).ok).toBe(false);
@@ -86,22 +86,24 @@ describe('C04 创建与档案命令', () => {
 });
 
 describe('C04 生命周期', () => {
-  it('试岗满三天无越界可提前转正，之前拒绝', async () => {
+  it('旧档案里的试岗员工可以立即转为在岗，在岗员工不能重复转在岗', async () => {
     const { api, ctx, bot } = await apiFixture();
     expect((await api.setLifecycle(bot.id, 'active')).ok).toBe(false);
-    ctx.clock.advance(3 * DAY);
+    // P73a（5.1 第 2 类）：原预期「未满三天拒绝，满三天才成功」；新预期没有试岗这一步，旧试岗档案立即转在岗。
+    ctx.store.table('bots').patch(bot.id, { lifecycle: 'probation', probationStartedAt: ctx.clock.now(), probationEndsAt: ctx.clock.now() + 7 * DAY });
     expect((await api.setLifecycle(bot.id, 'active')).ok).toBe(true);
     expect(ctx.store.table('bots').get(bot.id)?.probationEndsAt).toBeNull();
   });
-  it('有越界不能提前转正，暂停恢复不能绕开试岗', async () => {
+  it('暂停后恢复一律回到在岗，试岗不再存在；有越界记录也不拦', async () => {
     const { api, ctx, bot } = await apiFixture();
     expect((await api.setLifecycle(bot.id, 'paused')).ok).toBe(true);
     expect(ctx.store.table('queue').count()).toBe(0);
-    expect((await api.setLifecycle(bot.id, 'active')).ok).toBe(false);
+    // P73a（5.1 第 2 类）：原预期暂停后恢复 active 被拒、必须恢复到 probation；新预期直接恢复 active，请求 probation 也改写为 active。
+    expect((await api.setLifecycle(bot.id, 'active')).ok).toBe(true);
+    expect(ctx.store.table('bots').get(bot.id)?.lifecycle).toBe('active');
+    expect((await api.setLifecycle(bot.id, 'paused')).ok).toBe(true);
     expect((await api.setLifecycle(bot.id, 'probation')).ok).toBe(true);
-    ctx.clock.advance(3 * DAY);
-    ctx.store.table('bots').patch(bot.id, { violations: 1 });
-    expect((await api.setLifecycle(bot.id, 'active')).ok).toBe(false);
+    expect(ctx.store.table('bots').get(bot.id)?.lifecycle).toBe('active');
   });
   it('暂停中消息保留，恢复后重新进入候选', async () => {
     const { api, ctx, bot } = await apiFixture();
@@ -117,7 +119,8 @@ describe('C04 生命周期', () => {
       consecutiveNoCommit: 3, quarantineReason: '反复越界', retryAt: ctx.clock.now() + DAY });
     expect((await api.setLifecycle(bot.id, 'paused')).ok).toBe(false);
     expect((await api.setLifecycle(bot.id, 'active')).ok).toBe(true);
-    expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'probation', probationEndsAt: bot.probationEndsAt, consecutiveErrors: 0, violations: 0,
+    // P73a（5.1 第 2 类）：原预期解除隔离恢复到 probation 并保留原试岗截止；新预期恢复到 active，试岗截止为空。
+    expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'active', probationEndsAt: null, consecutiveErrors: 0, violations: 0,
       consecutiveNoCommit: 0, quarantineReason: null, retryAt: null });
   });
   it('暂停或恢复不会把在途回合伪装成空闲', async () => {
@@ -215,17 +218,7 @@ describe('C04 业务命令', () => {
     expect((await api.upsertRule({ scope: bot.id, text: '先核实来源', redLine: true })).ok).toBe(true);
     expect((await api.upsertRule({ scope: 'missing', text: '不明范围' })).ok).toBe(false);
   });
-  it('套路可编辑并保存文件，教学入队 teach，未知套路返回错误', async () => {
-    const { api, ctx, bot } = await apiFixture();
-    const routine = await saveRoutine(ctx, bot.id, { name: '检查来源', whenToUse: '有新消息', steps: ['核对地址'] });
-    expect((await api.editRoutine(routine.id, { steps: ['核对日期', '核对原文'] })).ok).toBe(true);
-    expect(await ctx.fs.readText(`${bot.homeDir}/playbooks/${routine.slug}.md`)).toContain('核对日期');
-    expect((await api.editRoutine('unknown', { steps: [] })).ok).toBe(false);
-    for (const row of ctx.store.table('queue').list()) ctx.store.table('queue').remove(row.id);
-    ctx.host.digests.set('lesson', '打开资料、核对来源、记录结论');
-    expect((await api.teach(bot.id, 'lesson', '学会核实')).ok).toBe(true);
-    expect(ctx.store.table('queue').list()[0]?.variant).toBe('teach');
-  });
+  // P75f：套路编辑与教学入队两个命令已下线（「套路可编辑并保存文件，教学入队 teach，未知套路返回错误」删除）；宿主停用说明由插件 real-hub 测试覆盖。
   it('设置深合并、落盘并保持原值；拒绝迁移根目录及非法配置', async () => {
     const { api, ctx } = await apiFixture();
     expect((await api.updateSettings({ paceMinMsByRole: { sentinel: 600_000 } })).ok).toBe(true);

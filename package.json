@@ -1,8 +1,9 @@
 {
   "name": "agent-hub",
   "private": true,
+  "version": "0.3.0",
   "type": "module",
-  "description": "DeepSeek Harness 插件：你的 OPC 专业团队。像素办公室显示每位队友的状态，自主节奏和每日上限由你定。",
+  "description": "DeepSeek Harness 插件：你的 OPC 专业团队。对总管说一件事，它先和你对齐约定与预计消耗，你点「定了」才开工；员工执行、逐条核对后交给你验收。像素办公室显示每位员工的状态。",
   "scripts": {
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",

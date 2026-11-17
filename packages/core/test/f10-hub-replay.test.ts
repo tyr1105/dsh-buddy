@@ -12,7 +12,8 @@ async function setup() {
     sessionId: null, sessionStartedAt: null, lastThinkAt: null, lightCheckAt: null, updatedAt: ctx.clock.now() };
   ctx.store.table('bots').put(bot);
   await createBotHome(ctx, bot);
-  const hub = createHub(ctx);
+  // P73c：本文件验证的是房间帧的记录，座位数组只应有这一位员工；关掉启动时的自动建总管和三问，原断言保持不变。
+  const hub = createHub({ ...ctx, teamSetupOnStart: false });
   await hub.start();
   return { ctx, hub, bot };
 }

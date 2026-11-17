@@ -58,6 +58,9 @@ export const TurnEventSchema = z.discriminatedUnion('type', [
     type: z.literal('error'), // 宿主回合发生错误
     ...eventBase,
     errorText: nonempty, // 可用于错误分类与告警的原始错误说明
+    // P76d：宿主报错对象上的错误代号（例如 RATE_LIMIT）和状态码（例如 429）；宿主没给就不带。中心判断是不是额度用完时先看它们。
+    errorCode: nonempty.optional(),
+    statusCode: z.number().int().min(100).max(599).optional(),
   }),
   z.strictObject({
     type: z.literal('awaiting_approval'), // 宿主自己的审批框正在等待

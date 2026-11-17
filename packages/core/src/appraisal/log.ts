@@ -26,6 +26,12 @@ export function explainSuppression(entry: QueueEntry, by: SuppressedBy, until: n
     quota: '额度或鉴权保护，暂停放行', concurrency: '已有机器人正在思考，等待空位',
     dispatch_gap: '距上次放行太近，稍后再放行', startup_quiet: '中心正在启动对账',
     dedup: '同一指纹已经记录，不重复处理', retry_backoff: '上次出错，等待重排时间',
+    on_demand: '听吩咐：没有人点名或派活，不自己行动',
+    job_cap: '这件事的回合用到上限，移出队列', job_inactive: '这件事已不需要这次唤醒，移出队列',
+    // P75b：技能类回合（复盘、技能核对、每周整理）的三个拦截原因；业务逻辑在 P75g 之后接入。
+    skill_cap: '这次复盘、技能核对、学习或整理的回合已用完', skill_daily_cap: '全队今天的复盘与整理回合已用完', skill_expired: '等待超过 7 天，已放弃',
+    // P75r5b：参与者不是排队中（或找不到所属记录）时丢弃候选；与「等待超过 7 天」分开，旧日志里的 skill_expired 仍照旧显示。
+    skill_stale: '这次记录里已没有这位员工要做的事，不再进行',
   };
   return `${ownerSummary ?? ownerReasonSummary(entry.reason)}：${reasons[by]}${resume}`;
 }

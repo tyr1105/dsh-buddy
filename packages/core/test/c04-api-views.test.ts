@@ -7,7 +7,7 @@ import { writeOutreachAudit } from '../src/outreach/audit.js';
 import { newId } from '../src/util/ids.js';
 import { AgendaItemSchema, CommitSchema, WakeTicketSchema } from '../src/model/index.js';
 import { modelFixtures } from './model-fixtures.js';
-import { saveRoutine } from '../src/routines/save.js';
+import { RoutineSchema } from '../src/model/team.js';
 import { proposeWatch } from '../src/tools/hub-watch-propose.js';
 
 const DAY = 86_400_000;
@@ -16,9 +16,13 @@ const HOUR = 3_600_000;
 describe('C04 总览与详情视图', () => {
   it('总览保留 15.1 字段与中文标签，试岗预算减半，空历史明确显示未知', async () => {
     const { api, ctx, bot } = await apiFixture();
+    // P76c：todayBudget 现在就是设置里的每天上限（默认 2；原来是「每日回合预算与按自主等级的每日思考上限的较小值」），
+    // P76b 在这里显式设的 6 去掉，下面断言默认值 2；todayThinks 是「今天自己发起的回合数」。
     const view = api.overview();
-    expect(view.bots[0]).toMatchObject({ id: bot.id, roleLabel: '调研', initials: '小研', lifecycleLabel: '试岗',
-      todayThinks: 0, todayBudget: 3, todayTokens: 0, unread: 0, waitingOwner: false, lastOutcome: null, lastActiveAt: null });
+    expect(view.bots[0]).toMatchObject({ id: bot.id, roleLabel: '调研', initials: '小研', lifecycleLabel: '在岗',
+      // P73a（5.1 第 1 类）：原预期 lifecycleLabel 为「试岗」、试岗预算减半 todayBudget 为 3；新预期「在岗」、不再减半（取按 L1 的每日思考上限与每日回合预算的较小值）。
+      staffStatus: 'on_duty', staffStatusLabel: '在岗', staffStatusReason: null,
+      todayThinks: 0, todayBudget: 2, todayTokens: 0, unread: 0, waitingOwner: false, lastOutcome: null, lastActiveAt: null });
     expect(view.inbox).toEqual({ total: 0, approvals: 0, questions: 0, proposals: 0, alerts: 0 });
     expect(view.quota.light).toBe('green');
     expect(view.quota.resetAt).toBeNull();
@@ -40,7 +44,10 @@ describe('C04 总览与详情视图', () => {
     await proposeWatch(ctx, bot.id, { kind: 'http', target: 'https://example.test/new', why: '核实变化' });
     await api.upsertGoal({ botId: bot.id, aspirationId: aspiration.id, title: '周目标', doneWhen: '有三条来源', period: 'week' });
     await api.upsertRule({ scope: 'global', text: '不凭空编造', redLine: true });
-    await saveRoutine(ctx, bot.id, { name: '核实来源', whenToUse: '新消息到来', steps: ['找原文', '核对日期'] });
+    // P75f：套路保存函数已删除；视图仍读旧表，这里直接写一行旧数据。
+    ctx.store.table('routines').put(RoutineSchema.parse({ id: newId('r', ctx.rng), botId: bot.id, name: '核实来源',
+      slug: 'verify-source', whenToUse: '新消息到来', steps: ['找原文', '核对日期'], learnedFrom: null, runs: 0, lastRunAt: null,
+      createdAt: ctx.clock.now(), updatedAt: ctx.clock.now() }));
     const view = await api.bot(bot.id);
     expect(view.watches[0]).toMatchObject({ status: 'proposed', createdBy: 'bot', kindLabel: '网页', intervalMs: 900_000 });
     expect(view.routines[0]).toMatchObject({ name: '核实来源', updatedAt: ctx.clock.now(), updatedText: expect.stringContaining('今天') });

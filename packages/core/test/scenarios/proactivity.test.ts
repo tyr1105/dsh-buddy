@@ -4,6 +4,7 @@ import { createSimWorld, advance, metrics } from '../../src/sim/runner.js';
 import { quietBrain } from '../../src/sim/brains.js';
 import { coefficientOfVariation } from '../../src/util/stats.js';
 import { recordPercept } from '../../src/perception/percept.js';
+import { buildDigest } from '../../src/outreach/digest.js';
 import { createTestContext } from '../../src/io/testing/create-test-context.js';
 import { addGoal, addWatch, assertReasons, botIds, bots, complete, day, external, hour, minute, queue, startAt } from './fixtures.js';
 
@@ -135,7 +136,16 @@ describe('场景 1–7：主动性验收 T1–T7', () => {
     expect(world.host.notifications.some(n => n.level === 'P0')).toBe(true);
     expect(world.host.notifications.every(n => n.level === 'P0')).toBe(true);
     await advance(world, 10 * hour);
-    expect(world.store.log('thread').all().some(m => m.kind === 'digest' && m.text.includes('选择哪份资料') && m.text.includes('免打扰已推迟'))).toBe(true);
+    // P76c：日报不再由 tick 生成和推送，原来读「已生成的日报」；现在直接用 buildDigest 在次日早晨拼出日报正文，断言原样保留
+    // （夜间被免打扰推迟的提问仍在日报的「未单独推送」里），并补一条：整个过程没有日报通知（上面已断言只有 P0 通知，这里再看一次推进 10 小时之后）。
+    // P76h：员工提问不再申请推送，也就没有「免打扰已推迟」的推送记录，旧日报的「未单独推送」里不再出现这条提问。
+    // 原断言：日报含「选择哪份资料」与「免打扰已推迟」。现在改为：日报里没有「免打扰已推迟」（日报仍会按「待你处理」列出这条提问，所以不再断言有无提问原文），
+    // 提问仍开着等主人处理，推送审计里没有这条提问。
+    expect(buildDigest(world as never, world.clock.now()).includes('免打扰已推迟')).toBe(false);
+    expect(world.store.table('inbox').list(i => i.type === 'question' && i.status === 'open')).toHaveLength(1);
+    expect(world.store.log('audit').all().filter(row => row.action === 'push').map(row => JSON.parse(row.detail) as { title: string })
+      .filter(row => row.title === '选择哪份资料？')).toHaveLength(0);
+    expect(world.host.notifications.filter(n => n.title.startsWith('团队日报'))).toHaveLength(0);
   });
 
   it('7b / T7：等主人时丢弃同一事项，主人作答后立即唤醒', async () => {

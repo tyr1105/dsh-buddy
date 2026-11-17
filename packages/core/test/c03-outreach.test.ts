@@ -5,10 +5,11 @@ import { resolveSettings } from '../src/config/defaults.js';
 import { postThread, sendOwnerMessage, markRead, threadMessages } from '../src/outreach/thread.js';
 import { createInboxItem, answerInbox, expireInbox, closeAlertItem } from '../src/outreach/inbox.js';
 import { submitProposal } from '../src/outreach/proposals.js';
-import { requestPush, pushesLeft } from '../src/outreach/push.js';
-import { buildDigest, maybeSendDigest } from '../src/outreach/digest.js';
+import { requestPush, pushHistory } from '../src/outreach/push.js';
+import { buildDigest, storedDigests } from '../src/outreach/digest.js';
 import { createBotHome, initRoot } from '../src/memory/files.js';
 import { syncAlertItems } from '../src/outreach/alerts.js';
+import { flushPushQueue } from '../src/outreach/notify.js';
 import { writeOutreachAudit } from '../src/outreach/audit.js';
 import { PerceptSchema } from '../src/model/perception.js';
 import { OutboxActionSchema } from '../src/model/outreach.js';
@@ -108,10 +109,12 @@ describe('收件箱、提议与默认回答', () => {
     const ctx = context(); const item = question(ctx); const result = await Promise.allSettled([answerInbox(ctx, item.id, '继续'), answerInbox(ctx, item.id, '停止')]);
     expect(result.map(row => row.status)).toEqual(['fulfilled', 'rejected']); expect(ctx.store.table('inbox').get(item.id)?.answer).toBe('继续');
   });
-  it('24小时提醒只标记一次，未提前执行默认', async () => {
+  // P76c：原用例「24小时提醒只标记一次，未提前执行默认」证明两件事：满 24 小时写一条「日报提醒」审计（只写一次），默认答案不提前执行。
+  // 日报取消后提醒审计的分支已删除（满 24 小时的提醒改由 P76g 的总管私聊提醒实现），所以只保留第二件事，并断言不再写提醒审计。
+  it('24小时不再写日报提醒审计，也未提前执行默认', async () => {
     const ctx = context(); const item = question(ctx); ctx.clock.advance(24 * hour); await expireInbox(ctx, ctx.clock.now()); await expireInbox(ctx, ctx.clock.now());
     expect(ctx.store.table('inbox').get(item.id)?.status).toBe('open');
-    expect(ctx.store.log('audit').all().filter(row => row.action === 'question_reminder')).toHaveLength(1);
+    expect(ctx.store.log('audit').all().filter(row => row.action === 'question_reminder')).toHaveLength(0);
   });
   it('72小时执行默认并唤醒，只处理一次', async () => {
     const ctx = context(); const item = question(ctx); ctx.clock.advance(72 * hour); await expireInbox(ctx, ctx.clock.now()); await expireInbox(ctx, ctx.clock.now());
@@ -199,25 +202,36 @@ describe('收件箱、提议与默认回答', () => {
   });
 });
 
-describe('单推注意力预算', () => {
+// P76c：原组名「单推注意力预算」。每日推送条数上限（全队 3 条、每位 2 条）已取消，推送只剩「去重」与「免打扰」两道；
+// 下面把依赖条数上限的五条用例逐条改写（原意与新证明见 docs/progress/P76c.md），跨午夜、去重等不依赖条数的用例原样保留。
+describe('单推：去重与免打扰', () => {
   it.each([['22:59', 'sent'], ['23:00', 'deferred_quiet'], ['07:59', 'deferred_quiet'], ['08:00', 'sent']])('跨午夜 %s → %s', async (time, result) => {
     const ctx = context(); ctx.clock.set(Date.parse(`2026-11-05T${time}:00+08:00`)); expect(await push(ctx, 'subject')).toBe(result);
     expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(result === 'sent' ? 1 : 0);
   });
-  it('每机器人第三条超预算', async () => { const ctx = context(); expect(await push(ctx, '1')).toBe('sent'); expect(await push(ctx, '2')).toBe('sent'); expect(await push(ctx, '3')).toBe('over_budget'); });
-  it('全体第四条超预算', async () => { const ctx = context(); const other = addBot(ctx); await push(ctx, '1'); await push(ctx, '2'); await push(ctx, '3', other.id); expect(await push(ctx, '4', other.id)).toBe('over_budget'); });
-  it('P0 忽略免打扰与预算但仍去重', async () => {
+  // 原「每机器人第三条超预算」：同一员工第 3 条返回 over_budget。现在没有条数上限：同一员工同一天第 3、4 条（非 P0）照常发出。
+  it('每机器人同一天第三、四条照常发出（没有条数上限）', async () => { const ctx = context(); for (const subject of ['1', '2', '3', '4']) expect(await push(ctx, subject)).toBe('sent'); expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(4); });
+  // 原「全体第四条超预算」：全队第 4 条返回 over_budget。现在全队同一天的第 4 条（非 P0）照常发出。
+  it('全体同一天第四条照常发出（没有条数上限）', async () => { const ctx = context(); const other = addBot(ctx); await push(ctx, '1'); await push(ctx, '2'); await push(ctx, '3', other.id); expect(await push(ctx, '4', other.id)).toBe('sent'); });
+  // 原「P0 忽略免打扰与预算但仍去重」：去掉其中「不占普通预算（pushesLeft 仍为 2）」一半，因为预算已不存在；P0 忽略免打扰、仍去重照旧。
+  it('P0 忽略免打扰但仍去重', async () => {
     const ctx = context(); ctx.clock.set(Date.parse('2026-11-05T23:00:00+08:00')); for (let n = 0; n < 4; n++) expect(await push(ctx, `${n}`, botFixture.id, 'P0')).toBe('sent');
-    expect(pushesLeft(ctx, botFixture.id)).toBe(2); expect(await push(ctx, '0', botFixture.id, 'P0')).toBe('duplicate');
+    expect(await push(ctx, '0', botFixture.id, 'P0')).toBe('duplicate');
   });
   it('24小时同主题不重复，恰好24小时可再推', async () => {
     const ctx = context(); await push(ctx, 'same'); ctx.clock.advance(day - 1); expect(await push(ctx, 'same')).toBe('duplicate'); ctx.clock.advance(1); expect(await push(ctx, 'same')).toBe('sent');
   });
   it('被免打扰拦住不占去重，白天可以推送', async () => { const ctx = context(); ctx.clock.set(Date.parse('2026-11-05T07:00:00+08:00')); await push(ctx, 'same'); ctx.clock.advance(hour); expect(await push(ctx, 'same')).toBe('sent'); });
-  it('并发推送也不能透支预算', async () => { const ctx = context(); const results = await Promise.all(['1', '2', '3', '4'].map(subject => push(ctx, subject))); expect(results).toEqual(['sent', 'sent', 'over_budget', 'over_budget']); });
+  // 原「并发推送也不能透支预算」：四个并发申请得到 sent、sent、over_budget、over_budget。现在没有预算，并发申请仍串行处理、各自按主题去重，
+  // 四个不同主题全部发出；同一主题并发申请两次，只发出一次（串行检查仍然有效，这是并发保护现在要证明的事）。
+  it('并发推送串行处理：不同主题全部发出，同一主题只发一次', async () => {
+    const ctx = context(); const results = await Promise.all(['1', '2', '3', '4'].map(subject => push(ctx, subject))); expect(results).toEqual(['sent', 'sent', 'sent', 'sent']);
+    const same = await Promise.all([push(ctx, 'same'), push(ctx, 'same')]); expect(same).toEqual(['sent', 'duplicate']);
+  });
+  // 原用例在失败后还断言「剩余名额仍是 2（失败不消耗预算）」；预算已不存在，改为断言失败不留下 sent 记录（所以下一次不被去重挡住）。
   it('通知失败不计为sent，下一次可重试', async () => {
     const ctx = context(); const notify = ctx.host.notify.bind(ctx.host); ctx.host.notify = async () => { throw new Error('宿主失败'); };
-    await expect(push(ctx, 'retry')).rejects.toThrow('宿主失败'); expect(pushesLeft(ctx, botFixture.id)).toBe(2); ctx.host.notify = notify; expect(await push(ctx, 'retry')).toBe('sent');
+    await expect(push(ctx, 'retry')).rejects.toThrow('宿主失败'); expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(0); ctx.host.notify = notify; expect(await push(ctx, 'retry')).toBe('sent');
   });
 });
 
@@ -275,34 +289,27 @@ describe('日报', () => {
     expect(buildDigest(ctx, ctx.clock.now())).not.toContain('本周点子池'); ctx.clock.set(Date.parse('2026-11-08T10:00:00+08:00'));
     const text = buildDigest(ctx, ctx.clock.now()); expect(text).toContain('本周点子池'); expect(text).toContain('弱点子'); expect(text).toContain('100%（1/1）');
   });
-  it('08:30 前不发，之后只发一次且不占单推预算', async () => {
-    const ctx = context(); ctx.clock.set(Date.parse('2026-11-05T08:29:00+08:00')); expect(await maybeSendDigest(ctx, ctx.clock.now())).toBeNull(); ctx.clock.advance(60_000);
-    expect(await maybeSendDigest(ctx, ctx.clock.now())).toContain('团队日报'); expect(await maybeSendDigest(ctx, ctx.clock.now())).toBeNull(); expect(pushesLeft(ctx, botFixture.id)).toBe(2); expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(1);
-  });
-  it('免打扰顺延到结束后', async () => {
-    const ctx = context(); ctx.settings = resolveSettings({ rootDir: '/hub', digestAt: '07:30' }); ctx.clock.set(Date.parse('2026-11-05T07:30:00+08:00'));
-    expect(await maybeSendDigest(ctx, ctx.clock.now())).toBeNull(); ctx.clock.advance(30 * 60_000); expect(await maybeSendDigest(ctx, ctx.clock.now())).toContain('团队日报');
-  });
-  it('24小时提问日报提醒只展示一次', async () => {
-    const ctx = context(); question(ctx); ctx.clock.advance(day); expect(await maybeSendDigest(ctx, ctx.clock.now())).toContain('日报提醒'); ctx.clock.advance(day); expect(await maybeSendDigest(ctx, ctx.clock.now())).not.toContain('日报提醒');
-  });
-  it('并发日报只发一次', async () => { const ctx = context(); const result = await Promise.all([maybeSendDigest(ctx, ctx.clock.now()), maybeSendDigest(ctx, ctx.clock.now())]); expect(result.filter(Boolean)).toHaveLength(1); });
-  it('通知失败后重试复用已有日报线程', async () => {
-    const ctx = context(); const notify = ctx.host.notify.bind(ctx.host); ctx.host.notify = async () => { throw new Error('失败'); }; await expect(maybeSendDigest(ctx, ctx.clock.now())).rejects.toThrow(); ctx.host.notify = notify; await maybeSendDigest(ctx, ctx.clock.now()); expect(ctx.store.log('thread').all().filter(row => row.kind === 'digest')).toHaveLength(1);
-  });
+  // P76c：原来这里有五条用例测 maybeSendDigest（08:30 前不发之后只发一次且不占预算；免打扰顺延；24 小时提问日报提醒只展示一次；
+  // 并发日报只发一次；通知失败后重试复用已有日报）。日报不再推送，maybeSendDigest 与 tick 里的「日报」一项都已删除，
+  // 这五件事都已不存在，整体删除。替代的断言是 test/p76c-retired.test.ts：tick 之后没有任何日报通知、没有 digest_generated 审计。
+  // 上面的 buildDigest 用例保留（buildDigest 在 core 里保留，仅读旧数据、不再被调用）。
 });
 
 describe('告警同步', () => {
-  function alert(ctx: ReturnType<typeof context>, level: 'P0' | 'P1' = 'P1') {
-    ctx.store.table('alerts').put({ id: id('al'), botId: botFixture.id, code: 'fault', text: '故障正文', level, count: 2, firstAt: ctx.clock.now(), lastAt: ctx.clock.now(), status: 'open' });
+  function alert(ctx: ReturnType<typeof context>, level: 'P0' | 'P1' = 'P1', code = 'fault') {
+    ctx.store.table('alerts').put({ id: id('al'), botId: botFixture.id, code, text: '故障正文', level, count: 2, firstAt: ctx.clock.now(), lastAt: ctx.clock.now(), status: 'open' });
   }
-  it('开放告警建卡、线程并申请通知，重复同步不重复', async () => {
+  it('开放告警建卡、线程；非鉴权告警不推送，鉴权告警推送一次，重复同步不重复', async () => {
+    // P76h：原断言是「任何告警都申请一次通知、pushed 为 true」；现在只有鉴权告警推送。
     const ctx = context(); alert(ctx); await syncAlertItems(ctx); await syncAlertItems(ctx);
-    expect(ctx.store.table('inbox').list()[0]).toMatchObject({ type: 'alert', pushed: true }); expect(ctx.store.table('inbox').count()).toBe(1); expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(1);
+    expect(ctx.store.table('inbox').list()[0]).toMatchObject({ type: 'alert', pushed: false }); expect(ctx.store.table('inbox').count()).toBe(1); expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(0);
+    const auth = context(); alert(auth, 'P0', 'auth'); await syncAlertItems(auth); await syncAlertItems(auth); await flushPushQueue(auth, auth.clock.now());
+    expect(auth.store.table('inbox').list()[0]).toMatchObject({ type: 'alert', pushed: true }); expect(auth.store.table('inbox').count()).toBe(1); expect(auth.host.calls.filter(row => row.method === 'notify')).toHaveLength(1);
   });
-  it('安静时段普通告警留箱不推，P0例外', async () => {
+  it('安静时段普通告警留箱不推，鉴权告警（系统类）例外', async () => {
+    // P76h：原用例用 P0 的普通告警作例外；现在例外是系统类通知（鉴权失败）。
     const ctx = context(); ctx.clock.set(Date.parse('2026-11-05T23:00:00+08:00')); alert(ctx); await syncAlertItems(ctx); expect(ctx.store.table('inbox').list()[0]?.pushed).toBe(false);
-    const emergency = context(); emergency.clock.set(ctx.clock.now()); alert(emergency, 'P0'); await syncAlertItems(emergency); expect(emergency.store.table('inbox').list()[0]?.pushed).toBe(true);
+    const emergency = context(); emergency.clock.set(ctx.clock.now()); alert(emergency, 'P0', 'auth'); await syncAlertItems(emergency); await flushPushQueue(emergency, emergency.clock.now()); expect(emergency.store.table('inbox').list()[0]?.pushed).toBe(true);
   });
   it('恢复即关闭对应卡片', async () => { const ctx = context(); alert(ctx); await syncAlertItems(ctx); ctx.store.table('alerts').patch(id('al'), { status: 'closed' }); await syncAlertItems(ctx); expect(ctx.store.table('inbox').list()[0]?.status).toBe('closed'); });
   it('通知故障仍保留可处理的告警卡', async () => { const ctx = context(); alert(ctx); ctx.host.notify = async () => { throw new Error('不可用'); }; await syncAlertItems(ctx); expect(ctx.store.table('inbox').list()[0]?.status).toBe('open'); });

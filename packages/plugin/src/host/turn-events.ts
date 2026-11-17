@@ -75,6 +75,21 @@ export function resultSummaryOf(data: any): string {
   return chars.slice(0, 2_000).join('')
 }
 
+/**
+ * 工具调用事件里的参数：DSH 会话事件里它常常是 JSON 文字（形如 {"command":"node test.js"}），
+ * 而台账按对象取 command、path，字符串取不到，会写成「未提供可确定的命令」。
+ * 这里在边界处解析成对象再交给中心；解析失败（不是 JSON，或解析出来不是对象）保留原样。
+ */
+export function parseToolArguments(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : raw
+  } catch {
+    return raw
+  }
+}
+
 /** 桥投递的 requestId 前缀（dsh-claude-bridge 的约定），不算主人亲手发言。 */
 export const BRIDGE_RPC_PREFIX = 'claude-bridge-'
 /** 中心替主人转发原话时的 requestId 前缀（手册 3.3 relayOwnerWords），不算主人亲手发言。 */
@@ -208,7 +223,7 @@ export class SessionEventTranslator {
         turn.steps += 1
         // 先记住名字与参数；等 tool/result 到了再报给 core，避免把「发起」当成「成功」。
         const callId = String(event.data?.callId ?? '')
-        if (callId !== '') turn.calls.set(callId, { name: String(event.data?.name ?? '未知工具'), args: event.data?.arguments })
+        if (callId !== '') turn.calls.set(callId, { name: String(event.data?.name ?? '未知工具'), args: parseToolArguments(event.data?.arguments) })
         void hub.onTurnEvent({ type: 'step', sessionId, at, steps: turn.steps, tokens: this.tokensOf(turn) })
         return
       }
@@ -302,7 +317,14 @@ export class SessionEventTranslator {
         }
         if (reason?.kind === 'error') {
           const errorText = String(reason.error?.message ?? reason.error?.code ?? '回合出错')
-          void hub.onTurnEvent({ type: 'error', sessionId, at, errorText } as TurnEvent)
+          // P76d：宿主报错对象上有错误代号（code，例如 RATE_LIMIT）和状态码（status，例如 429）时，一并交给中心，
+          // 中心判断是不是额度用完时先看它们、再看文字。只传确实存在、类型正确的字段（代号是非空文字、状态码是 100 到 599 的整数）；
+          // 宿主没给就不带，不臆造。
+          const errorCode = typeof reason.error?.code === 'string' && reason.error.code !== '' ? reason.error.code : undefined
+          const statusCode = typeof reason.error?.status === 'number' && Number.isInteger(reason.error.status)
+            && reason.error.status >= 100 && reason.error.status <= 599 ? reason.error.status : undefined
+          void hub.onTurnEvent({ type: 'error', sessionId, at, errorText,
+            ...(errorCode !== undefined ? { errorCode } : {}), ...(statusCode !== undefined ? { statusCode } : {}) } as TurnEvent)
           return
         }
         void hub.onTurnEvent({

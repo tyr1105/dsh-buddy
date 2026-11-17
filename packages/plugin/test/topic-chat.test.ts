@@ -197,10 +197,10 @@ describe('ThreadPane 的主题模式', () => {
   function paneProps(thread: ThreadView, patch: Partial<Parameters<typeof ThreadPane>[0]> = {}): Parameters<typeof ThreadPane>[0] {
     return {
       threadId: thread.threadId, thread, loading: false,
-      header: { name: info.title, roleLabel: null, activityText: null, nextThinkText: null, lifecycle: null, thinking: false },
+      header: { name: info.title, roleLabel: null, activityText: null, nextThinkText: null, staffStatus: null, thinking: false },
       inputPlaceholderName: '队友', banner: null, onBannerDismiss: () => undefined, onLoadEarlier: () => undefined,
       onSend: async () => undefined, actions: { onPick: async () => null }, busyInboxId: null, onRetry: () => undefined, error: null,
-      onTeach: () => undefined, onOpenSession: () => undefined, onTogglePause: () => undefined, onInterrupt: () => undefined,
+      onOpenSession: () => undefined, onTogglePause: () => undefined, onInterrupt: () => undefined,
       topic: info, ...patch,
     }
   }
@@ -214,12 +214,12 @@ describe('ThreadPane 的主题模式', () => {
   it('占位写默认发给谁，能 @ 项目成员', () => {
     const tree = createHookHost().render(ThreadPane, paneProps(priceThread))
     expect(findElements(tree, 'textarea')[0]!.props.placeholder).toBe('默认发给 探路，@ 可以点名…')
-    expect(textOf(tree)).toContain('@ 队友')
+    expect(textOf(tree)).toContain('@ 员工')
   })
 
   it('反例：私聊没有 @ 入口，也不用群聊楼层', () => {
     const tree = createHookHost().render(ThreadPane, paneProps(priceThread, { topic: null }))
-    expect(textOf(tree)).not.toContain('@ 队友')
+    expect(textOf(tree)).not.toContain('@ 员工')
     expect(findElements(tree, TopicThreadBody)).toHaveLength(0)
   })
 
@@ -308,7 +308,7 @@ describe('ProjectPage：只留四块', () => {
 
   it('选中项目：四块内容，顶部是项目名、新开会话、编辑', () => {
     const tree = createHookHost().render(ProjectPage, pageProps())
-    expect(sections(boardOf(tree))).toEqual(['有哪些队友', '当前事务清单', '项目背景', '项目文件路径'])
+    expect(sections(boardOf(tree))).toEqual(['有哪些员工', '当前事务清单', '项目背景', '项目文件路径'])
     expect(textOf(tree)).toContain('竞品周报自动化')
     expect(buttonNamed(tree, '新开会话')).toBeDefined()
     expect(buttonNamed(tree, '编辑')).toBeDefined()
@@ -323,7 +323,7 @@ describe('ProjectPage：只留四块', () => {
   it('有主题的事务点一下进主题；没有主题的不是按钮', () => {
     const onOpenTopic = vi.fn()
     const board = boardOf(createHookHost().render(ProjectPage, pageProps({ onOpenTopic })))
-    ;(buttonNamed(board, '抓取本周竞品动态探路进行中').props.onClick as () => void)()
+    ;(buttonNamed(board, '抓取本周竞品动态探路执行中').props.onClick as () => void)()
     expect(onOpenTopic).toHaveBeenCalledWith('ptp_weekly_price')
     expect(findElements(board, 'button').some(node => textOf(node).startsWith('整理历史发布记录格式'))).toBe(false)
   })

@@ -62,7 +62,7 @@ describe('collectWorkSessions：只收已经指派且开工的任务', () => {
 
 describe('项目归档：任务一律沉到已归档', () => {
   it('正例：归档项目里的进行中任务只读陈列', () => {
-    const base = fixtureProject.projects[4]! // v1 值班机器人上线（已归档）
+    const base = fixtureProject.projects.find(row => row.project.id === 'prj_old')! // v1 值班机器人上线（已归档）
     const original = base.tasks[0]!
     const doingTask: ProjectTaskView = {
       ...original,

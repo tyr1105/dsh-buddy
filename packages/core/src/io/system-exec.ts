@@ -1,7 +1,7 @@
 /** 真实进程独立成组运行；软截断只限制保存量，超时或硬上限才终止整组，避免孙进程拖住宿主。 */
 import { spawn } from 'node:child_process';
 import { EXEC_OUTPUT_HARD_LIMIT_MULTIPLIER } from '../config/defaults.js';
-import type { ExecIO, ExecOptions, ExecResult } from './interfaces.js';
+import { SandboxRootChanged, type ExecIO, type ExecOptions, type ExecResult } from './interfaces.js';
 import { utf8Prefix } from './utf8-prefix.js';
 import { SANDBOX_EXEC, SANDBOX_UNAVAILABLE, sandboxProfile } from './system-sandbox.js';
 
@@ -34,6 +34,8 @@ export class SystemExec implements ExecIO {
       }
       return await this.start(SANDBOX_EXEC, ['-p', profile, cmd, ...args], opts, true);
     } catch (error) {
+      // P81r1（S8）：发布位置的真实路径变了不是「沙箱不可用」，原样抛出，让出站流程按固定句处理（不带完整路径）。
+      if (error instanceof SandboxRootChanged) throw error;
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(reason.startsWith(SANDBOX_UNAVAILABLE) ? reason : `${SANDBOX_UNAVAILABLE}（${reason}）`, { cause: error });
     }

@@ -57,11 +57,11 @@ export function SkillPicker(props: {
       <input type="search" className="ah-skill-search" aria-label="搜技能" placeholder="搜技能" value={query}
         disabled={props.disabled} onChange={e => setQuery(e.target.value)} />
       {/* 选中数量变化时读屏会念这一行。 */}
-      <p className="ah-right-kv" role="status">{total > 0 ? `已选 ${total} 个，队友只看得到选中的技能` : '不选的话，这位队友没有技能可用'}</p>
+      <p className="ah-right-kv" role="status">{total > 0 ? `已选 ${total} 个，员工只看得到选中的技能` : '不选的话，这位员工没有技能可用'}</p>
 
       {props.presetOptions.length > 0 ? (
         <fieldset className="ah-skill-group">
-          <legend className="ah-skill-group-title">队友自带</legend>
+          <legend className="ah-skill-group-title">员工自带</legend>
           {shownGeneral.map(presetItem)}
           {shownRole.length > 0 ? (
             /* 搜索时强制展开，否则搜到的结果藏在折叠里，看起来像没搜到。 */

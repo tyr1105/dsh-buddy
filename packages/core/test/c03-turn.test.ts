@@ -58,16 +58,59 @@ describe('回合事件与限额', () => {
     expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ consecutiveNoCommit: 1, noChangeStreak: 1 });
     expect(ctx.store.log('ledger').all()[0]?.tokens).toBe(120);
   });
-  test('连续两次未交账下次强制复盘，复盘仍未交账隔离', async () => {
+  // P75f：连续未交账不再强制转成复盘回合（旧复盘触发下线）；仍会累计次数。
+  test('连续两次未交账下次仍是常规回合，不再强制复盘', async () => {
     const { ctx, bot, entry } = await turnContext();
     const end = () => onTurnEvent(ctx, { type: 'ended', sessionId: bot.sessionId!, at: ctx.clock.now(), finalText: '', tokens: 10 });
     await end(); ctx.clock.advance(1);
     const second = createTicket(ctx, entry, bot.sessionId); ctx.store.table('wakes').patch(second.id, { status: 'running', dispatchedAt: ctx.clock.now() }); await end();
     expect(ctx.store.table('bots').get(bot.id)?.consecutiveNoCommit).toBe(2);
     ctx.clock.advance(1);
-    const third = createTicket(ctx, entry, bot.sessionId); expect(third.variant).toBe('reflection');
-    ctx.store.table('wakes').patch(third.id, { status: 'running', dispatchedAt: ctx.clock.now() }); await end();
-    expect(ctx.store.table('bots').get(bot.id)?.lifecycle).toBe('quarantined');
+    const third = createTicket(ctx, entry, bot.sessionId); expect(third.variant).toBe('regular');
+    expect(ctx.store.table('queue').count(row => row.variant === 'reflection')).toBe(0);
+  });
+  // P75r3 第 5 节：连续不交账的停用线不再依赖复盘；写回「复盘仍未交账隔离」那一条的位置。走真实的回合路径，不直接改计数。
+  describe('连续不交账的停用线（P75r3）', () => {
+    /** 一位听吩咐的执行类员工；回合一个接一个跑：第一个沿用夹具里的，后面的各建一张唤醒单。 */
+    async function crew() {
+      const made = await turnContext('regular', { name: '执行员', role: 'executor', onDemand: true });
+      let first = true;
+      /** 跑一个回合：commit 为真时先交账；然后宿主发结束事件，返回这个回合的唤醒单编号。 */
+      const round = async (commit: boolean): Promise<string> => {
+        let wakeId = made.ticket.id;
+        if (!first) {
+          made.ctx.clock.advance(60_000);
+          const next = createTicket(made.ctx, made.entry, made.bot.sessionId);
+          made.ctx.store.table('wakes').patch(next.id, { status: 'running', dispatchedAt: made.ctx.clock.now() });
+          wakeId = next.id;
+        }
+        first = false;
+        if (commit) await processCommit(made.ctx, { botId: made.bot.id, sessionId: made.bot.sessionId!, wakeId }, commitArgs());
+        made.ctx.clock.advance(1_000);
+        await onTurnEvent(made.ctx, { type: 'ended', sessionId: made.bot.sessionId!, at: made.ctx.clock.now(), finalText: '', tokens: 10 });
+        return wakeId;
+      };
+      return { ...made, round };
+    }
+    test('连续 3 个回合不交账：停用，告警文字逐字', async () => {
+      const { ctx, bot, round } = await crew();
+      await round(false); await round(false);
+      // 前两个回合还没到线：不停用。
+      expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'active', consecutiveNoCommit: 2 });
+      await round(false);
+      expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'quarantined', quarantineReason: '连续 3 个回合没有交账' });
+      // 合并第三块之后同步：停用告警的句子由 P74r16b 统一（job/suspended.ts 的 suspendedAlertText）。
+      expect(ctx.store.table('alerts').list().map(row => row.text)).toContain('中心停用了执行员：连续 3 个回合没有交账。');
+    });
+    test('中间交过一次账：计数清零，之后只有 1 次不交账，不停用（反例）', async () => {
+      const { ctx, bot, round } = await crew();
+      await round(false); await round(false);
+      await round(true);
+      expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'active', consecutiveNoCommit: 0 });
+      await round(false);
+      expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'active', consecutiveNoCommit: 1 });
+      expect(ctx.store.table('alerts').list().filter(row => row.text.includes('没有交账'))).toHaveLength(0);
+    });
   });
   test('成功交账后ended保持committed且重复结束只记一次用量', async () => {
     const { ctx, ticket, bot, toolCtx } = await turnContext();

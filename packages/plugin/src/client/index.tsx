@@ -320,7 +320,7 @@ export function apply(ctx: any): void {
       () => <TeamSidebar hub={hub} clientCtx={ctx} placement={placement} mode={mode} space={space} />,
     ))
   } catch (error) {
-    console.error('[agent-hub] 注册一级队友列表失败:', error)
+    console.error('[agent-hub] 注册一级员工列表失败:', error)
   }
 
   // 10) 新会话页 @ 队友（P57）。依赖的宿主服务要等齐才接，缺了也不影响启动。

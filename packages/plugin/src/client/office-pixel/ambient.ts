@@ -16,12 +16,14 @@
 import type { OfficeLight } from '../../shared/views.js'
 import { officeHash } from './appearance.js'
 import { OFFICE_CARD_READER_LED, OFFICE_CLOCK } from './decor.js'
-import { FIGURE_EYE_COLUMNS, FIGURE_EYE_HEIGHT, FIGURE_EYE_ROW, figureEyesClosed, figureHeadTop, figureLeft } from './figure.js'
+import { CAT_STAY_MS, arrivalPose } from './arrival.js'
+import { FIGURE_EYE_COLUMNS, FIGURE_EYE_HEIGHT, FIGURE_EYE_ROW, drawFigure, figureEyesClosed, figureHeadTop, figureLeft } from './figure.js'
 import { deskKeyboard, deskScreen } from './furniture.js'
 import { OFFICE_SHARED_SPOTS, officeSeatAt, type OfficeSeatLayout } from './layout.js'
 import { clockHandEnd, clockSecondAngle, officeDayPhase, type OfficeDayPhase, type OfficeMoment } from './moment.js'
 import { DEFAULT_OFFICE_PALETTE, type OfficePalette } from './palette.js'
 import { drawPixelLine, drawSprite, pushRect as push, type PixelRect, type SpriteColors } from './pixel-kit.js'
+import { drawQuotaArc, drawQuotaSign, quotaArcOf } from './quota-decor.js'
 import type { OfficePixelFigure } from './render.js'
 import {
   SPRITE_ALERT, SPRITE_CAT_SIT, SPRITE_CAT_SLEEP, SPRITE_CAT_SLEEP_TAIL, SPRITE_CAT_WALK_A, SPRITE_CAT_WALK_B,
@@ -39,6 +41,27 @@ export interface OfficeAmbientInput {
   palette?: Partial<OfficePalette>
   /** false 表示主人要求减少动态效果，整层静止。 */
   motion: boolean
+  /**
+   * P73f：正在播放「从门口走到工位」的员工：员工 id → 开始走的时刻（毫秒，与 timeMs 同一个时间轴）。
+   * 静态帧里这些人（figure.arriving）还没画，这一层把他们走过来的样子画出来。减少动态效果时页面不传。
+   */
+  arrivals?: Readonly<Record<string, number>>
+  /** P73f：猫去新员工工位旁坐一会儿；不传就按原来的日程走动。 */
+  catVisit?: OfficeCatVisit | null
+  /**
+   * P76k：额度窗口的装饰。给定时画挂钟外圈的窗口弧，并在每一位在岗员工的桌上立午休牌。
+   * 角度由 now 与窗口起点算；减少动态效果时页面隔半分钟才重画一拍，弧只跟着走到那一刻，不做动画。
+   */
+  quota?: {
+    now: number
+    /** 窗口起点；红灯时没有可靠起点，为 null（只立牌、不画弧）。 */
+    windowStartAt: number | null
+    windowMs: number
+    /** 额度灯（绿、黄、橙、红），与额度灯同一套取值，不是座位灯的取值。 */
+    light: 'green' | 'yellow' | 'orange' | 'red'
+    /** 三种「午休」状态：给了就在每位在岗员工桌上立牌。 */
+    signText: string | null
+  } | null
 }
 
 /** 秒针的颜色，单独命名是为了测试能确认「减少动效时没有秒针」。 */
@@ -216,6 +239,8 @@ const CAT_CYCLE_MS = 150_000
 const CAT_SLEEP_X = 404
 const CAT_WANDER_X = 296
 const CAT_FLOOR_Y = 268
+/** 猫去新员工工位时的走路速度（像素每秒）：比平时慢悠悠的踱步快一些，十来秒就能走到。 */
+const CAT_VISIT_SPEED = 40
 
 export interface OfficeCatPose {
   pose: 'sleep' | 'sit' | 'walk'
@@ -223,6 +248,51 @@ export interface OfficeCatPose {
   flip: boolean
   /** 走路时第几帧；睡觉时 1 表示尾巴抬起。 */
   frame: 0 | 1
+  /** 猫脚底的 y；不给就是地板（CAT_FLOOR_Y）。去新员工工位旁时才有。 */
+  y?: number
+}
+
+/** 猫到新员工工位旁坐一会儿：座位序号和开始的时刻（毫秒，与 timeMs 同一个时间轴）。 */
+export interface OfficeCatVisit {
+  seatIndex: number
+  sinceMs: number
+}
+
+/** 猫坐在某个工位旁的位置：桌子正前方偏左，脚底落在桌沿下面一点。 */
+function catSeatSpot(seat: OfficeSeatLayout): { x: number; y: number } {
+  return { x: seat.deskX + 4, y: seat.deskY + seat.deskHeight + 10 }
+}
+
+/**
+ * 猫去新员工工位的这一刻（P73f）：从睡觉的位置走到工位旁，坐满 CAT_STAY_MS，再走回睡觉的位置；
+ * 走回去之后返回 null，调用方恢复原来的日程（officeCatPose）。
+ * motion 为 false（减少动态效果）时不走路：停留期内直接坐在工位旁，之后返回 null。
+ * 纯函数：同样的输入永远同样的结果，页面刷新也接得上。
+ */
+export function officeCatVisitPose(elapsedMs: number, seat: OfficeSeatLayout, motion: boolean): OfficeCatPose | null {
+  const spot = catSeatSpot(seat)
+  if (elapsedMs < 0) return null
+  if (!motion) return elapsedMs < CAT_STAY_MS ? { pose: 'sit', x: spot.x, y: spot.y, flip: false, frame: 0 } : null
+  const distance = Math.hypot(CAT_SLEEP_X - spot.x, CAT_FLOOR_Y - spot.y)
+  const walkMs = Math.max(1000, Math.round((distance / CAT_VISIT_SPEED) * 1000))
+  const step: 0 | 1 = Math.floor(elapsedMs / 250) % 2 === 0 ? 0 : 1
+  if (elapsedMs < walkMs) {
+    const progress = elapsedMs / walkMs
+    return {
+      pose: 'walk', flip: false, frame: step,
+      x: Math.round(CAT_SLEEP_X + (spot.x - CAT_SLEEP_X) * progress), y: Math.round(CAT_FLOOR_Y + (spot.y - CAT_FLOOR_Y) * progress),
+    }
+  }
+  if (elapsedMs < walkMs + CAT_STAY_MS) return { pose: 'sit', x: spot.x, y: spot.y, flip: false, frame: 0 }
+  const back = elapsedMs - walkMs - CAT_STAY_MS
+  if (back < walkMs) {
+    const progress = back / walkMs
+    return {
+      pose: 'walk', flip: true, frame: step,
+      x: Math.round(spot.x + (CAT_SLEEP_X - spot.x) * progress), y: Math.round(spot.y + (CAT_FLOOR_Y - spot.y) * progress),
+    }
+  }
+  return null
 }
 
 /** 由时间算出猫此刻的样子：不用记任何状态，刷新页面也接得上。 */
@@ -240,8 +310,10 @@ export function officeCatPose(timeMs: number): OfficeCatPose {
   return { pose: 'walk', x: Math.round(CAT_WANDER_X + progress * (CAT_SLEEP_X - CAT_WANDER_X)), flip: true, frame: step }
 }
 
-function drawCat(rects: PixelRect[], time: number): void {
-  const cat = officeCatPose(time)
+function drawCat(rects: PixelRect[], time: number, visit: OfficeCatPose | null): void {
+  // 有新员工报到时猫先去他的工位旁（visit 不为 null）；没有或结束后，按原来的日程走动。
+  const cat = visit ?? officeCatPose(time)
+  const floorY = cat.y ?? CAT_FLOOR_Y
   const colors: SpriteColors = {
     o: '#7a5238', O: '#ffbe78', S: '#f4934a', W: '#fff4e3', n: '#ff8fa0', e: '#4a3428', T: '#ffbe78',
   }
@@ -249,8 +321,8 @@ function drawCat(rects: PixelRect[], time: number): void {
     ? (cat.frame === 1 ? SPRITE_CAT_SLEEP_TAIL : SPRITE_CAT_SLEEP)
     : cat.pose === 'sit' ? SPRITE_CAT_SIT
       : cat.frame === 0 ? SPRITE_CAT_WALK_A : SPRITE_CAT_WALK_B
-  push(rects, cat.x + 2, CAT_FLOOR_Y, rows === SPRITE_CAT_SIT ? 12 : 18, 2, 'rgba(150, 105, 55, 0.22)')
-  drawSprite(rects, cat.x, CAT_FLOOR_Y - rows.length, rows, colors, { flip: cat.flip })
+  push(rects, cat.x + 2, floorY, rows === SPRITE_CAT_SIT ? 12 : 18, 2, 'rgba(150, 105, 55, 0.22)')
+  drawSprite(rects, cat.x, floorY - rows.length, rows, colors, { flip: cat.flip })
 }
 
 // —— 队友的小动作 ——
@@ -343,10 +415,26 @@ function drawMoodMarks(rects: PixelRect[], seat: OfficeSeatLayout, act: OfficeFi
   }
 }
 
+/** 走位的小人：两条腿交替迈，身子照常画（drawFigure 画到桌沿为止，腿接在下面）。 */
+function drawWalker(rects: PixelRect[], figure: OfficePixelFigure, seat: OfficeSeatLayout, startedAt: number, timeMs: number, palette: OfficePalette): void {
+  const pose = arrivalPose(seat, timeMs - startedAt)
+  // 借用座位的形状，把 seatX、deskY 换成走位中的位置：小人的画法和坐在工位上完全一样。
+  const walking: OfficeSeatLayout = { ...seat, seatX: pose.seatX, deskY: pose.deskY }
+  drawFigure(rects, walking, figure.appearance, figure.bubble.light, palette)
+  if (pose.done) return
+  // 两条腿：一条落地、一条抬起，每 200 毫秒换一次。
+  const left = pose.seatX - 5
+  const right = pose.seatX + 1
+  push(rects, left, pose.deskY, 4, pose.step === 0 ? 6 : 3, figure.appearance.pants)
+  push(rects, right, pose.deskY, 4, pose.step === 0 ? 3 : 6, figure.appearance.pants)
+}
+
 /** 一个队友这一拍的全部小动作。离线的人不动，屏幕也是灭的。 */
 function drawFigureMotion(rects: PixelRect[], figure: OfficePixelFigure, time: number, tick: number, palette: OfficePalette): void {
   const seat = officeSeatAt(figure.seatIndex)
   if (seat === null) return
+  // 还在走位的人没有坐下：屏幕、手、眼睛都先不画，免得空椅子上冒出一双手。
+  if (figure.arriving) return
   const act = officeFigureAct(figure.bubble.light)
   const hash = officeHash(figure.botId)
   drawScreenContent(rects, seat, act, tick, hash)
@@ -368,6 +456,19 @@ export function officeAmbient(input: OfficeAmbientInput): PixelRect[] {
   if (phase === 'night') drawStarTwinkle(rects, tick)
   if (input.motion) drawSecondHand(rects, input.moment, palette)
   drawCardReaderLed(rects, tick)
+  // P76k：窗口弧与午休牌都是只读装饰，每一拍按当前时刻重画（减少动态效果时页面拍子放慢，弧就停在那里）。
+  if (input.quota != null) {
+    if (input.quota.windowStartAt !== null) {
+      const arc = quotaArcOf({ now: input.quota.now, windowStartAt: input.quota.windowStartAt, windowMs: input.quota.windowMs, light: input.quota.light })
+      drawQuotaArc(rects, arc.angleDeg, arc.colorKey, palette)
+    }
+    if (input.quota.signText !== null) {
+      for (const figure of input.figures) {
+        const seat = officeSeatAt(figure.seatIndex)
+        if (seat !== null && !figure.arriving) drawQuotaSign(rects, seat, palette)
+      }
+    }
+  }
   drawServerLights(rects, tick)
   drawMeetingScreen(rects, tick, palette)
   if (phase === 'day') drawDustMotes(rects, time)
@@ -377,7 +478,17 @@ export function officeAmbient(input: OfficeAmbientInput): PixelRect[] {
   // 蒸汽两处：咖啡机顶、第三张桌子上的杯子。
   drawSteam(rects, 409, 49, time, 0)
   drawSteam(rects, 194, 148, time, 4)
-  drawCat(rects, time)
+  // 猫：有人今天入职时先去他的工位旁坐一会儿（减少动态效果时直接出现在那里），结束后恢复原来的日程。
+  const visitSeat = input.catVisit == null ? null : officeSeatAt(input.catVisit.seatIndex)
+  const visitPose = input.catVisit != null && visitSeat !== null
+    ? officeCatVisitPose(input.timeMs - input.catVisit.sinceMs, visitSeat, input.motion) : null
+  drawCat(rects, time, visitPose)
   for (const figure of input.figures) drawFigureMotion(rects, figure, time, tick, palette)
+  // 报到：正在走位的人从门口走向自己的工位（只在 motion 为真时页面才会传 arrivals）。
+  for (const figure of input.figures) {
+    const startedAt = input.arrivals?.[figure.botId]
+    const seat = officeSeatAt(figure.seatIndex)
+    if (figure.arriving && startedAt !== undefined && seat !== null) drawWalker(rects, figure, seat, startedAt, input.timeMs, palette)
+  }
   return rects
 }

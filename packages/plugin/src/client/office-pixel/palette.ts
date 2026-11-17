@@ -92,6 +92,13 @@ export interface OfficePalette {
   sun: string
   sunDark: string
 
+  // —— 额度窗口弧（P76k）：绿、黄、橙、红四档，只画在挂钟外圈 ——
+  // 前三种取房间里已有的青绿、暖黄、珊瑚色，红色是新加的一档（房间里原来没有能读成「红」的颜色）。
+  quotaArcGreen: string
+  quotaArcYellow: string
+  quotaArcOrange: string
+  quotaArcRed: string
+
   // —— 只用来营造氛围的半透明光 ——
   wallGlow: string
   floorShade: string
@@ -172,6 +179,12 @@ export const DEFAULT_OFFICE_PALETTE: OfficePalette = {
   tealDark: '#3bab9b',
   sun: '#ffcf57',
   sunDark: '#f2b13c',
+
+  // 额度窗口弧：绿、黄、橙沿用房间的三种点缀色，红是这一处专用的警示红。
+  quotaArcGreen: '#46b36b',
+  quotaArcYellow: '#f2b13c',
+  quotaArcOrange: '#f07f69',
+  quotaArcRed: '#e0443e',
 
   // 亮色房间里，光要用白色系的半透明叠上去，才会显得通透而不是发灰。
   wallGlow: 'rgba(255, 255, 255, 0.45)',

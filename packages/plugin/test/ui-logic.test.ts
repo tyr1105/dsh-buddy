@@ -19,7 +19,7 @@ const settings = {
   quietHours: { start: '23:00', end: '08:00' }, digestAt: '08:30',
   pushChannel: 'macos', defaultModel: null, workDataPaths: [], l3Grants: [],
   dailyPushCap: 3, botDailyPushCap: 2,
-  botDailyTurnBudget: 6, botDailyTokenBudget: 250000,
+  botQuotaShare: 0.7, botDailyTurnBudget: 2, botDailyTokenBudget: 250000,
 } as unknown as Settings
 
 describe('设置项校验', () => {
@@ -28,52 +28,49 @@ describe('设置项校验', () => {
     expect(validateClockTime('9:00', '免打扰开始')).toContain('免打扰开始')
     expect(validateClockTime('25:00', '免打扰结束')).toContain('免打扰结束')
   })
-  it('从 Settings 派生表单草稿', () => {
+  it('从 Settings 派生表单草稿（P76k：只剩五项，草稿里没有日报与通知上限）', () => {
     const draft = draftFromSettings(settings)
     expect(draft.quietStart).toBe('23:00')
     expect(draft.pushChannel).toBe('macos')
     expect(draft.defaultModel).toBe('')
-    expect(draft.botDailyTurnBudget).toBe('6')
-    expect(draft.botDailyTokenBudget).toBe('250000')
+    expect(draft.botQuotaShare).toBe('0.7')
+    expect(draft.botDailyTurnBudget).toBe('2')
+    expect('digestAt' in draft).toBe(false)
+    expect('dailyPushCap' in draft).toBe(false)
+    expect('botDailyTokenBudget' in draft).toBe(false)
   })
-  it('C05 每队友每日预算：回合 1–50、token 1 万–200 万，都必须是整数', () => {
+  it('P76k 员工自己发起的工作：1 到 10 的整数，错误文字逐字', () => {
     const base = draftFromSettings(settings)
-    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '0' })).toContain('自己开工')
-    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '51' })).toContain('自己开工')
-    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '2.5' })).toContain('自己开工')
-    expect(validateSettingsDraft({ ...base, botDailyTokenBudget: '9999' })).toContain('token')
-    expect(validateSettingsDraft({ ...base, botDailyTokenBudget: '2000001' })).toContain('token')
-    expect(validateSettingsDraft({ ...base, botDailyTokenBudget: '30000.5' })).toContain('token')
-    // 边界值合法：改大回合与 token 后可以保存。
-    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '50', botDailyTokenBudget: '2000000' })).toBeNull()
-    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '1', botDailyTokenBudget: '10000' })).toBeNull()
+    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '0' })).toBe('员工自己发起的工作：请填写 1 到 10 的整数。')
+    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '11' })).toBe('员工自己发起的工作：请填写 1 到 10 的整数。')
+    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '2.5' })).toBe('员工自己发起的工作：请填写 1 到 10 的整数。')
+    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '1' })).toBeNull()
+    expect(validateSettingsDraft({ ...base, botDailyTurnBudget: '10' })).toBeNull()
   })
-  it('单推上限范围：全体 0–10、每个 0–3，且每个不能超全体', () => {
-    const draft = { ...draftFromSettings(settings), dailyPushCap: '11' }
-    expect(validateSettingsDraft(draft)).toContain('全队每天')
-    expect(validateSettingsDraft({ ...draft, dailyPushCap: '3', botDailyPushCap: '4' })).toContain('每位队友')
-    expect(validateSettingsDraft({ ...draft, dailyPushCap: '3', botDailyPushCap: '5' })).toContain('每位队友')
-    expect(validateSettingsDraft({ ...draft, dailyPushCap: '3', botDailyPushCap: '2' })).toBeNull()
-    expect(validateSettingsDraft({ ...draft, dailyPushCap: '2.5', botDailyPushCap: '2' })).toContain('整数')
+  it('P76k 给你自己留出：三档合法，自定义值原样接受，非法份额被拦下', () => {
+    const base = draftFromSettings(settings)
+    for (const share of ['0.9', '0.7', '0.5']) expect(validateSettingsDraft({ ...base, botQuotaShare: share })).toBeNull()
+    // 旧设置里的自定义份额不改它，仍可保存。
+    expect(validateSettingsDraft({ ...base, botQuotaShare: '0.65' })).toBeNull()
+    expect(validateSettingsDraft({ ...base, botQuotaShare: '1' })).toContain('给你自己留出')
+    expect(validateSettingsDraft({ ...base, botQuotaShare: '0' })).toContain('给你自己留出')
   })
   it('推送渠道只能选合法值', () => {
     expect(validateSettingsDraft({ ...draftFromSettings(settings), pushChannel: 'sms' })).toContain('通知方式')
   })
-  it('patch 只带会改的字段；默认模型空值转 null', () => {
-    const draft = { ...draftFromSettings(settings), dailyPushCap: '5', botDailyPushCap: '2' }
+  it('patch 只带会改的字段；被取消的设置项一个都不带', () => {
+    const draft = { ...draftFromSettings(settings), botQuotaShare: '0.5' }
     const patch = buildSettingsPatch(draft) as Record<string, unknown>
-    expect(patch).toMatchObject({
-      digestAt: '08:30', dailyPushCap: 5, botDailyPushCap: 2,
-      botDailyTurnBudget: 6, botDailyTokenBudget: 250000, defaultModel: null,
-    })
+    expect(patch).toMatchObject({ pushChannel: 'macos', botQuotaShare: 0.5, botDailyTurnBudget: 2, defaultModel: null })
     expect(patch.quietHours).toEqual({ start: '23:00', end: '08:00' })
     expect('rootDir' in patch).toBe(false)
+    for (const gone of ['digestAt', 'dailyPushCap', 'botDailyPushCap', 'botDailyTokenBudget']) expect(gone in patch).toBe(false)
   })
-  it('C05 patch 把预算字符串转成整数，交给 core 实时生效', () => {
-    const draft = { ...draftFromSettings(settings), botDailyTurnBudget: '12', botDailyTokenBudget: '400000' }
+  it('P76k patch 把份额与回合字符串转成数字', () => {
+    const draft = { ...draftFromSettings(settings), botDailyTurnBudget: '6', botQuotaShare: '0.9' }
     const patch = buildSettingsPatch(draft) as Record<string, unknown>
-    expect(patch.botDailyTurnBudget).toBe(12)
-    expect(patch.botDailyTokenBudget).toBe(400000)
+    expect(patch.botDailyTurnBudget).toBe(6)
+    expect(patch.botQuotaShare).toBe(0.9)
   })
   it('defaultModel 与加载值相同时不进 patch（D07 第 7 条：目录坏了也能只改推送渠道）', () => {
     const loaded = { ...draftFromSettings(settings), defaultModel: '{"provider":"p","model":"m"}' }
@@ -93,7 +90,7 @@ describe('设置项校验', () => {
 // ---------- 未保存草稿本地暂存（U01 第 8 轮：切走再回来不丢） ----------
 
 describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () => {
-  const DRAFT_KEY = 'dsh-buddy:settings-draft:v2'
+  const DRAFT_KEY = 'dsh-buddy:settings-draft:v3'
   /** 内存版 localStorage（node 测试环境没有真的 localStorage）。 */
   function memoryStorage(): Storage {
     const map = new Map<string, string>()
@@ -110,12 +107,12 @@ describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () =
   it('有改动时暂存内容带 version / baseSignature / draft', () => {
     const store = memoryStorage()
     const base = draftFromSettings(settings)
-    const edited = { ...base, botDailyTurnBudget: '12' }
+    const edited = { ...base, botDailyTurnBudget: '8' }
     stashSettingsDraft(edited, base, store)
     const raw = store.getItem(DRAFT_KEY)
     expect(raw).not.toBeNull()
     const payload = JSON.parse(raw ?? '{}')
-    expect(payload.version).toBe(2)
+    expect(payload.version).toBe(3)
     expect(payload.baseSignature).toBe(JSON.stringify(base))
     expect(payload.draft).toEqual(edited)
   })
@@ -125,7 +122,7 @@ describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () =
     stashSettingsDraft(base, base, store)
     expect(store.getItem(DRAFT_KEY)).toBeNull()
     // 先改后改回：暂存被移除，不会提示恢复一份其实没差别的草稿。
-    stashSettingsDraft({ ...base, digestAt: '09:00' }, base, store)
+    stashSettingsDraft({ ...base, pushChannel: 'none' }, base, store)
     expect(store.getItem(DRAFT_KEY)).not.toBeNull()
     stashSettingsDraft(base, base, store)
     expect(store.getItem(DRAFT_KEY)).toBeNull()
@@ -133,15 +130,15 @@ describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () =
   it('基线没变：读回暂存草稿', () => {
     const store = memoryStorage()
     const base = draftFromSettings(settings)
-    const edited = { ...base, botDailyTokenBudget: '400000' }
+    const edited = { ...base, botQuotaShare: '0.5' }
     stashSettingsDraft(edited, base, store)
     expect(restoreSettingsDraft(base, store)).toEqual(edited)
   })
   it('基线设置已在别处变更：不恢复并清掉过期草稿（防把新设置覆盖回旧值）', () => {
     const store = memoryStorage()
     const base = draftFromSettings(settings)
-    stashSettingsDraft({ ...base, botDailyTurnBudget: '20' }, base, store)
-    const newerBase = { ...base, botDailyTurnBudget: '8' }
+    stashSettingsDraft({ ...base, botDailyTurnBudget: '9' }, base, store)
+    const newerBase = { ...base, botDailyTurnBudget: '4' }
     expect(restoreSettingsDraft(newerBase, store)).toBeNull()
     expect(store.getItem(DRAFT_KEY)).toBeNull()
   })
@@ -151,15 +148,19 @@ describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () =
     expect(restoreSettingsDraft(draftFromSettings(settings), store)).toBeNull()
     expect(store.getItem(DRAFT_KEY)).toBeNull()
   })
-  it('P38 旧版 v1 暂存 / 缺字段 / 版本不对：返回 null 并清掉', () => {
+  it('P38 旧版 v1 / P76k 旧版 v2 暂存、缺字段、版本不对：返回 null 并清掉', () => {
     const store = memoryStorage()
     const base = draftFromSettings(settings)
     // P38 升级到 v2：旧 v1 草稿即使内容齐全也整份作废，避免恢复出缺知识库字段的草稿。
     store.setItem(DRAFT_KEY, JSON.stringify({ version: 1, baseSignature: JSON.stringify(base), draft: { ...base } }))
     expect(restoreSettingsDraft(base, store)).toBeNull()
     expect(store.getItem(DRAFT_KEY)).toBeNull()
-    // v2 但草稿缺字段：坏数据不当草稿恢复。
-    store.setItem(DRAFT_KEY, JSON.stringify({ version: 2, baseSignature: JSON.stringify(base), draft: { digestAt: '08:30' } }))
+    // P76k 升级到 v3：v2 草稿带的是被删除的字段，整份作废，不恢复出旧设置。
+    store.setItem(DRAFT_KEY, JSON.stringify({ version: 2, baseSignature: JSON.stringify(base), draft: { ...base } }))
+    expect(restoreSettingsDraft(base, store)).toBeNull()
+    expect(store.getItem(DRAFT_KEY)).toBeNull()
+    // v3 但草稿缺字段：坏数据不当草稿恢复。
+    store.setItem(DRAFT_KEY, JSON.stringify({ version: 3, baseSignature: JSON.stringify(base), draft: { pushChannel: 'none' } }))
     expect(restoreSettingsDraft(base, store)).toBeNull()
     expect(store.getItem(DRAFT_KEY)).toBeNull()
     store.setItem(DRAFT_KEY, JSON.stringify({ version: 9, baseSignature: JSON.stringify(base), draft: { ...base } }))
@@ -172,7 +173,7 @@ describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () =
   it('drop 清掉暂存；之后读回 null', () => {
     const store = memoryStorage()
     const base = draftFromSettings(settings)
-    stashSettingsDraft({ ...base, digestAt: '07:00' }, base, store)
+    stashSettingsDraft({ ...base, pushChannel: 'dsh' }, base, store)
     dropSettingsDraft(store)
     expect(store.getItem(DRAFT_KEY)).toBeNull()
     expect(restoreSettingsDraft(base, store)).toBeNull()
@@ -184,10 +185,10 @@ describe('设置草稿暂存：编辑中落本地，基线没变才恢复', () =
       removeItem: () => { throw new Error('denied') },
     } as unknown as Storage
     const base = draftFromSettings(settings)
-    expect(() => stashSettingsDraft({ ...base, digestAt: '07:00' }, base, throwing)).not.toThrow()
+    expect(() => stashSettingsDraft({ ...base, pushChannel: 'none' }, base, throwing)).not.toThrow()
     expect(restoreSettingsDraft(base, throwing)).toBeNull()
     expect(() => dropSettingsDraft(throwing)).not.toThrow()
-    expect(() => stashSettingsDraft({ ...base, digestAt: '07:00' }, base, null)).not.toThrow()
+    expect(() => stashSettingsDraft({ ...base, pushChannel: 'none' }, base, null)).not.toThrow()
     expect(restoreSettingsDraft(base, null)).toBeNull()
     expect(() => dropSettingsDraft(null)).not.toThrow()
   })

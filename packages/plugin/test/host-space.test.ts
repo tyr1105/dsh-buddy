@@ -81,7 +81,7 @@ describe('空间模式持久化', () => {
 
 describe('侧栏根与入口行', () => {
   it('导航紧接工作区区域时，根是导航的父节点', () => {
-    const root = {}
+    const root = { parentElement: null, querySelector: () => null }
     const nav = fakeNav(root)
     expect(findHostSpaceRoot(fakeDoc({ closest: () => nav }))).toBe(root)
   })
@@ -100,6 +100,27 @@ describe('侧栏根与入口行', () => {
     const wideRoot = { parentElement: null, querySelector: () => ({}) }
     const nav = { parentElement: wideRoot, querySelector: () => null }
     expect(findHostSpaceRoot(fakeDoc({ closest: () => nav }))).toBe(wideRoot)
+  })
+
+  it('新版导航与工作区进入滚动容器后，仍挂到包含顶部标识的外层侧栏', () => {
+    const root = { parentElement: null, querySelector: () => ({}) }
+    const scrollArea = {
+      parentElement: root,
+      querySelector: (selector: string) => selector.startsWith(':scope') ? null : {},
+    }
+    const nav = fakeNav(scrollArea)
+    expect(findHostSpaceRoot(fakeDoc({ closest: () => nav }))).toBe(root)
+  })
+
+  it('不把 body 里的不同区域拼接成侧栏，也不把入口的 body 父节点当侧栏', () => {
+    const body = { tagName: 'BODY', parentElement: null, querySelector: () => ({}) }
+    const nav = fakeNav(body)
+    expect(findHostSpaceRoot(fakeDoc({ closest: () => nav }))).toBeNull()
+    const anchor = { parentElement: body }
+    const doc = {
+      querySelector: (selector: string) => selector === '[class*="logoRow"]' ? anchor : null,
+    } as unknown as Document
+    expect(findHostSpaceRoot(doc)).toBeNull()
   })
 
   it('入口行取图标所在的可点击容器', () => {

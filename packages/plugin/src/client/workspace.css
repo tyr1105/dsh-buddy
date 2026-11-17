@@ -15,6 +15,8 @@
 .ah-topbar-now { display: block; font-size: 11px; white-space: nowrap; }
 .ah-brand-mark { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent); font-size: 21px; font-weight: 750; }
 .ah-topbar-status { gap: 8px; justify-self: end; min-width: 0; }
+/* P86r1：窄窗下灯点旁边的 token 短文字；宽窗隐藏（长文字里已有同一个数字），窄窗在 1100 断点里显示。 */
+.ah-quota-short { display: none; }
 .ah-page .ah-btn { font-size: 12px; min-height: 30px; padding: 5px 10px; border-radius: 8px; white-space: nowrap; }
 /* 激活态文字用 accent-text：原始品牌紫在淡紫底上浅色主题实测 4.45:1 不达 AA，混 10% 主文字色后双主题达标。 */
 .ah-page .ah-btn[aria-current='page'], .ah-filter-tabs .ah-btn[aria-pressed='true'] { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); }
@@ -95,6 +97,37 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-thread-header-actions { gap: 5px; }
 .ah-thread-next { font-size: 11px; }
 .ah-thread-messages { min-height: 0; padding: 24px; gap: 18px; overscroll-behavior: contain; overflow-anchor: none; }
+/*
+ * P76k 离开期间摘要：不是消息，是一条贴在对话最上方的说明块。
+ * 用浅色底 + 左侧强调线，与主人和员工的泡泡区分开；首行加粗，其余一行一项。
+ */
+/* P76n：离开摘要的 live 区域。常驻 DOM、用视觉隐藏而不是 display:none；
+   摘要插入时读屏能被动播报，空态时不占布局。 */
+.ah-away-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.ah-away {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--dsw-alias-bg-inset, color-mix(in srgb, var(--dsw-alias-bg-base) 88%, var(--dsw-alias-accent) 12%));
+  border: 1px solid var(--dsw-alias-separator);
+  border-left: 3px solid var(--dsw-alias-accent);
+  border-radius: var(--dsw-radius-md, 8px);
+}
+.ah-away-head { margin: 0; font-size: 13px; }
+.ah-away-line { margin: 0; font-size: 12px; line-height: 1.7; color: var(--dsw-alias-label-secondary); }
+.ah-away-dismiss { align-self: flex-start; margin-top: 6px; }
 .ah-msg-body { max-width: min(85%, 720px); }
 .ah-msg:not(.ah-msg-mine) .ah-msg-body { margin-left: 36px; }
 .ah-msg:not(.ah-msg-mine):has(> .ah-avatar) .ah-msg-body { margin-left: 0; }
@@ -160,7 +193,9 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-pane-heading h2 { margin: 0; font-size: 20px; }
 .ah-pane-heading p { margin: 4px 0 0; color: var(--dsw-alias-text-secondary); }
 .ah-filter-tabs { display: flex; gap: 5px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--dsw-alias-separator); }
-.ah-filter-tabs .ah-btn span { margin-left: 4px; opacity: .7; }
+/* U07（P76o 复验）：计数原来叠 opacity .7，选中态里 11px 数字掉到约 2.8:1；
+   数字也是要读的信息，去掉透明度，靠字号区分主次。 */
+.ah-filter-tabs .ah-btn span { margin-left: 4px; }
 /* 计数为 0 且未选中的筛选器：置灰、不响应 hover，降低用户尝试成本。 */
 .ah-filter-tabs .ah-btn.ah-filter-disabled { color: var(--dsw-alias-text-tertiary, var(--dsw-alias-text-secondary)); opacity: .55; cursor: default; pointer-events: none; }
 .ah-filter-tabs .ah-btn.ah-filter-disabled span { opacity: .5; }
@@ -191,6 +226,8 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   /* 窄窗按优先级收纳：只收起额度文字，灯点保留（悬停 title 仍有全文，
      aria-label 仍向读屏播报完整额度），状态信号不整条消失（U01 r42）。 */
   .ah-quota-text { display: none; }
+  /* P86r1：长文字收起后，灯点旁边改显示 token 短文字（颜色继承，与长文字相同；不换行，不撑宽顶栏）。 */
+  .ah-quota-short { display: inline; white-space: nowrap; }
   /* 跟随宿主窄侧栏（约 236px）：项目名仍能读全，主要靠 title 补全（P1-3）。 */
   .ah-botlist { width: 236px; }
   /* fixed 相对可视视口定位：整页缩放下文档流容器会被撑高，absolute 会让抽屉底部掉到视口外；
@@ -432,6 +469,9 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   background: transparent;
   cursor: pointer;
 }
+/* P86r1：窄宽度下热区宽度随画布缩小（720 宽实测 17）。用居中的伪元素把可点区域扩到至少 24 宽，
+   按钮本身的位置与描边不变；伪元素只向左右各多出几个像素，不会盖住相邻的小人。 */
+.ah-office-pixel-figure::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: max(100%, 24px); transform: translateX(-50%); }
 .ah-office-pixel-figure:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-accent) 45%, transparent); }
 .ah-office-pixel-figure-on { box-shadow: inset 0 0 0 2px var(--dsw-alias-accent); }
 .ah-office-pixel-figure:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
@@ -452,6 +492,37 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   line-height: 1;
   white-space: nowrap;
   color: #20242c;
+  pointer-events: none;
+}
+
+/*
+ * P76k 午休牌上的文字：牌面由 canvas 画，这里只放字。位置与大小按画布百分比给，
+ * 缩放画布时字跟着牌面一起缩放。固定深色，理由同气泡：牌面是浅色像素。
+ */
+.ah-office-pixel-sign {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  font-size: 5px;
+  font-size: 1.05cqw;
+  line-height: 1;
+  white-space: nowrap;
+  color: #20242c;
+  pointer-events: none;
+}
+
+/* P76k 挂钟下方的一行小字：居中在钟的正下方，颜色用房间墙面上的深灰蓝。 */
+.ah-office-pixel-quota-label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 5px;
+  font-size: 1.1cqw;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary, #4d5569);
   pointer-events: none;
 }
 
@@ -806,7 +877,9 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-sidebar-nav .ah-bot-row-activity { font-size: var(--ah-nav-font-minor); }
 /* P59：搜索框和 DSH 左栏的搜索输入同为 13px，比条目略小，读起来仍是输入控件。 */
 .ah-sidebar-nav .ah-bot-search { font-size: 13px; }
-/* 行尾加号：默认半透明常驻（键盘可聚焦），悬停或聚焦时提亮，保持 24px 触控目标。 */
+/* 行尾加号：默认常驻可见（键盘可聚焦），悬停或聚焦时提亮，保持 24px 触控目标。
+   U10（P76o 复验）：原来默认 opacity .55，浅色侧栏底上「＋」只有约 2.1:1，
+   不达 WCAG 1.4.11 非文字 3:1；提到 .8 后约 3.2:1，仍比正文轻，但看得见。 */
 .ah-nav-row-add {
   display: inline-grid;
   place-items: center;
@@ -822,7 +895,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  opacity: .55;
+  opacity: .8;
 }
 .ah-nav-row-add:hover,
 .ah-nav-row-add:focus-visible { opacity: 1; border-color: var(--dsw-alias-separator); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-accent-text); }
@@ -967,6 +1040,8 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 /*
  * P48 归档：退役行尾的「归档」、已归档区的「恢复 / 删除」都是文字小按钮，
  * 与「＋」同为 24px 高，保持行高一致；已归档区是队友组内的折叠段，不新造列表。
+ * U10（P76o 复验）：文字按钮原来叠 opacity .8，11px 灰字降到约 3.5:1；
+ * 文字要按正文 4.5:1 判，所以去掉透明度，靠字号和边框保持轻量感。
  */
 .ah-nav-row-text {
   display: inline-grid;
@@ -982,7 +1057,6 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   font-size: var(--ah-nav-font-minor);
   line-height: 1;
   cursor: pointer;
-  opacity: .8;
 }
 .ah-nav-row-text:hover,
 .ah-nav-row-text:focus-visible {
@@ -1010,6 +1084,8 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
   align-items: center;
   gap: 5px;
   width: 100%;
+  /* U10（P76o 复验）：11px 字 + 8px 内边距实测约 21px 高，补到 24px 触控目标。 */
+  min-height: 24px;
   padding: 4px 6px;
   border: 0;
   border-radius: 7px;
@@ -1058,7 +1134,7 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
 .ah-wizard-role.ah-template-card { padding: 10px 12px; min-height: 92px; gap: 3px; align-content: start; font-size: 12px; line-height: 1.45; }
 .ah-template-card strong { font-size: 14px; }
-.ah-template-recommend { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 11px; font-style: normal; font-weight: 500; color: var(--dsw-alias-accent); background: var(--dsw-alias-accent-muted); }
+.ah-template-recommend { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 11px; font-style: normal; font-weight: 500; color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); }
 .ah-template-meta { font-size: 11px; color: var(--dsw-alias-text-secondary); }
 .ah-template-detail { padding: 12px; border-radius: 10px; background: var(--dsw-alias-bg-inset); }
 .ah-template-detail-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
@@ -1125,6 +1201,9 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 @container buddy (max-width: 520px) {
   .ah-msg-body, .ah-card { grid-template-columns: minmax(0, 1fr); }
   .ah-thread-header .ah-btn, .ah-card .ah-btn { white-space: normal; }
+  /* P76n：组队卡的长选项按钮在 420 宽仍被 .ah-page .ah-btn 的 nowrap 压成横向溢出；
+     这里用更高的选择器优先级允许换行，按钮宽度不再撑破消息区。 */
+  .ah-msg .ah-card-options > .ah-btn { white-space: normal; overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
 }
 
 /*
@@ -1137,6 +1216,8 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-topic-card { display: grid; gap: 6px; min-width: 0; padding: 14px 16px; border: 1px solid var(--dsw-alias-separator); border-radius: 12px; background: var(--dsw-alias-bg-inset); }
 .ah-topic-card-text, .ah-topic-floor-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; }
 .ah-topic-count { margin: 0; padding-bottom: 6px; border-bottom: 1px solid var(--dsw-alias-separator); font-size: 12px; color: var(--dsw-alias-text-secondary); }
+/* P74i-m2（第四次审查高-1）：楼层前面还没加载的更早记录——一行小字说明，旁边放「加载更早」入口。 */
+.ah-topic-earlier { margin: 6px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-text-secondary); }
 .ah-topic-floor { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .ah-topic-floor-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .ah-topic-floor-meta { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--dsw-alias-text-secondary); }
@@ -1161,6 +1242,25 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-prj-item-link:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
 .ah-prj-item-title { flex: 1 1 120px; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .ah-prj-item .ah-prj-note, .ah-prj-item .ah-tag { flex: none; }
+/* P74i-m1（走查 S-5）：事务清单里「一件事」的新行与旧事务行共用同一组网格列（标题、执行者、状态、时间），
+   两种行的三列在同一张清单里对齐；标题列可以收缩换行，其余列按内容取宽。 */
+/* P74i-m2（走查 R-2）：清单自带容器查询——宽度不够时每行改两行排列（第一行标题占满，第二行执行者、
+   状态、时间），标题列有最小宽度并可换行，执行者与时间允许折行，不再出现标题一字一行、
+   列宽为 0、与执行者重叠或时间被裁。 */
+.ah-prj-items.ah-prj-task-grid { container: prj-tasks / inline-size; }
+.ah-prj-task-grid .ah-prj-item { display: grid; grid-template-columns: minmax(5em, 1fr) minmax(3.5em, auto) max-content max-content; column-gap: 10px; align-items: center; }
+.ah-prj-task-grid .ah-prj-note { min-width: 0; overflow-wrap: anywhere; }
+/* P74i-m3（第四次走查 N-2）：420 宽下三列固定占位仍会把执行者列压成 0 宽并超出卡片。
+   窄宽度改为弹性换行：标题独占第一行；第二行的执行者、状态、时间各自按内容取宽，
+   执行者设最小宽度，放不下时整列换到下一行（时间同样），任何一列都不会被挤到 0 宽，内容不超出卡片。 */
+@container prj-tasks (max-width: 560px) {
+  .ah-prj-task-grid .ah-prj-item { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 2px; }
+  .ah-prj-task-grid .ah-prj-item-title { flex: 0 0 100%; }
+  .ah-prj-task-grid .ah-prj-item .ah-prj-note { flex: 0 1 auto; min-width: 3.5em; max-width: 100%; }
+  .ah-prj-task-grid .ah-prj-item .ah-tag { flex: none; max-width: 100%; }
+  /* 旧事务的占位时间格是空的，窄宽度下不占位。 */
+  .ah-prj-task-grid .ah-prj-item .ah-prj-note:empty { display: none; }
+}
 .ah-prj-background { margin: 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ah-prj-path { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .ah-prj-path-label { flex: none; font-size: 12px; color: var(--dsw-alias-text-secondary); }
@@ -1172,3 +1272,594 @@ nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
 .ah-prj-members-list .ah-prj-member-gone { box-shadow: none; background: transparent; color: var(--dsw-alias-text-secondary); }
 /* P60：项目表单字段少，弹窗按内容撑高，太高时才在里面滚动；沿用队友弹窗的固定高度会在中间留一大片空白。 */
 .ah-teammate-edit.ah-prj-edit { height: auto; max-height: min(800px, 100%); }
+
+/* ============================================================================
+   P72e 约定卡、草图、印章、主题第一层
+   颜色一律用插件现有的变量，不引入新的设计系统。整张卡只有印章一处用红色（错误色）；
+   「本版改动」处用提示色底，不用红色；不用阴影和渐变。
+   ============================================================================ */
+
+/* 约定卡在消息里占满可用宽度（普通气泡有 70% 到 85% 的上限，约定卡内容多，需要宽一点）。 */
+.ah-msg-body.ah-msg-body-wide { max-width: 100%; flex: 1; min-width: 0; }
+.ah-card-agreement { position: relative; min-width: 0; gap: 14px; text-align: left; }
+.ah-agr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ah-agr-version { font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-agr-state { margin-left: auto; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-agr-state.is-locked { color: var(--dsw-alias-success, var(--dsw-alias-text-primary)); font-weight: 600; }
+.ah-card-agreement.ah-agr-locked { border-color: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 45%, var(--dsw-alias-separator)); }
+
+/* 每一块内容：小标题 + 内容。 */
+.ah-agr-sec { display: grid; gap: 6px; min-width: 0; }
+.ah-agr-sec-h { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-text-secondary); }
+.ah-agr-sec-hint { font-weight: 400; }
+.ah-agr-one { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.ah-agr-sec ul, .ah-agr-sec ol { margin: 0; padding-left: 18px; }
+.ah-agr-sec li { margin: 2px 0; overflow-wrap: anywhere; }
+.ah-agr-none, .ah-agr-hint, .ah-agr-adoption { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-agr-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@container buddy (max-width: 560px) { .ah-agr-split { grid-template-columns: 1fr; } }
+.ah-agr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* 本版改动：提示色底，不用红色。 */
+.ah-agr-changed { background: var(--dsw-alias-warning-muted, var(--dsw-alias-bg-inset)); border-radius: 3px; }
+.ah-agr-changes-text { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+
+/* 序号圆圈：草图上的编号与「待你定」的序号一一对应。 */
+.ah-agr-pin {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; margin-left: 4px;
+  border-radius: 50%; background: var(--dsw-alias-accent); color: var(--dsw-alias-text-on-accent, var(--dsw-alias-bg-base));
+  font-size: 10px; font-weight: 700; line-height: 1;
+}
+.ah-agr-q > .ah-agr-pin { margin-left: 0; margin-top: 2px; }
+
+/* 待你定：每项一行问题、一行单选选项、一行理由。 */
+.ah-agr-decide { display: grid; gap: 10px; }
+.ah-agr-q { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 4px 8px; align-items: start; border-radius: 4px; }
+.ah-agr-q-text { font-weight: 600; overflow-wrap: anywhere; }
+.ah-agr-q-opts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; }
+.ah-agr-q-why { grid-column: 2; margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-agr-chip {
+  font: inherit; font-size: 12px; min-height: 28px; padding: 3px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--dsw-alias-control, var(--dsw-alias-separator-strong, var(--dsw-alias-separator)));
+  background: var(--dsw-alias-bg-base); color: inherit; text-align: left;
+}
+.ah-agr-chip:hover:not(:disabled) { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
+.ah-agr-chip:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-agr-chip.is-selected { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-accent-muted); color: var(--dsw-alias-accent-text); font-weight: 600; }
+.ah-agr-chip:disabled { cursor: default; opacity: 1; }
+.ah-agr-chip:disabled:not(.is-selected) { opacity: 0.6; }
+.ah-agr-chip em { font-style: normal; font-size: 11px; font-weight: 400; margin-left: 4px; color: var(--dsw-alias-text-secondary); }
+
+/* 我已定的：每条一行，依据放在后面的小字里。 */
+.ah-agr-decided { list-style: none; padding-left: 0 !important; }
+.ah-agr-decided li { padding: 3px 0; border-bottom: 1px dashed var(--dsw-alias-separator); }
+.ah-agr-decided li:last-child { border-bottom: 0; }
+.ah-agr-basis { margin-left: 6px; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+
+/* 被新版取代的旧版：折叠成一行，整行是一个按钮。 */
+.ah-agr-fold { padding: 10px 16px; gap: 8px; }
+/* P86r1：被取代的约定折叠行可点，可点区域高度不小于 24（走查实测 20）。 */
+.ah-agr-fold-row { all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 24px; cursor: pointer; }
+.ah-agr-fold-row:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-agr-fold-body { display: grid; gap: 14px; }
+
+/* 「定」字印章：方形红框，右上角，略微倾斜；整张卡只有这一处红色。 */
+.ah-agr-seal {
+  position: absolute; top: 12px; right: 14px; display: inline-grid; place-items: center; align-content: center;
+  width: 44px; height: 44px; border: 2px solid var(--dsw-alias-danger); color: var(--dsw-alias-danger);
+  border-radius: 6px; transform: rotate(-8deg); font-family: 'Songti SC', 'STSong', serif; font-weight: 900; font-size: 22px; line-height: 1;
+}
+.ah-agr-seal small { display: block; font-size: 8px; font-weight: 600; font-family: inherit; line-height: 1; margin-top: 1px; }
+.ah-agr-seal-char { display: block; line-height: 1; }
+.ah-card-agreement.ah-agr-locked .ah-agr-head { padding-right: 56px; }
+/* 落章动效：缩放加淡入，约 300 毫秒，只播一次；系统要求减少动态效果时不播。 */
+@media (prefers-reduced-motion: no-preference) {
+  .ah-agr-seal.is-anim { animation: ah-agr-stamp 0.3s ease-out both; }
+  @keyframes ah-agr-stamp {
+    from { transform: rotate(-8deg) scale(1.6); opacity: 0; }
+    to { transform: rotate(-8deg) scale(1); opacity: 1; }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-agr-seal.is-anim { animation: none; }
+}
+
+/* 草图：浅底上画线框，只用 HTML 和 CSS；颜色、字号随主题。 */
+.ah-agr-sketch { background: var(--dsw-alias-bg-inset); border: 1px solid var(--dsw-alias-separator); border-radius: 10px; padding: 12px; min-width: 0; }
+.ah-agr-sketch.ah-agr-changed { background: var(--dsw-alias-warning-muted, var(--dsw-alias-bg-inset)); }
+.ah-agr-screens { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.ah-agr-frame {
+  flex: 1 1 150px; max-width: 260px; min-width: 0; display: grid; gap: 6px; align-content: start; padding: 10px;
+  background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); border-radius: 8px; font-size: 11px;
+}
+.ah-agr-frame-cap { margin: 0 0 2px; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+.ah-agr-wf-title { font-size: 13px; font-weight: 650; display: flex; align-items: center; }
+.ah-agr-wf-text { font-size: 11px; display: flex; align-items: center; overflow-wrap: anywhere; }
+.ah-agr-wf-field { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); border-radius: 6px; color: var(--dsw-alias-text-secondary); }
+.ah-agr-wf-button { display: flex; justify-content: center; align-items: center; padding: 4px; border-radius: 6px; font-weight: 600; background: var(--dsw-alias-accent); color: var(--dsw-alias-text-on-accent, var(--dsw-alias-bg-base)); }
+.ah-agr-wf-image { display: flex; justify-content: center; align-items: center; min-height: 48px; border: 1px dashed var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); color: var(--dsw-alias-text-secondary); }
+.ah-agr-wf-list { margin: 0; padding-left: 16px; font-size: 11px; }
+.ah-agr-wf-note { font-size: 10px; color: var(--dsw-alias-text-secondary); display: flex; align-items: center; }
+.ah-agr-wf-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.ah-agr-wf-table caption { text-align: left; font-size: 10px; color: var(--dsw-alias-text-secondary); padding-bottom: 2px; }
+.ah-agr-wf-table th, .ah-agr-wf-table td { border-bottom: 1px solid var(--dsw-alias-separator); padding: 2px 3px; text-align: left; }
+/* 流程：方框 + 箭头，宽屏从左到右，窄屏从上到下。 */
+.ah-agr-flow { list-style: none; margin: 0; padding: 0 !important; display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.ah-agr-flow-item { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0 !important; position: relative; padding-right: 22px; }
+.ah-agr-flow-item:last-child { padding-right: 0; }
+.ah-agr-flow-actor, .ah-agr-flow-note { font-size: 10px; color: var(--dsw-alias-text-secondary); }
+.ah-agr-box { display: flex; align-items: center; justify-content: center; padding: 6px 10px; min-width: 72px; text-align: center; font-size: 12px; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); border-radius: 6px; overflow-wrap: anywhere; }
+.ah-agr-arrow { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--dsw-alias-text-secondary); }
+@container buddy (max-width: 560px) {
+  .ah-agr-flow { flex-direction: column; }
+  .ah-agr-flow-item { padding-right: 0; padding-bottom: 22px; }
+  .ah-agr-flow-item:last-child { padding-bottom: 0; }
+  .ah-agr-arrow { right: auto; left: 50%; top: auto; bottom: 2px; transform: translateX(-50%) rotate(90deg); }
+}
+/* 概念：方框网格，连线写成列表。 */
+.ah-agr-concept { display: grid; gap: 8px; }
+.ah-agr-nodes { list-style: none; margin: 0; padding: 0 !important; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.ah-agr-nodes .ah-agr-box { flex-direction: column; margin: 0 !important; }
+.ah-agr-links { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+
+/* 主题第一层的约定面板（外框沿用 ah-topic-card）。 */
+.ah-agr-panel { gap: 8px; }
+.ah-agr-panel-links { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 16px; }
+.ah-agr-panel-links > .ah-btn { padding-left: 0; }
+.ah-agr-revisions summary { cursor: pointer; list-style: none; display: inline-block; font-size: 12px; color: var(--dsw-alias-accent-text); padding: 5px 0; }
+.ah-agr-revisions summary::-webkit-details-marker { display: none; }
+.ah-agr-revisions summary:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-agr-rev { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
+.ah-agr-panel-full { margin-top: 4px; }
+
+/* 员工列表：总管的「全队入口」标签；资料区的默契度一行。 */
+/* P72g B5：总管私聊顶部，「全队入口」标签跟在名字后面。 */
+.ah-thread-header h2 .ah-tag-entry { margin-left: 8px; font-weight: 400; vertical-align: middle; }
+/* P72g B3：第 2 版起的待确认卡里「其余 N 项与上一版相同」「展开全文」那一行。 */
+.ah-agr-unchanged { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ah-tag-entry { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-accent) 30%, transparent); }
+.ah-right-rapport { margin: 0 0 4px; }
+
+/* ============================================================================
+   P73e 三问卡、组队卡、性格四句话、模板库顶部提示、员工列表底部入口
+   颜色一律用插件现有变量，不引入新的设计系统；不用阴影和渐变，没有红色强调。
+   ============================================================================ */
+
+/* 员工列表底部入口「从模板库添加」：整行虚线框，与列表里的行区分开。 */
+.ah-nav-library-entry { margin: 4px 8px 0; padding: 6px 10px; min-height: 24px; text-align: left; font-size: 12px; color: var(--dsw-alias-text-secondary); background: transparent; border: 1px dashed var(--dsw-alias-separator); border-radius: 7px; cursor: pointer; }
+.ah-nav-library-entry:hover { background: var(--dsw-alias-bg-inset); color: var(--dsw-alias-text-primary); }
+.ah-nav-library-entry:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+
+/* 三问卡：选项按钮沿用提问卡；说明行在按钮下；建议项旁的小标签。 */
+.ah-team-q { display: grid; gap: 6px; margin-top: 8px; min-width: 0; }
+.ah-team-q .ah-btn[aria-pressed="true"]:disabled { opacity: 1; }
+.ah-team-q .ah-btn:disabled:not([aria-pressed="true"]) { opacity: 0.6; }
+.ah-team-note { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-team-flag { font-style: normal; font-size: 11px; font-weight: 400; margin-left: 4px; padding: 0 5px; border-radius: 3px; color: var(--dsw-alias-text-secondary); background: var(--dsw-alias-bg-inset); }
+.ah-team-flag.is-changed { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); }
+
+/* 性格四句话：字母一列、句子一列，四行等高排开。 */
+.ah-personality { margin: 0; display: grid; gap: 2px; font-size: 12px; line-height: 1.5; }
+.ah-personality-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; }
+.ah-personality dt { font-weight: 600; color: var(--dsw-alias-text-secondary); }
+.ah-personality dd { margin: 0; overflow-wrap: anywhere; }
+.ah-template-kv .ah-personality { margin-top: 4px; }
+
+/* 组队卡：外框沿用 .ah-card；每位一块，块与块之间用细线隔开。 */
+.ah-card-team { position: relative; min-width: 0; gap: 12px; text-align: left; }
+.ah-team-head { flex-wrap: wrap; }
+.ah-team-state { margin-left: auto; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-team-state.is-ok { color: var(--dsw-alias-success, var(--dsw-alias-text-primary)); font-weight: 600; }
+.ah-team-hire { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; padding: 12px 0; border-top: 1px solid var(--dsw-alias-separator); }
+.ah-team-head + .ah-team-hire { border-top: 0; padding-top: 0; }
+.ah-team-hire.is-removed { opacity: 0.55; }
+.ah-team-hire-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.ah-team-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; max-width: 100%; }
+.ah-team-name-input { width: 9em; max-width: 100%; padding: 3px 8px; font: inherit; font-weight: 600; color: var(--dsw-alias-text-primary); background: var(--dsw-alias-bg-base, transparent); border: 1px solid var(--dsw-alias-separator); border-radius: 6px; }
+.ah-team-name-input:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
+.ah-team-tpl, .ah-team-estimate { font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-team-fit, .ah-team-brief, .ah-team-removed { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-team-removed { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-text-secondary); }
+.ah-team-kv { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13px; }
+.ah-team-kv-item { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* P86r1：可点区域高度不小于 24（走查实测 21）；inline-flex 让 min-height 对原本的行内按钮生效，文字大小不变。 */
+.ah-team-edit { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; min-height: 24px; cursor: pointer; padding: 0 4px; border-radius: 4px; border-bottom: 1px dashed var(--dsw-alias-text-secondary); }
+.ah-team-edit:hover:not(:disabled) { background: var(--dsw-alias-bg-inset); }
+.ah-team-edit:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-team-edit:disabled { cursor: default; border-bottom-color: transparent; }
+.ah-team-reset { padding: 0 6px; font-size: 12px; }
+.ah-team-editor { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px; border-radius: 8px; background: var(--dsw-alias-bg-inset); }
+.ah-team-axis { display: inline-flex; gap: 4px; }
+.ah-team-ops { display: flex; flex-wrap: wrap; gap: 8px; }
+.ah-team-swap { display: grid; gap: 6px; justify-items: start; }
+.ah-team-swap .ah-btn { text-align: left; white-space: normal; }
+.ah-team-swap .ah-btn em, .ah-team-editor .ah-agr-chip em { font-style: normal; font-size: 11px; margin-left: 6px; color: var(--dsw-alias-text-secondary); }
+.ah-team-sum { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 10px; border-top: 1px solid var(--dsw-alias-separator); font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-team-actions { display: grid; gap: 6px; justify-items: start; }
+/* 确认后只读：每位一行，被去掉的变淡。 */
+.ah-team-lines { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 13px; overflow-wrap: anywhere; }
+.ah-team-lines .is-removed { color: var(--dsw-alias-text-secondary); }
+.ah-team-fixed .ah-team-sum { border-top: 0; padding-top: 0; }
+
+/* 模板库顶部提示：一行说明文字，引导不确定要谁的人回到总管。 */
+.ah-template-banner { margin: 0; padding: 8px 10px; font-size: 13px; border-radius: 8px; color: var(--dsw-alias-text-primary); background: var(--dsw-alias-bg-inset); }
+
+/* P73f：员工状态单选组、归档二次确认、执行类固定节奏一行、三问气泡宽度、「换一位」下拉。 */
+.ah-status-option { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ah-status-note { font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-archive-confirm { display: grid; gap: 6px; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--dsw-alias-separator); border-radius: 8px; background: var(--dsw-alias-bg-inset); font-size: 13px; }
+.ah-archive-confirm p { margin: 0; overflow-wrap: anywhere; }
+.ah-archive-confirm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ah-fixed-line { font-size: 13px; padding: 7px 11px; border: 1px dashed var(--dsw-alias-separator); border-radius: 8px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 三问和总管说明的气泡：外层是通栏（要放选项和卡片），气泡本身保持和普通消息一样的内容宽度。 */
+.ah-msg-body-wide > .ah-msg-bubble { justify-self: start; max-width: min(85%, 720px); }
+/* 「换一位」：和「不要这位」同一行的下拉；选了备选后右边出现「换为这位」。
+   P76n：420 宽时下拉的默认宽度会按最长选项撑到 264px，把消息区撑出横向滚动；允许它收窄。 */
+.ah-team-swap { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
+.ah-team-swap-select { height: 30px; width: 100%; max-width: 100%; min-width: 0; font: inherit; font-size: 13px; }
+.ah-personality-field .ah-team-editor { margin-bottom: 2px; }
+
+/* ============================================================================
+   P74h 进度行、工作往来折叠组、证据清单、交回卡与核对卡、约定卡两栏
+   颜色一律用插件现有的变量（--dsw-alias-*），不引入新的设计系统；
+   数值对照设计稿 docs/design/v3/block-3-delivery/mockup.html 的「三、本块新增」。
+   ============================================================================ */
+
+/* 进度行：约定面板底部，上一条细线隔开；步骤条加一行「现在 / 在等 / 交付」。 */
+.ah-job-progress { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--dsw-alias-separator); }
+.ah-job-steps { display: flex; margin: 0; padding: 0; list-style: none; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+.ah-job-steps li { flex: 1; min-width: 0; padding-top: 6px; margin-right: 3px; border-top: 3px solid var(--dsw-alias-separator); overflow-wrap: anywhere; }
+.ah-job-steps li:last-child { margin-right: 0; }
+.ah-job-steps li.is-done { border-top-color: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 70%, var(--dsw-alias-separator)); color: var(--dsw-alias-text-primary); }
+.ah-job-steps li.is-current { border-top-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-text); font-weight: 650; }
+.ah-job-steps li.is-stuck { border-top-color: var(--dsw-alias-warning, var(--dsw-alias-accent)); color: var(--dsw-alias-text-primary); font-weight: 650; }
+.ah-job-now { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+/* 状态小标签：run 主色、you 警示色、ok 成功色；标签里有文字，不靠颜色单独表达。 */
+.ah-job-state { display: inline-block; margin: 0 2px; padding: 0 6px; border-radius: 4px; border: 1px solid; font-size: 11px; font-weight: 600; }
+.ah-job-state.is-run { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); border-color: color-mix(in srgb, var(--dsw-alias-accent) 30%, transparent); }
+.ah-job-state.is-you { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-primary)); background: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 12%, transparent); border-color: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 45%, transparent); }
+.ah-job-state.is-ok { color: var(--dsw-alias-success, var(--dsw-alias-text-primary)); background: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 10%, transparent); border-color: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 40%, transparent); }
+.ah-job-paused { margin: 0; font-size: 12px; color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); }
+
+/* 工作往来折叠组：虚线框、原生 details；收起两行摘要，展开后每条比楼层小一号。 */
+.ah-work-fold { border: 1px dashed var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); border-radius: 10px; background: var(--dsw-alias-bg-base); }
+.ah-work-fold > summary { list-style: none; cursor: pointer; padding: 8px 12px; display: grid; gap: 2px; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-work-fold > summary::-webkit-details-marker { display: none; }
+.ah-work-fold > summary:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-work-fold-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.ah-work-fold-line strong { color: var(--dsw-alias-text-primary); font-weight: 600; }
+.ah-work-fold-toggle { margin-left: auto; color: var(--dsw-alias-accent-text); }
+.ah-work-fold-latest { overflow-wrap: anywhere; }
+.ah-work-fold-body { padding: 4px 12px 12px; display: grid; gap: 12px; border-top: 1px dashed var(--dsw-alias-separator); }
+/* P74i-m2（第四次审查高-1）：折叠组里更早的还没加载的记录——展开后末尾一行小字说明。 */
+.ah-work-fold-missing { margin: 0; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+.ah-work-row { display: grid; gap: 4px; min-width: 0; }
+.ah-work-meta { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--dsw-alias-text-secondary); }
+.ah-work-meta strong { color: var(--dsw-alias-text-primary); font-weight: 600; }
+.ah-work-text { margin: 0; font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ah-work-note { margin: 0; text-align: center; font-size: 11px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+
+/* 交回卡、核对卡：外框沿用约定卡；卡头右侧状态、一行产出物说明、沿用说明与底部固定一行。 */
+.ah-card-job { gap: 10px; }
+.ah-job-head { flex-wrap: wrap; }
+.ah-job-state { margin-left: auto; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-job-intro { margin: 0; font-size: 13px; }
+.ah-job-carried { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-job-footer { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+
+/* 证据清单：每行三列（序号、内容、结论）；不符的行整行浅警示底色。 */
+.ah-ev-list { margin: 0; padding: 0; list-style: none; display: grid; border-top: 1px solid var(--dsw-alias-separator);
+  /* P74h-m1 第 4 处：以清单自身宽度为容器，宽度不够时结论小章换到条目原文的下一行（见下面的容器查询）。 */
+  container: evidence / inline-size; }
+.ah-ev-list > li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 4px 10px; padding: 9px 0; border-bottom: 1px solid var(--dsw-alias-separator); align-items: start; }
+.ah-ev-list > li.is-bad { background: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 8%, transparent); }
+.ah-ev-list > li.is-bad .ah-ev-no { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); }
+.ah-ev-no { font-weight: 650; color: var(--dsw-alias-text-secondary); font-variant-numeric: tabular-nums; }
+.ah-ev-main { display: grid; gap: 4px; min-width: 0; }
+.ah-ev-text { margin: 0; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.ah-ev-proof { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-ev-check, .ah-ev-note, .ah-ev-history { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 结论小章：符合（成功色）、不符（警示色）、不适用（灰）。文字在章里，不靠颜色单独表达。 */
+.ah-ev-verdict { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap; font-weight: 600; }
+.ah-ev-verdict.is-ok { color: var(--dsw-alias-success, var(--dsw-alias-text-primary)); border-color: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 45%, transparent); }
+.ah-ev-verdict.is-bad { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-primary)); border-color: var(--dsw-alias-warning, var(--dsw-alias-accent)); background: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 12%, transparent); }
+.ah-ev-verdict.is-na { color: var(--dsw-alias-text-secondary); border-color: var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); }
+/* 文件证据与链接：一行小条，「文件 / 截图 / 测试 / 链接」小标签用文字缩写，不用 emoji。 */
+.ah-ev-file, .ah-ev-link { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--dsw-alias-separator); border-radius: 6px; padding: 3px 8px; background: var(--dsw-alias-bg-inset); color: var(--dsw-alias-text-primary); font-size: 12px; overflow-wrap: anywhere; }
+/* P74i-m2（第四次审查中-2）：链接证据是员工写的地址，画成不可点的文字（可以选中复制），颜色不再用链接色。 */
+.ah-ev-link { color: var(--dsw-alias-text-primary); user-select: text; }
+.ah-ev-tag { flex: none; font-size: 10px; color: var(--dsw-alias-text-secondary); border: 1px solid var(--dsw-alias-separator); border-radius: 3px; padding: 0 3px; }
+/* 测试证据：一句结果，左边细线（结果不符时仍用同一形状，结论章已用文字表达）。 */
+.ah-ev-test { border-left: 2px solid var(--dsw-alias-success, var(--dsw-alias-accent)); padding-left: 8px; color: var(--dsw-alias-text-primary); font-size: 12px; overflow-wrap: anywhere; }
+/* 「改到什么程度算过」：退回时单独一块，不和「问题」混在一起。 */
+.ah-ev-fix { display: grid; gap: 2px; font-size: 12px; padding: 6px 8px; border-radius: 6px; background: var(--dsw-alias-bg-base); border: 1px solid color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 40%, var(--dsw-alias-separator)); }
+.ah-ev-fix strong { font-weight: 650; }
+.ah-ev-fix span { overflow-wrap: anywhere; }
+/* P74h-m1 第 4 处：对话区很窄（约 300 像素以下）时，结论小章不再挤在条目原文右侧，
+   换到原文的下一行开头，不与文字重叠；宽度够时保持三列的样子。 */
+@container evidence (max-width: 300px) {
+  .ah-ev-list > li { grid-template-columns: 20px minmax(0, 1fr); }
+  .ah-ev-list > li .ah-ev-verdict { grid-column: 2; justify-self: start; margin-top: 2px; }
+}
+
+/* 截图缩略图：92 像素宽（宽屏 150）；读取中灰色占位框；点开大图。 */
+.ah-shot { display: inline-grid; gap: 3px; justify-items: start; font-size: 12px; }
+.ah-shot-btn { all: unset; box-sizing: border-box; cursor: pointer; width: 92px; border: 1px solid var(--dsw-alias-separator); border-radius: 6px; background: var(--dsw-alias-bg-base); }
+.ah-shot-btn.is-wide { width: 150px; }
+.ah-shot-btn:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-shot-btn img { display: block; width: 100%; height: auto; border-radius: 5px; }
+.ah-shot-placeholder { display: grid; place-items: center; width: 92px; min-height: 60px; border: 1px solid var(--dsw-alias-separator); border-radius: 6px; background: var(--dsw-alias-bg-inset); color: var(--dsw-alias-text-secondary); font-size: 10px; padding: 4px; text-align: center; }
+.ah-shot-placeholder.is-error { border-color: var(--dsw-alias-warning, var(--dsw-alias-accent)); color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); }
+.ah-shot-caption { font-size: 10px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 大图：最简单的一层弹层；Esc 关闭、焦点回到缩略图（逻辑在 EvidenceList）。 */
+/* P74i-m1（走查 D-11）：大图是浮在页面之上的全屏遮罩弹窗——不再在缩略图原位插块，也不推动下面的内容。 */
+.ah-shot-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--dsw-alias-scrim, transparent); }
+.ah-shot-dialog { position: relative; display: grid; gap: 8px; justify-items: center; padding: 12px; border: 1px solid var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); border-radius: 10px; background: var(--dsw-alias-bg-base); max-width: 90vw; max-height: 90vh; }
+.ah-shot-dialog:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-shot-dialog img { max-width: min(88vw, 860px); max-height: 82vh; height: auto; border-radius: 6px; }
+/* 「关闭」在弹窗右上角；按钮本身可 Tab 到达（焦点圈的一部分）。 */
+.ah-shot-dialog-close { position: absolute; top: 8px; right: 8px; }
+
+/* 约定卡两栏（B2）：沿用「这次做 / 这次不做」的版式（ah-agr-split），只在有 jobSplit 时出现。 */
+/* P74h-m1 第 3 处：两栏都从顶部对齐——栏里的行不随栏高拉伸（条目少的栏内容不再落到栏的中部），
+   栏标题与第一条内容在两栏的同一水平线上。 */
+.ah-job-split { padding-top: 2px; align-items: start; }
+.ah-job-split > .ah-agr-sec { align-content: start; }
+/* 「来源」与「起因」两行（起因是提问的版本才有）：与修订记录里来源一行同一种小字。 */
+.ah-agr-origin { display: grid; gap: 2px; }
+.ah-agr-src { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-job-fallback { flex-basis: 100%; }
+
+/* P74i：交付卡、三轮不过卡、回执。颜色、字号、间距沿用插件现有样式变量。 */
+/* 交付卡：右侧状态按状态着色（已完成成功色、未通过警示色、已失效灰）。 */
+.ah-job-state.is-ok { color: var(--dsw-alias-success-text, var(--dsw-alias-text-secondary)); }
+.ah-job-state.is-bad { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); }
+.ah-job-state.is-na { color: var(--dsw-alias-text-secondary); }
+.ah-job-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.ah-job-actions .ah-btn { margin: 0; }
+.ah-job-hint { margin: 4px 0 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-job-opened { font-size: 12px; color: var(--dsw-alias-success-text, var(--dsw-alias-text-secondary)); }
+.ah-job-done-hint { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-job-returned { margin: 4px 0 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-job-preview-error { display: grid; gap: 4px; margin: 8px 0 0; font-size: 12px; color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); }
+.ah-job-preview-path { user-select: text; overflow-wrap: anywhere; }
+/* 三轮不过卡：四段小标题与办法的整行按钮。 */
+.ah-card-escalation .ah-esc-sec { display: grid; gap: 4px; margin-top: 10px; }
+.ah-esc-title { margin: 0; font-size: 12px; font-weight: 600; color: var(--dsw-alias-text-secondary); }
+.ah-esc-text { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-esc-tried { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+.ah-esc-options { display: grid; gap: 6px; }
+.ah-esc-option { all: unset; box-sizing: border-box; display: grid; gap: 3px; width: 100%; padding: 8px 10px; border: 1px solid var(--dsw-alias-separator); border-radius: 8px; background: var(--dsw-alias-bg-base); cursor: pointer; }
+.ah-esc-option:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-esc-option.is-selected { border-color: var(--dsw-alias-accent); }
+.ah-esc-option[disabled] { cursor: default; }
+/* P74i-m2（第二次）：只读的办法本身不再带虚线；虚线只在失效的卡里（见下面 .is-void 一组），已选的卡是正常的只读样子。 */
+.ah-esc-option.is-readonly { cursor: default; }
+.ah-card-escalation.is-void .ah-esc-option.is-readonly { border-style: dashed; }
+/* P74i-m1（走查 E-10）：「建议」小标签不折行（标题可以换行，标签整体保持一行）。
+   标签允许落到标题下一行整体显示（flex-wrap），但不从中间断开。 */
+.ah-esc-option-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ah-esc-option-head .ah-tag { white-space: nowrap; }
+.ah-esc-option-head strong { font-size: 13px; overflow-wrap: anywhere; }
+.ah-esc-option-detail { font-size: 12px; color: var(--dsw-alias-text-primary); overflow-wrap: anywhere; }
+/* 「选了实际会改什么」一行是主人确认的依据：与做法相同的字号、正文颜色（不用更浅的颜色）。 */
+.ah-esc-change-line { overflow-wrap: anywhere; }
+/* P74i-m1（第二次，走查 E-5）：主人已选的办法上的「已选」小标签——成功色，不折行。 */
+.ah-esc-option-head .ah-tag-ok { color: var(--dsw-alias-success-text, var(--dsw-alias-text-secondary)); background: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 10%, transparent); border: 1px solid color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 40%, transparent); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+/* P74i-m1（第二次，任务卡 1.2）：失效的三轮不过卡整体弱化（与交付卡失效同一样式口径：次要文字色、虚线边）。 */
+/* P74i-m2（走查 R-6）：弱化要看得出来——两种失效卡（.is-void）边框改虚线、标题与正文用次要文字色，
+   深色外观下同一套变量同样成立；办法与清单条目保持正文颜色，仍然看得清。 */
+.ah-card-job.is-void { border-style: dashed; }
+.ah-card-job.is-void .ah-card-title { color: var(--dsw-alias-text-secondary); }
+.ah-card-job.is-void .ah-job-done-hint, .ah-card-job.is-void .ah-job-returned, .ah-card-job.is-void .ah-job-hint { color: var(--dsw-alias-text-secondary); }
+.ah-card-escalation.is-void .ah-card-title { color: var(--dsw-alias-text-secondary); }
+.ah-card-escalation.is-void .ah-esc-text, .ah-card-escalation.is-void .ah-esc-tried { color: var(--dsw-alias-text-secondary); }
+.ah-esc-submit { align-items: center; }
+/* 回执：窄条居中，每行左标签右值，行间点线，等宽数字。 */
+.ah-receipt { display: grid; gap: 8px; justify-items: center; padding: 12px 16px; border: 1px dashed var(--dsw-alias-separator-strong, var(--dsw-alias-separator)); }
+.ah-receipt-title { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-receipt-rows { margin: 0; display: grid; gap: 2px; width: min(100%, 360px); }
+.ah-receipt-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ah-receipt-row dt { font-size: 12px; color: var(--dsw-alias-text-secondary); white-space: nowrap; }
+.ah-receipt-row::before { content: ''; order: 1; flex: 1; border-bottom: 1px dotted var(--dsw-alias-separator); transform: translateY(-3px); }
+.ah-receipt-row dd { order: 2; margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 0; overflow-wrap: anywhere; }
+/* P74i-m1（走查 G-4）：很窄的栏里（约 213 像素）改为上下排列——名称一行、值一行，值允许换行，
+   不出现横向溢出；上下排列时不再画中间的点线。 */
+@media (max-width: 480px) {
+  .ah-receipt-row { flex-direction: column; align-items: flex-start; gap: 0; }
+  .ah-receipt-row::before { display: none; }
+  .ah-receipt-row dd { white-space: normal; }
+}
+/* 折叠组里的卡片行：卡片前面加与普通往来相同的行头「谁 → 谁　时间」。 */
+.ah-work-card-row { display: grid; gap: 4px; }
+/* P74i-m1（走查 S-3）：项目页一件事行的状态小标签按 stateTone 着色——有底色、有边线、不折行，
+   四种样子（进行中、等你处理、受阻、已收尾）沿用进度行状态标签的配色，深浅外观下都可分辨。 */
+.ah-prj-item .ah-tag { white-space: nowrap; border: 1px solid transparent; }
+.ah-prj-item .ah-tag.is-run { color: var(--dsw-alias-accent-text); background: var(--dsw-alias-accent-muted); border-color: color-mix(in srgb, var(--dsw-alias-accent) 40%, transparent); }
+.ah-prj-item .ah-tag.is-you { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-primary)); background: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 12%, transparent); border-color: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 45%, transparent); }
+.ah-prj-item .ah-tag.is-ok { color: var(--dsw-alias-success-text, var(--dsw-alias-text-secondary)); background: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 10%, transparent); border-color: color-mix(in srgb, var(--dsw-alias-success, var(--dsw-alias-accent)) 40%, transparent); }
+.ah-prj-item .ah-tag.is-blocked { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-primary)); background: color-mix(in srgb, var(--dsw-alias-warning, var(--dsw-alias-accent)) 20%, transparent); border-color: var(--dsw-alias-warning, var(--dsw-alias-accent)); }
+
+/*
+ * P75j 员工右侧栏的「技能库」一栏与技能详情。颜色只用插件已有的主题变量，不新造配色。
+ * 刻度：一根横线，每道一个竖刻，按先后顺序等距排开；长短三档，整理合并用强调色；新刻的一道只在系统允许动态效果时播一次刻入动画。
+ */
+.ah-skill-ticks { margin: 2px 0 6px; }
+.ah-skill-ticks-line { display: flex; align-items: flex-end; height: 22px; margin: 6px 0; border-bottom: 1px solid var(--dsw-alias-separator); }
+.ah-skill-tick-slot { flex: 1 1 0; min-width: 0; height: 100%; display: flex; justify-content: center; align-items: flex-end; }
+.ah-skill-tick { width: 2px; background: var(--dsw-alias-text-secondary); transform-origin: bottom center; }
+.ah-skill-tick-short { height: 8px; }
+.ah-skill-tick-mid { height: 14px; }
+.ah-skill-tick-long { height: 21px; }
+.ah-skill-tick-main { width: 3px; height: 21px; background: var(--dsw-alias-accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .ah-skill-tick-fresh { animation: ah-skill-tick-in 0.5s ease-out 1 both; }
+  @keyframes ah-skill-tick-in { from { transform: scaleY(0); opacity: 0.2; } to { transform: scaleY(1); opacity: 1; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-skill-tick-fresh { animation: none; }
+}
+.ah-skill-ticks-legend { overflow-wrap: break-word; }
+/* 图例每一项不断行：整项换到下一行，不从词中间拆开。 */
+.ah-skill-legend-item { display: inline-block; white-space: nowrap; margin-right: 1em; }
+.ah-skill-group { margin-top: 12px; }
+.ah-skill-group-head { margin: 0 0 4px; font-size: 12px; overflow-wrap: anywhere; }
+/* 一行一条技能：自己积累与不常用是整行按钮（左右外扩 8px，悬停底色比文字宽一点）；岗位技能同样的版式但不是按钮。 */
+.ah-skill-row { display: grid; gap: 2px; width: calc(100% + 16px); margin: 0 -8px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: inherit; text-align: left; box-sizing: border-box; }
+button.ah-skill-row { cursor: pointer; }
+button.ah-skill-row:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-base)); }
+button.ah-skill-row:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.ah-skill-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.ah-skill-title { font-size: 13px; overflow-wrap: anywhere; }
+.ah-skill-meta { font-size: 12px; overflow-wrap: anywhere; }
+.ah-skill-row .ah-tag { white-space: nowrap; }
+.ah-skill-detail { display: grid; gap: 8px; padding: 10px 0 14px; min-width: 0; }
+.ah-skill-back { justify-self: start; margin-left: -8px; }
+.ah-skill-detail-title { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.ah-skill-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ah-skill-state p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-skill-section { padding-top: 10px; border-top: 1px solid var(--dsw-alias-separator); min-width: 0; }
+.ah-skill-section h4 { margin: 0 0 6px; font-size: 12px; font-weight: 650; color: var(--dsw-alias-text-secondary); }
+.ah-skill-sentences { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+.ah-skill-sentences p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-skill-sentences .ah-skill-source { font-size: 12px; margin-top: 2px; }
+.ah-skill-versions { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.ah-skill-version { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ah-skill-version-text { flex: 1 1 100%; font-size: 13px; overflow-wrap: anywhere; }
+/* 对比表：五列自适应宽度，「哪件事」一列允许换行，窄屏不出现横向滚动。 */
+.ah-skill-compare { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; margin-bottom: 6px; }
+.ah-skill-compare th, .ah-skill-compare td { padding: 4px 4px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--dsw-alias-separator); overflow-wrap: anywhere; }
+.ah-skill-compare th { font-weight: 500; color: var(--dsw-alias-text-secondary); }
+@media (forced-colors: active) {
+  /* 高对比度主题下背景色会被归一，刻度改用系统文字色与高亮色，形状仍然看得出。 */
+  .ah-skill-tick { forced-color-adjust: none; background: CanvasText; }
+  .ah-skill-tick-main { background: Highlight; }
+}
+
+/*
+ * P76j 右栏「在办的事」与「本窗口额度」：
+ * - 每件事一整块按钮（三行：标题与状态、在等谁、消耗条与消耗文字），点它进主题；
+ * - 在等你的块左侧一条细警示线，颜色沿用「在等你」的状态色；
+ * - 三段窗口条用现有层级色：已用主色、还可用浅主色、给你留出用斜线区分。
+ */
+.ah-active-job { display: grid; gap: 4px; width: calc(100% + 16px); margin: 0 -8px 6px; padding: 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.ah-active-job:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-base)); }
+.ah-active-job:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-active-job.is-waiting { border-left: 2px solid var(--dsw-alias-warning, var(--dsw-alias-accent)); padding-left: 10px; }
+.ah-active-job-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ah-active-job-title { min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.ah-active-job .ah-job-state { flex: none; margin-left: auto; }
+.ah-active-job-wait { font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-active-job-cost { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-text-secondary); font-variant-numeric: tabular-nums; }
+.ah-active-job-bar { flex: 1 1 60px; min-width: 40px; height: 4px; border-radius: 2px; background: var(--dsw-alias-accent-muted); overflow: hidden; }
+.ah-active-job-bar > span { display: block; height: 100%; background: var(--dsw-alias-accent); }
+.ah-active-job-other { margin-top: 10px; }
+.ah-active-job-footer { margin-top: 6px; padding-left: 0; font-size: 12px; }
+.ah-quota-bar { display: flex; height: 8px; margin: 2px 0 8px; border-radius: 4px; overflow: hidden; background: var(--dsw-alias-separator); }
+.ah-quota-seg { display: block; height: 100%; }
+.ah-quota-seg.is-used { background: var(--dsw-alias-accent); }
+.ah-quota-seg.is-left { background: var(--dsw-alias-accent-muted); }
+.ah-quota-seg.is-reserved { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--dsw-alias-accent) 35%, transparent) 0 3px, transparent 3px 6px); }
+.ah-quota-line { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-quota-line + .ah-quota-line { margin-top: 2px; }
+/* P76j 补：额度的三段文字各自不断行；放不下时整段换行（420 宽下曾把「给你留出三成」拆开）。 */
+.ah-quota-parts { display: flex; flex-wrap: wrap; gap: 0 10px; }
+.ah-quota-parts > span { white-space: nowrap; }
+
+/* P76j 进度行第三行：默认是文字，有逐回合明细时整行是按钮；展开后每个回合一行，减少动态效果时不播动画。 */
+.ah-job-cost { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-job-cost-toggle { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; width: 100%; padding: 0; border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--dsw-alias-text-secondary); text-align: left; cursor: pointer; }
+.ah-job-cost-toggle:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-job-cost-hint { margin-left: auto; color: var(--dsw-alias-accent-text); font-size: 11px; }
+.ah-job-cost-turns { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 11.5px; color: var(--dsw-alias-text-secondary); animation: ah-cost-in 0.16s ease-out; }
+/* P76n：420 宽时四列只剩 155px，grid 的最后一列会被压到 0（token 被裁、「进行中」竖排）。
+   改成可换行的 flex：前三项先排，token 放不下就整体换到下一行，每项不再逐字断行。 */
+.ah-job-cost-turns > li { display: flex; flex-wrap: wrap; column-gap: 10px; row-gap: 0; min-width: 0; }
+.ah-job-cost-turns > li > span { white-space: nowrap; }
+@keyframes ah-cost-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ah-job-cost-turns { animation: none; } }
+
+/* P76j 约定卡「预计消耗」：headline 里的数字加粗，逐步的行用小圆点列表，页脚小字弱化。 */
+.ah-agr-estimate-head strong { font-weight: 700; color: var(--dsw-alias-text-primary); }
+.ah-agr-estimate-lines { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 13px; }
+.ah-agr-estimate-lines li { overflow-wrap: anywhere; }
+.ah-agr-estimate-footer { opacity: 0.85; }
+
+/* P76j 「待你处理」条目的「已等 {时长}」：写在标题右侧、创建时间之前，用警示色与时间区分开。 */
+.ah-inbox-waited { font-size: 12px; color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); white-space: nowrap; }
+
+/* ---------- P75k：记忆（「已记住」行、记忆页、入口）、复盘卡与核对卡、活动流细项、学习选会话卡 ---------- */
+/* 消息下面的「已记住」「已删除」「已更正」行：缩进与消息正文对齐（头像 28 加间距 8）；主题楼层里在正文列内，不再缩进。 */
+.ah-memory-notes { display: grid; gap: 6px; margin: 2px 0 8px 36px; min-width: 0; }
+.ah-topic-floor-main .ah-memory-notes { margin-left: 0; margin-top: 6px; }
+.ah-memory-note { display: grid; gap: 2px; padding: 4px 0 4px 10px; border-left: 2px solid var(--dsw-alias-separator); min-width: 0; }
+.ah-memory-note-line { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 13px; }
+.ah-memory-note-label { font-weight: 650; }
+.ah-memory-note-kind { font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-memory-note-text { overflow-wrap: anywhere; min-width: 0; }
+.ah-memory-note-sub { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-memory-note-undone .ah-memory-note-label, .ah-memory-note-undone .ah-memory-note-text { color: var(--dsw-alias-text-secondary); }
+.ah-memory-undo { padding: 0 6px; min-height: 24px; font-size: 12px; }
+/* 记忆页。 */
+.ah-memory-page { min-width: 0; padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
+.ah-memory-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.ah-memory-deleted { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 4px; }
+.ah-memory-deleted-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 10px; border: 1px dashed var(--dsw-alias-separator); border-radius: 7px; font-size: 13px; }
+/* P75r7：只给读屏的说明文字（视觉上不占位）；定位说明、找不到那一条的容器用。 */
+.ah-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* P75r7（B4 复核）：role="status" 的容器常驻（空着不占高度），不要用 :empty 隐藏——读屏可能漏播第一次更新。 */
+.ah-memory-missing p { margin: 0 0 8px; }
+.ah-memory-note:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-memory-group { margin-top: 18px; }
+.ah-memory-group h3 { margin: 0 0 6px; font-size: 14px; font-weight: 650; }
+.ah-memory-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ah-memory-entry { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--dsw-alias-separator); border-radius: 8px; min-width: 0; }
+.ah-memory-entry:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+.ah-memory-text { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.ah-memory-sub { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+.ah-memory-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; }
+.ah-memory-edit { display: grid; gap: 4px; }
+.ah-memory-edit-input { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid var(--dsw-alias-separator); border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-text-primary); }
+.ah-memory-edit-problem { margin: 0; font-size: 12px; color: var(--dsw-alias-text-danger, var(--dsw-alias-text-secondary)); }
+/* 从约定卡的出处跳来的那一条：只加边框（减少动态效果时同样如此）；没有减少动态效果时多一个短暂的淡入。 */
+.ah-memory-entry-focus { border-color: var(--dsw-alias-accent); box-shadow: 0 0 0 1px var(--dsw-alias-accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .ah-memory-entry-focus { animation: ah-memory-focus-in 0.4s ease-out 1 both; }
+  @keyframes ah-memory-focus-in { from { background: var(--dsw-alias-accent-muted); } to { background: transparent; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-memory-entry-focus { animation: none; }
+}
+/* 约定卡已定事项的出处：有 memoryId 时是链接样式的按钮。 */
+.ah-agr-basis-link { background: transparent; border: 0; padding: 0; font: inherit; font-size: 12px; cursor: pointer; text-align: left; color: var(--dsw-alias-accent-text, var(--dsw-alias-text-secondary)); text-decoration: underline; text-underline-offset: 2px; }
+.ah-agr-basis-link:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+/* 复盘卡：每行「出处 → 去向」，窄屏时三段上下排。 */
+.ah-retro-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ah-retro-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px 10px; align-items: start; font-size: 13px; }
+.ah-retro-source, .ah-retro-target { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.ah-retro-kind { font-size: 11px; font-weight: 650; color: var(--dsw-alias-text-secondary); margin-right: 6px; }
+.ah-retro-detail { font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-retro-arrow { color: var(--dsw-alias-text-secondary); }
+@media (max-width: 520px) {
+  .ah-retro-row { grid-template-columns: minmax(0, 1fr); }
+  .ah-retro-arrow { display: none; }
+}
+/* 技能核对卡：出处原文与更新内容左右两块（窄屏上下排），三项检查，不符时的说明。 */
+.ah-skillcheck-blocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 520px) { .ah-skillcheck-blocks { grid-template-columns: minmax(0, 1fr); } }
+.ah-skillcheck-block { min-width: 0; }
+.ah-skillcheck-block h4 { margin: 0 0 4px; font-size: 12px; font-weight: 650; color: var(--dsw-alias-text-secondary); }
+.ah-skillcheck-block ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.ah-skillcheck-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.ah-skillcheck-checks li { display: flex; justify-content: space-between; gap: 8px; }
+.ah-skillcheck-ok { color: var(--dsw-alias-success-text, var(--dsw-alias-text-secondary)); }
+.ah-skillcheck-bad { color: var(--dsw-alias-warning-text, var(--dsw-alias-text-primary)); }
+.ah-skillcheck-wait { color: var(--dsw-alias-text-secondary); }
+.ah-skillcheck-note { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+/* 活动流：整理一组的细项逐行缩进。 */
+.ah-activity-lines { list-style: none; margin: 4px 0 0 1em; padding: 0; display: grid; gap: 2px; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* 学习选会话卡：正文两段，选项整行可点。 */
+.ah-card-learn .ah-card-body p { margin: 0 0 4px; }
+.ah-card-options-rows { flex-direction: column; align-items: stretch; }
+.ah-card-option-row { text-align: left; width: 100%; white-space: normal; overflow-wrap: anywhere; }
+

@@ -3,8 +3,8 @@ import * as fs from 'node:fs/promises';
 import { watch as watchFile, statSync, lstatSync, constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { PathContainmentError } from './interfaces.js';
-import type { FileChange, FsIO, Logger, WriteBoundary } from './interfaces.js';
+import { PathContainmentError, ReadLimitError } from './interfaces.js';
+import type { BoundedRead, FileChange, FsIO, LinkStat, Logger, WriteBoundary } from './interfaces.js';
 import { ConsoleLogger } from './console-logger.js';
 
 /** 拒绝相对路径，避免宿主工作目录变化导致写错位置。 */
@@ -51,10 +51,67 @@ export class SystemFs implements FsIO {
       throw error;
     }
   }
+  /**
+   * P69：限量、按句柄读取，做法与写入一侧对称。
+   * 1. 从根目录往下逐级 lstat，任何一级是符号链接就拒绝（堵「检查之后把中间目录换成链接」）；
+   * 2. 打开时不跟随最后一级链接，并且非阻塞（放了管道也不会挂住宿主）；
+   * 3. 打开之后用句柄核对：普通文件、硬链接数为 1、真实位置仍在根目录内、和路径此刻指向同一个文件；
+   * 4. 按句柄分块读，最多读 maxBytes + 1 字节，超了立刻停（堵「检查之后把文件撑大」）。
+   */
+  async readBytesWithin(path: string, limit: BoundedRead): Promise<Uint8Array | null> {
+    absolute(path);
+    if (!await this.prepareDirectory(limit.within, dirname(path), false)) return null;
+    let handle: fs.FileHandle;
+    try { handle = await fs.open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW); }
+    catch (error) {
+      if (missing(error)) return null;
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === 'ELOOP' || code === 'ENXIO') throw new PathContainmentError(`${path} 是符号链接或特殊文件`);
+      throw error;
+    }
+    try {
+      await this.assertHandleInside(limit.within, path, handle);
+      const cap = limit.maxBytes + 1;
+      const chunks: Buffer[] = [];
+      let total = 0;
+      while (total < cap) {
+        const buffer = Buffer.allocUnsafe(Math.min(1048576, cap - total));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        chunks.push(buffer.subarray(0, bytesRead));
+        total += bytesRead;
+      }
+      if (total > limit.maxBytes) throw new ReadLimitError(limit.maxBytes);
+      return Buffer.concat(chunks, total);
+    } finally { await handle.close(); }
+  }
   /** 使用系统解析符号链接；不存在与权限错误原样交给调用者处理。 */
   async realpath(path: string): Promise<string> { return fs.realpath(absolute(path)); }
   /** 用同目录临时文件替换正文，避免中断留下半份记录。 */
   async writeTextAtomic(path: string, text: string, boundary?: WriteBoundary): Promise<void> {
+    await this.writeAtomic(path, text, boundary);
+  }
+  /** P69：按字节原样写入，与文本写入共用同一套临时文件、边界核对和替换流程。 */
+  async writeBytesAtomic(path: string, bytes: Uint8Array, boundary?: WriteBoundary, mode?: number): Promise<void> {
+    await this.writeAtomic(path, bytes, boundary, mode);
+  }
+  /** P74r4b：不跟随符号链接的信息（lstat）；不存在返回 null，其他错误交给调用方。 */
+  async lstat(path: string): Promise<LinkStat | null> {
+    absolute(path);
+    try {
+      const info = await fs.lstat(path);
+      return { size: info.size, mtimeMs: info.mtimeMs, isDir: info.isDirectory(), isFile: info.isFile(), inode: info.ino,
+        isSymlink: info.isSymbolicLink(), nlink: info.nlink, mode: info.mode & 0o777 };
+    } catch (error) {
+      if (missing(error)) return null;
+      throw error;
+    }
+  }
+  /**
+   * 文本和字节写入共用的实现：data 是字符串时按 UTF-8 写，是字节时原样写。
+   * mode 是新文件的权限位（预览副本用 0o444：只读、没有可执行位）；不传时沿用原来的 0o666（再受系统掩码限制）。
+   */
+  private async writeAtomic(path: string, data: string | Uint8Array, boundary?: WriteBoundary, mode?: number): Promise<void> {
     absolute(path);
     if (boundary) await this.prepareDirectory(boundary.within, dirname(path), true);
     else await fs.mkdir(dirname(path), { recursive: true });
@@ -65,12 +122,12 @@ export class SystemFs implements FsIO {
         // O_EXCL 保证临时文件是这次新建的；句柄核对过位置才写正文。
         // rename 不跟随目标处的符号链接，所以目标若是链接，只会替换链接本身，不会写到链接指向的文件。
         // 核对之后目录再被换成链接也没用：目录外不会有这个随机名字的临时文件，rename 只会失败。
-        const handle = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o666);
+        const handle = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode ?? 0o666);
         try {
           await this.assertHandleInside(boundary.within, temporary, handle);
-          await handle.writeFile(text, 'utf8');
+          await handle.writeFile(data, 'utf8');
         } finally { await handle.close(); }
-      } else await fs.writeFile(temporary, text, { encoding: 'utf8', flag: 'wx' });
+      } else await fs.writeFile(temporary, data, { encoding: 'utf8', flag: 'wx', ...(mode === undefined ? {} : { mode }) });
       await fs.rename(temporary, path);
     } finally {
       await fs.rm(temporary, { force: true });
@@ -142,7 +199,7 @@ export class SystemFs implements FsIO {
   private async assertHandleInside(root: string, path: string, handle: fs.FileHandle): Promise<void> {
     const opened = await handle.stat();
     if (!opened.isFile()) throw new PathContainmentError(`${path} 不是普通文件`);
-    if (opened.nlink !== 1) throw new PathContainmentError(`${path} 有多个硬链接`);
+    if (opened.nlink !== 1) throw new PathContainmentError(`${path} 有多个硬链接`, 'hardlink');
     await this.assertResolvedInside(root, path);
     const current = await fs.lstat(path);
     if (current.isSymbolicLink() || current.ino !== opened.ino || current.dev !== opened.dev) throw new PathContainmentError(`${path} 在写入前被替换`);
@@ -196,6 +253,28 @@ export class SystemFs implements FsIO {
     // 带边界时只查上级目录：目标本身是链接没关系，rm 删掉的是链接，不会动它指向的内容。
     if (boundary && !await this.prepareDirectory(boundary.within, dirname(path), false)) return;
     await fs.rm(path, { recursive: true, force: true });
+  }
+  /**
+   * P75r3：移动路径本身，不跟随符号链接（rename 作用在路径上，src 是链接就移动链接）。
+   * 带边界时只查 src 的上级：上级任何一级是符号链接就拒绝（否则会搬走链接另一头的东西）。
+   * 跨文件系统时 rename 会报 EXDEV，退回「原样复制（符号链接按链接复制）再删除原件」。
+   */
+  async move(src: string, dst: string, boundary?: WriteBoundary, dstBoundary?: WriteBoundary): Promise<void> {
+    absolute(src);
+    absolute(dst);
+    if (boundary) await this.prepareDirectory(boundary.within, dirname(src), false);
+    if (await this.lstat(src) === null) throw new Error(`移动源不存在：${src}`);
+    // P75r4：目标的上级目录用带边界的办法一级一级建（任何一级是符号链接就拒绝），先于「目标是否已存在」的检查，
+    // 否则检查会顺着被换成链接的上级目录去看别处。
+    if (dstBoundary) await this.prepareDirectory(dstBoundary.within, dirname(dst), true);
+    if (await this.lstat(dst) !== null) throw new Error(`移动目标已存在：${dst}`);
+    if (!dstBoundary) await fs.mkdir(dirname(dst), { recursive: true });
+    try { await fs.rename(src, dst); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EXDEV') throw error;
+      await fs.cp(src, dst, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
+      await fs.rm(src, { recursive: true, force: true });
+    }
   }
   /** 订阅文件变化并隔离回调错误，返回取消函数供关注项停用。 */
   watch(path: string, opts: { recursive: boolean }, onChange: (event: FileChange) => void): () => void {

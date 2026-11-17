@@ -3,10 +3,12 @@ import type { HubContext } from '../engine/context.js';
 import type { Bot } from '../model/bot.js';
 import type { Settings } from '../model/settings.js';
 import type { WakeTicket } from '../model/wake.js';
-import { DEFAULTS } from '../config/defaults.js';
+import { DEFAULTS, JOB_DEFAULTS } from '../config/defaults.js';
 import { buildCandidate, fatigueFor, thresholdFor, type Candidate } from '../appraisal/think.js';
 import { buildSnapshot, evaluateGates } from '../scheduler/gates.js';
 import { nextLocalTime } from '../util/time.js';
+import { retryCarry } from '../scheduler/retry.js';
+import { parseSkillKey } from '../skill/keys.js';
 import { raiseAlert } from './alerts.js';
 
 /** 选最早的下一次思考或紧急变化再加宽限，形成掉线检测截止点。 */
@@ -19,7 +21,7 @@ export function computeExpectedBy(bot: Pick<Bot, 'nextThinkAt'>, earliestUrgentP
 function postponedUntil(ctx: HubContext, bot: Bot, now: number): number | null {
   const entry = ctx.store.table('queue').list(q => q.botId === bot.id)[0];
   if (entry) {
-    const gate = evaluateGates(entry, buildSnapshot(ctx, bot.id, now), now, ctx.settings);
+    const gate = evaluateGates(entry, buildSnapshot(ctx, bot.id, now, entry.jobId, entry.subjectKey), now, ctx.settings);
     if (!gate.pass && !gate.drop) return Math.max(gate.until ?? now + ctx.settings.tickMs, now);
   }
   const last = ctx.store.log('appraisals').recent(1, row => row.botId === bot.id && row.at <= now)[0];
@@ -59,16 +61,33 @@ export function checkDeadman(ctx: HubContext, now: number): Candidate[] {
       .sort((a, b) => b.lastAt - a.lastAt)[0];
     if (latest && now - latest.lastAt < ctx.settings.deadmanAlertCooldownMs) continue;
     const alert = raiseAlert(ctx, { code: 'deadman', botId: bot.id, text: `${bot.name} 该动没动，尝试重新唤醒`, level: 'P1', immediate: true, at: now });
+    // P76r2 第 7 节：手上有原来那张唤醒单（投递卡住的那张）时，重试沿用它的归属（retryCarry，与通用重试同一做法），
+    // 证据第一项放原唤醒单的编号：原回合真正投递过时，这个重试不另占当天名额（quota/usage.ts 的 selfWorkUsageToday）。
+    // 没有原唤醒单（没有回合卡住，只是该动没动）时不带，照旧按常规规则算。技能类唤醒单也不带：技能类回合的补排由技能记录负责（R2）。
+    const original = orphan ? open.find(w => w.status === 'delivering' && now - w.startedAt > ctx.settings.c02.deliveryTimeoutMs) : undefined;
+    const carried = original !== undefined && parseSkillKey(original.subjectKey ?? null) === null;
     result.push(buildCandidate(ctx, { botId: bot.id, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
       summary: `${bot.name} 超过应思考时刻，检查是否掉线`, ownerSummary: '超过约定时间没有响应，重新唤醒',
-      evidence: [alert.id], subjectKey: `deadman:${bot.id}`, now }));
+      evidence: carried ? [original!.id, alert.id] : [alert.id], subjectKey: `deadman:${bot.id}`, now,
+      ...(carried ? retryCarry(original!, bot.role) : {}) }));
   }
   return result;
+}
+
+/**
+ * P74r13：一个被判卡住的运行中回合，是哪一种原因：idle 是长时间没有任何事件（确实没有响应），
+ * hard 是一直有事件、但总时长超过上限。两种在给主人和员工看的原因文字、以及一件事里的回合是否自动重试上不同。
+ * 两种同时满足时按 idle 算（没有响应是更直接的原因）。
+ */
+export function stuckKindOf(ctx: HubContext, wake: WakeTicket, now: number): 'idle' | 'hard' {
+  return wake.status === 'running' && now - wake.lastEventAt >= ctx.settings.turnIdleTimeoutMs ? 'idle' : 'hard';
 }
 
 /** 无事件在十分钟整即判卡住；总时长按规格的“超过三十分钟”采用严格大于。 */
 export function findStuckWakes(ctx: HubContext, now: number): WakeTicket[] {
   return ctx.store.table('wakes').list(wake => (wake.status === 'delivering' && now - wake.startedAt > ctx.settings.c02.deliveryTimeoutMs)
     || (wake.status === 'running' && !wake.commitId
-      && (now - wake.lastEventAt >= ctx.settings.turnIdleTimeoutMs || now - wake.startedAt > ctx.settings.turnHardTimeoutMs)));
+      // P74r11：一件事里的回合（带 jobId）总时长保护放宽到 60 分钟；10 分钟无事件照旧。
+      && (now - wake.lastEventAt >= ctx.settings.turnIdleTimeoutMs
+        || now - wake.startedAt > (wake.jobId ? JOB_DEFAULTS.CHAIN_TURN_HARD_MS : ctx.settings.turnHardTimeoutMs))));
 }

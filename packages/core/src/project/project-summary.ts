@@ -22,9 +22,9 @@ export interface TaskStatusCounts {
 
 /** 项目问题代码；中文文案必须点到具体队友或任务，方便主人定位。 */
 export const PROJECT_ISSUE_CODES = [
-  'owner_bot_invalid', // 负责人队友不存在或已退役
-  'member_bot_invalid', // 成员队友不存在或已退役
-  'task_assignee_invalid', // 任务指派队友不存在或已退役
+  'owner_bot_invalid', // 负责人队友不存在或已归档
+  'member_bot_invalid', // 成员队友不存在或已归档
+  'task_assignee_invalid', // 任务指派队友不存在或已归档
   'task_assignee_not_member', // 任务指派给了不属于项目成员的队友
   'done_with_open_tasks', // 已完成项目里还有未通过验收的任务
 ] as const;
@@ -119,7 +119,7 @@ export function collectProjectIssues(project: Project, tasks: ProjectTask[], bot
   if (project.ownerBotId !== null && !botUsable(botsById, project.ownerBotId)) {
     issues.push({
       level: 'error', code: 'owner_bot_invalid', subjectBotId: project.ownerBotId,
-      text: `项目「${project.name}」的负责人已删除或退役，请重新指定负责人`,
+      text: `项目「${project.name}」的负责人已删除或归档，请重新指定负责人`,
     });
   }
 
@@ -128,7 +128,7 @@ export function collectProjectIssues(project: Project, tasks: ProjectTask[], bot
     if (!botUsable(botsById, botId)) {
       issues.push({
         level: 'warning', code: 'member_bot_invalid', subjectBotId: botId,
-        text: `项目「${project.name}」有一名成员已删除或退役，请调整成员名单`,
+        text: `项目「${project.name}」有一名成员已删除或归档，请调整成员名单`,
       });
     }
   }
@@ -143,7 +143,7 @@ export function collectProjectIssues(project: Project, tasks: ProjectTask[], bot
     if (!botUsable(botsById, assignee)) {
       issues.push({
         level: 'error', code: 'task_assignee_invalid', subjectBotId: assignee,
-        text: `任务「${task.title}」指派的队友已删除或退役`,
+        text: `任务「${task.title}」指派的员工已删除或归档`,
       });
     } else if (!memberSet.has(assignee)) {
       issues.push({

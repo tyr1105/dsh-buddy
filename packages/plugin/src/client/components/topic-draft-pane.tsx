@@ -43,7 +43,7 @@ export function TopicDraftPane(props: {
       thread={thread}
       loading={false}
       intro={intro}
-      header={{ name: info.title, roleLabel: null, activityText: null, nextThinkText: null, lifecycle: null, thinking: false }}
+      header={{ name: info.title, roleLabel: null, activityText: null, nextThinkText: null, staffStatus: null, thinking: false }}
       inputPlaceholderName={info.title}
       banner={null}
       onBannerDismiss={noop}
@@ -53,7 +53,6 @@ export function TopicDraftPane(props: {
       busyInboxId={null}
       onRetry={noop}
       error={null}
-      onTeach={noop}
       onOpenSession={noop}
       onTogglePause={noop}
       onInterrupt={noop}

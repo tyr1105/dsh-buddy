@@ -61,20 +61,20 @@ export function assignTask(ctx: HubContext, raw: unknown): ProjectTask {
 
   // 2. 承接队友：显式选择优先，否则用任务上已指派的队友；必须在岗且是项目成员。
   const botId = input.botId ?? task.assigneeBotId;
-  if (!botId) throw new Error('任务还没有承接队友：请在派活时选择一个项目成员队友');
+  if (!botId) throw new Error('任务还没有承接员工：请在派活时选择一个项目成员员工');
   const bot = ctx.store.table('bots').get(botId);
-  if (!bot || bot.lifecycle === 'retired') throw new Error(`队友不存在或已退役：${botId}`);
+  if (!bot || bot.lifecycle === 'retired') throw new Error(`员工不存在或已归档：${botId}`);
   if (!isBotOnTeam(bot)) {
-    throw new Error(`队友「${bot.name}」当前是 ${bot.lifecycle}，只有在岗或试岗的队友能接活`);
+    throw new Error(`员工「${bot.name}」当前是 ${bot.lifecycle}，只有在岗或试岗的员工能接活`);
   }
   if (!project.memberBotIds.includes(bot.id)) {
-    throw new Error(`队友「${bot.name}」不是项目成员：请先把该队友加入项目成员`);
+    throw new Error(`员工「${bot.name}」不是项目成员：请先把该员工加入项目成员`);
   }
 
   // 3. 议程名额：派活会给队友新增一条未完成议程，先按现有上限拦截，避免无限堆积。
   const openAgenda = ctx.store.table('agenda').count(a => a.botId === bot.id && a.status === 'open');
   if (openAgenda >= ctx.settings.maxOpenAgendaPerBot) {
-    throw new Error(`队友「${bot.name}」未完成议程已达上限 ${ctx.settings.maxOpenAgendaPerBot} 条，请先清理再派活`);
+    throw new Error(`员工「${bot.name}」未完成议程已达上限 ${ctx.settings.maxOpenAgendaPerBot} 条，请先清理再派活`);
   }
 
   // 校验全部通过后才生成 id、改状态。

@@ -63,7 +63,7 @@ export const SettingsSchema = z.strictObject({
   artifacts: z.strictObject({
     maxBytes: integer.max(65536, '文本完整版本最多 64 KiB'),
     maxLocations: integer.max(20, '一次最多归档 20 个位置'),
-    maxVersionsPerBot: integer.max(1000, '每队友最多保留 1000 个版本'),
+    maxVersionsPerBot: integer.max(1000, '每员工最多保留 1000 个版本'),
     maxHandoffVersions: integer.max(5, '一次最多交接 5 个版本'),
   }), // 完整文本版本的资源限制；入口拒绝超限，不保存截断版本。
   officeReplay: z.strictObject({
@@ -175,7 +175,7 @@ export const SettingsSchema = z.strictObject({
   retryQuarantineCount: integer, // 第 5 节错误重排：失败隔离次数，单位：次。
   errorQuarantineCount: integer, // 第 5 节隔离触发：连续回合错误次数，单位：次。
   violationQuarantineCount: integer, // 第 5 节隔离触发：越界尝试次数，单位：次。
-  noCommitReflectionCount: integer, // 第 5 节隔离触发：连续未交账转复盘次数，单位：次。
+  noCommitReflectionCount: integer, // 第 5 节隔离触发：连续不交账的回合数超过这个数就停用（P75 起不再转复盘），单位：次。
   usageQuarantineMultiplier: positive, // 第 5 节隔离触发：单日用量预算倍率，无单位。
   sessionMaxAgeMs: positive, // 第 5 节会话轮换：最大会话年龄，单位：毫秒。
   sessionContextRatio: ratio, // 第 5 节会话轮换：最大上下文占比，单位：比例。

@@ -19,7 +19,7 @@ export type SpaceMode = 'chat' | 'team'
 export const SPACE_MODES: readonly SpaceMode[] = ['chat', 'team']
 
 /** 唯一文案来源：顶栏切换器、降级页面切换条和读屏名称都从这里取。 */
-export const SPACE_MODE_LABELS: Record<SpaceMode, string> = { chat: '对话', team: '队友' }
+export const SPACE_MODE_LABELS: Record<SpaceMode, string> = { chat: '对话', team: '员工' }
 
 /** 取另一个模式；只有两个值，所以等价于切换。 */
 export function otherSpaceMode(mode: SpaceMode): SpaceMode {

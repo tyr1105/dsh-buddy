@@ -5,7 +5,8 @@ import { createBotHome } from '../src/memory/files.js';
 import { createDispatcher } from '../src/engine/dispatch.js';
 import { enqueue } from '../src/scheduler/queue.js';
 import { evaluateDrives } from '../src/drives/evaluate.js';
-import { enqueueTeach } from '../src/routines/teach.js';
+import { buildCandidate } from '../src/appraisal/think.js';
+import { writeOutreachAudit } from '../src/outreach/audit.js';
 import { setLifecycle } from '../src/api/bots.js';
 import { botView } from '../src/api/bot-view.js';
 import { ownerReasonSummary } from '../src/util/owner-text.js';
@@ -42,16 +43,17 @@ async function assertSeparated(ctx: Awaited<ReturnType<typeof setup>>['ctx'], bo
 }
 
 describe('M09 试跑与教学的主人文字', () => {
-  it.each([['trial', '新队友开始试跑'], ['teach', '已收到教学会话'], ['drive', '复查目标与待办进展']] as const)('旧 %s 候选缺少主人摘要时也不回显模型指令', (kind, expected) => {
+  it.each([['trial', '新员工开始试跑'], ['teach', '已收到教学会话'], ['drive', '复查目标与待办进展']] as const)('旧 %s 候选缺少主人摘要时也不回显模型指令', (kind, expected) => {
     const reason = { kind, summary: '请整理方法，不要再重试同一做法', evidence: [], score: 1, threshold: 0.6 };
     expect(ownerReasonSummary(reason)).not.toMatch(instructions);
     expect(ownerReasonSummary(reason)).toBe(expected);
     expect(reason.summary).toBe('请整理方法，不要再重试同一做法');
   });
 
-  it('创建队友的试跑指令不进入 queued 和 thinking 状态', async () => {
-    const { ctx, bot } = await apiFixture();
-    await assertSeparated(ctx, bot.id);
+  it('创建队友不再自动排试跑：队列为空，也没有试跑指令可泄露到状态里', async () => {
+    // P72h H3：原断言「试跑指令不进入 queued 和 thinking 状态」的前提（创建即排试跑）已取消。
+    const { ctx } = await apiFixture();
+    expect(ctx.store.table('queue').list()).toEqual([]);
   });
 
   it('草稿队友开始试岗的指令与主人状态分开', async () => {
@@ -63,8 +65,14 @@ describe('M09 试跑与教学的主人文字', () => {
 
   it.each(['', '请整理当前交付流程'])('教学附言 %s 留在模型上下文，状态只说已收到会话', async note => {
     const { ctx, bot } = await setup();
-    await enqueueTeach(ctx, bot.id, 'lesson-session', note);
+    // P75f：enqueueTeach 已删除，这里直接写同形状的教学候选，只测主人文字的分隔。
+    const digest = '教学材料';
+    const evidence = writeOutreachAudit(ctx, 'teach_context', { sessionId: 'lesson-session', note, digest }, bot.id);
+    const entry = await enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'teach', variant: 'teach', score: ctx.settings.c02.ownerSalience,
+      summary: `主人教你一招：${note || '请整理这段会话的方法'}`, ownerSummary: '你提供的教学会话已收到',
+      evidence: [evidence.id], subjectKey: `teach:${evidence.id}`, ownerInitiated: true }));
     await assertSeparated(ctx, bot.id);
+    void entry;
   });
 });
 

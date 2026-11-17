@@ -9,6 +9,7 @@ import { writeOutreachAudit } from '../outreach/audit.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { sealLedgerForWake } from '../ledger/service.js';
 import { settleInterruptedTopicWake } from '../project/topics.js';
+import { settleInterruptedSkillTurn } from '../skill/run.js';
 
 /** 此函数无 await：标记、恢复感知、解绑旧会话与释放投递等待必须先于宿主 cancel。 */
 export function interruptWake(ctx: HubContext, wakeId: string, at: number): WakeTicket | null {
@@ -35,7 +36,7 @@ export function interruptWake(ctx: HubContext, wakeId: string, at: number): Wake
   // TurnEvent 没有 wakeId。下一回合用新工作会话隔离旧 ended/error；界面线程仍是同一个 botId。
   ctx.store.table('bots').patch(bot.id, { sessionId: null, sessionStartedAt: null,
     activity: ['paused', 'retired'].includes(bot.lifecycle) ? 'resting' : 'watching',
-    activityText: bot.lifecycle === 'paused' ? '已暂停（你暂停的）' : bot.lifecycle === 'retired' ? '已退役' : '继续关注变化',
+    activityText: bot.lifecycle === 'paused' ? '已停用（你停用的）' : bot.lifecycle === 'retired' ? '已归档' : '继续关注变化',
     updatedAt: at });
   ctx.runtime.deliveryInterrupts.get(wake.id)?.();
   // 已实际运行的资源照实记账，但不调用故障/未交账/隔离收尾；纯投递占位不虚增用量。
@@ -46,6 +47,9 @@ export function interruptWake(ctx: HubContext, wakeId: string, at: number): Wake
   postThread(ctx, { thread: wake.topicId ?? wake.botId, from: 'hub', kind: 'system',
     text: wake.topicId ? '你打断了它。想让它接着说，再 @ 它一次就行。' : '你打断了它；它会在下次醒来时接着处理', refId: wake.id });
   settleInterruptedTopicWake(ctx, canceled);
+  // P75r5b：技能类回合（复盘、学习、整理）被打断：参与者从进行中改回排队中（回合数不退，这个回合确实跑过），由兜底补排。
+  // 打断不经回合收尾，不在这里收回来，参与者会一直停在进行中、记录永远结束不了（审查 H1）。
+  settleInterruptedSkillTurn(ctx, canceled);
   writeOutreachAudit(ctx, 'owner_interrupted', { botId: wake.botId, wakeId: wake.id }, 'owner', at);
   // 打断是明确的终态，账本必须同步收口；投递中还没有开账的唤醒没有账本行，直接跳过。
   try { sealLedgerForWake(ctx, wake.id); }

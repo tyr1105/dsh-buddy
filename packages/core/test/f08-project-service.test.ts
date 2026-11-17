@@ -90,12 +90,12 @@ describe('F08 saveProject 新建', () => {
     const ctx = createTestContext();
     const { b1 } = botsFixture(ctx);
     expect(() => saveProject(ctx, { name: 'P', ownerBotId: 'b_0000000099', memberBotIds: [] }))
-      .toThrow('项目负责人队友不存在或已退役');
+      .toThrow('项目负责人员工不存在或已归档');
     const retired = putBot(ctx, 9, 'retired');
     expect(() => saveProject(ctx, { name: 'P', memberBotIds: [retired.id] }))
-      .toThrow('项目成员队友不存在或已退役');
+      .toThrow('项目成员员工不存在或已归档');
     expect(() => saveProject(ctx, { name: 'P', ownerBotId: b1, memberBotIds: [b1, 'b_0000000098'] }))
-      .toThrow('项目成员队友不存在或已退役');
+      .toThrow('项目成员员工不存在或已归档');
   });
 
   it('成员队友去重保序', () => {
@@ -109,7 +109,7 @@ describe('F08 saveProject 新建', () => {
     const ctx = createTestContext();
     const ids = Array.from({ length: 21 }, (_unused, i) => putBot(ctx, i + 10).id);
     expect(() => saveProject(ctx, { name: '超', memberBotIds: ids }))
-      .toThrow(`项目成员不能超过 ${V2_DEFAULTS.PROJECT_MEMBER_MAX} 个`);
+      .toThrow(`项目成员不能超过 ${V2_DEFAULTS.PROJECT_MEMBER_MAX} 位员工`);
     expect(saveProject(ctx, { name: '刚好', memberBotIds: ids.slice(0, 20) }).memberBotIds).toHaveLength(20);
   });
 
@@ -319,9 +319,9 @@ describe('F08 saveTask 新建与修改', () => {
     const { b1, b2 } = botsFixture(ctx);
     const project = saveProject(ctx, { name: 'P', memberBotIds: [b1] });
     expect(() => saveTask(ctx, { projectId: project.id, title: 'x', assigneeBotId: b2 }))
-      .toThrow('任务只能指派给项目成员队友');
+      .toThrow('任务只能指派给项目成员员工');
     expect(() => saveTask(ctx, { projectId: project.id, title: 'x', assigneeBotId: 'b_0000000099' }))
-      .toThrow('任务指派队友不存在或已退役');
+      .toThrow('任务指派员工不存在或已归档');
   });
   it('项目不存在或已归档时不能新建任务', () => {
     const ctx = createTestContext();

@@ -16,6 +16,8 @@ import type { HubStore } from './hub-state.js'
 import { createStore, useStore, type Store } from './store.js'
 import type { BotCard } from '../shared/views.js'
 import { openHubPanel } from './logic/host-sidebar.js'
+// P73e：选择文件夹抽成共用小文件，三问卡的第二问也用它。
+import { pickDirectory } from './directory-picker.js'
 import type { SpaceMode } from './logic/space-capability.js'
 import {
   MENTION_SECTION_TITLE,
@@ -186,7 +188,7 @@ export function installNewSessionBridge(ctx: any, deps: { hub: HubStore; mode: S
             value: row.bot.id,
           }))
         } catch (error) {
-          console.error('[agent-hub] 读取队友候选失败:', error)
+          console.error('[agent-hub] 读取员工候选失败:', error)
           return []
         }
       },
@@ -200,7 +202,7 @@ export function installNewSessionBridge(ctx: any, deps: { hub: HubStore; mode: S
           if (route === 'project') return { text: mentionToken(bot.name) }
           return undefined
         } catch (error) {
-          console.error('[agent-hub] 选择队友失败:', error)
+          console.error('[agent-hub] 选择员工失败:', error)
           return undefined
         }
       },
@@ -210,7 +212,7 @@ export function installNewSessionBridge(ctx: any, deps: { hub: HubStore; mode: S
           const bot = teammateFromToken(teammates(), token)
           return bot === undefined ? undefined : directClaim(bot)
         } catch (error) {
-          console.error('[agent-hub] 恢复队友标签失败:', error)
+          console.error('[agent-hub] 恢复员工标签失败:', error)
           return undefined
         }
       },
@@ -337,15 +339,6 @@ function placeComposerCaretAtEnd(): void {
   } catch (error) {
     console.error('[agent-hub] 移动输入框光标失败:', error)
   }
-}
-
-/** 官方选目录的同款调用：桌面版有全局选择器，其余环境走宿主接口。 */
-function pickDirectory(ctx: any): Promise<string | null> {
-  const desktop = (globalThis as { __DSH_DIRECTORY_PICKER__?: { pick: () => Promise<string | null> } }).__DSH_DIRECTORY_PICKER__
-  if (desktop !== undefined) return desktop.pick()
-  const uiWorkspace = ctx.get?.('uiWorkspace') as { pickDirectory?: () => Promise<string | null> } | undefined
-  if (typeof uiWorkspace?.pickDirectory !== 'function') return Promise.reject(new Error('当前环境不支持选择文件夹。'))
-  return uiWorkspace.pickDirectory()
 }
 
 /** 宿主内部的默认工作区要显示成本地化名字；取不到时用中文兜底。 */

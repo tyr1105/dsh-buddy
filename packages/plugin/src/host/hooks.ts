@@ -14,7 +14,9 @@
  * 子代理（header.origin==='subagent'）不走机器人闸门：子代理的审批策略被钉成 never，
  * 且子代理会话不是机器人名册里的会话，guardToolCall 对非机器人一律 allow。
  */
-import type { Hub } from '@agent-hub/core'
+import { realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import type { Hub, ToolCallHostReport } from '@agent-hub/core'
 import { botDenyMessage } from './bot-tools.js'
 
 export interface HookDeps {
@@ -36,8 +38,45 @@ function denyOf(reason: string, code: string): { kind: 'deny'; reason: string; i
   return { kind: 'deny', reason, info: { name: 'HubPolicyError', code, reason } }
 }
 
+/**
+ * 临时目录清单（P69 B1）：/tmp、/private/tmp、os.tmpdir()，各自再取一次真实路径，去重。
+ * 为什么要真实路径：macOS 上 /tmp 其实是 /private/tmp 的别名，/var 也是 /private/var 的别名，
+ * 命令里写哪种形式都应该认。取不到真实路径（目录不存在）就只跳过那一个。
+ * 钩子是同步判定的，所以用同步写法；整段 try/catch，出错就当没有。
+ */
+export function collectTmpDirs(): string[] {
+  const out = new Set<string>()
+  let base: string[] = ['/tmp', '/private/tmp']
+  try { base = [...base, tmpdir()] } catch { /* 取不到系统临时目录就只用前两个 */ }
+  for (const dir of base) {
+    if (typeof dir !== 'string' || dir === '') continue
+    out.add(dir)
+    try { out.add(realpathSync(dir)) } catch { /* 目录不存在或不可读：跳过真实路径这一项 */ }
+  }
+  return [...out]
+}
+
+/**
+ * 现查这条会话的沙箱档位（P69 B1）：每次工具调用都查，不缓存（主人可能中途改档）。
+ * 只有 resolve({ session }).mode === 'workspace-write' 才返回 true；
+ * 服务取不到、调用抛错、返回别的档位或别的形状，一律 false（等于按旧的严格规则走）。
+ * session 取自 exec.agent.session，和 host-port 的 ensureBotPolicy 用的是同一个对象。
+ */
+export function isSandboxed(ctx: any, exec: any): boolean {
+  try {
+    const service = ctx?.get?.('sandboxPolicy')
+    if (service === undefined || service === null || typeof service.resolve !== 'function') return false
+    const resolved = service.resolve({ session: exec?.agent?.session })
+    return resolved?.mode === 'workspace-write'
+  } catch {
+    return false
+  }
+}
+
 /** 注册全部钩子；返回撤销函数（ctx.on 返回的 disposer 随插件 fiber 自动撤销，这里显式收集便于测试）。 */
 export function registerGuardHooks(ctx: any, deps: HookDeps): () => void {
+  // 临时目录清单只在注册时算一次（进程生命周期内不会变）。
+  const tmpDirs = collectTmpDirs()
   // prepend：排在所有非 prepend 监听器外层，任何外层监听器直接给决定也绕不过动作闸。
   const offPreExecute = ctx.on('tools/pre-execute', async (exec: any, next: () => Promise<unknown>) => {
     // try 里只做判定（算出 deny 或放行）；next() 在 try 外、只调用一次。
@@ -51,7 +90,9 @@ export function registerGuardHooks(ctx: any, deps: HookDeps): () => void {
         if (denyMessage !== null) {
           deny = denyOf(denyMessage, 'HUB_BOT_TOOL')
         } else {
-          const decision = deps.hub.guardToolCall(botId, String(exec?.name ?? ''), exec?.arguments)
+          // 每次现查沙箱档位报给 core；查询出任何错都当 false，不放松也不抛出。
+          const host: ToolCallHostReport = { sandboxed: isSandboxed(ctx, exec), tmpDirs }
+          const decision = deps.hub.guardToolCall(botId, String(exec?.name ?? ''), exec?.arguments, host)
           if (!decision.allow) deny = denyOf(decision.message, 'HUB_GUARD')
         }
       }

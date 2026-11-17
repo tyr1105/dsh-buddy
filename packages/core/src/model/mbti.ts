@@ -92,11 +92,38 @@ export function mbtiLabel(type: MbtiType | null | undefined): string {
 }
 
 /**
- * 唤醒包里的简短中文段落：先给类型与四维倾向，最后明确边界。
- * 末尾那句边界是刻意的——性格只影响表达，任何规矩、审批和事实要求都优先。
+ * 性格四句话总表（P73b，DC53）：八个字母各一句「行为说明」，逐字取自设计稿 D。
+ * 为什么单独一张表：员工提示词、组队卡、员工资料、模板库以后都读这一张，
+ * 文字只改这里，各处自动一致，也不会出现卡片上一句、提示词里另一句。
+ */
+export const MBTI_BEHAVIOR_TEXT: Readonly<Record<MbtiAxisCode, string>> = {
+  E: '尽早给出初步结果，方便及早纠偏。',
+  I: '交付前先自查一遍，没有必要不中途打扰。',
+  S: '逐条核对事实和约定，不放过与约定不符的细节。',
+  N: '主动找约定里没说到的要素，并给出替代方案。',
+  T: '按约定判断对错，发现问题直接指出。',
+  F: '检查产出对使用者是否友好，指出难用的地方。',
+  J: '动手前先列计划，尽早收口交付。',
+  P: '保留几个选项，边做边调整。',
+};
+
+/**
+ * 某个类型的四句行为说明，顺序固定为 E/I、S/N、T/F、J/P；未设置返回 null。
+ * 纯函数：只读常量。
+ */
+export function mbtiBehaviorLines(type: MbtiType | null | undefined): Array<{ code: MbtiAxisCode; text: string }> | null {
+  if (type === null || type === undefined) return null;
+  return ([...type] as MbtiAxisCode[]).map(code => ({ code, text: MBTI_BEHAVIOR_TEXT[code] }));
+}
+
+/**
+ * 唤醒包里的性格段落（P73b 起改为四句行为说明）：先给类型，再列四条做事方式，最后明确边界。
+ * 四句去掉句末句号后用「；」连接；末尾那句边界是刻意的——性格只影响做事方式，
+ * 任何规矩、审批和事实要求都优先。
  */
 export function mbtiPrompt(type: MbtiType | null | undefined): string | null {
-  const tendency = mbtiTendency(type);
-  if (tendency === null) return null;
-  return `你的性格倾向是 ${tendency.type}（${tendency.nickname}）：${tendency.information.text}；${tendency.decision.text}；${tendency.rhythm.text}；${tendency.energy.text}。这只影响表达与做事习惯，不改变权限、审批、安全规则、额度与事实要求；与规矩冲突时以规矩为准。`;
+  const lines = mbtiBehaviorLines(type);
+  if (lines === null) return null;
+  const joined = lines.map(line => line.text.replace(/。$/, '')).join('；');
+  return `你的性格是 ${type}。工作时按这四条做：${joined}。这些只影响做事方式，不改变权限、审批、安全规则、额度与事实要求；与规矩冲突时以规矩为准。`;
 }

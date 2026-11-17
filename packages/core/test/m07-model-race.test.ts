@@ -23,6 +23,8 @@ describe('M07 模型目录等待中的档案合并', () => {
     const hub = createHub({ ...ctx, listModels });
     await hub.start();
     const bot = okData(await hub.api.createBot({ name: '等待目录', role: 'researcher', persona: '原档案', aspirations: ['核实公开证据'], model: choice }));
+    // P72h H3：新建员工不再自动试跑，由主人发一句话叫醒它。
+    okData(await hub.api.pokeBot(bot.id));
     const wake = ctx.store.table('wakes').list(row => row.botId === bot.id && row.status === 'running')[0]!;
     expect(wake.sessionId).not.toBeNull();
     const entered = deferred<void>(), catalog = deferred<typeof option[]>(), canceled = deferred<void>();
@@ -39,7 +41,8 @@ describe('M07 模型目录等待中的档案合并', () => {
     expect(await editing).toMatchObject({ ok: true });
     expect(await interrupting).toMatchObject({ ok: true });
     expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ persona: '新档案保留', sessionId: null, sessionStartedAt: null,
-      lifecycle: 'probation', activity: 'watching', consecutiveErrors: 0, consecutiveNoCommit: 0, updatedAt: ctx.clock.now() });
+      // P73a（5.1 第 1 类）：原预期新建员工 lifecycle 为 probation；新预期 active。
+      lifecycle: 'active', activity: 'watching', consecutiveErrors: 0, consecutiveNoCommit: 0, updatedAt: ctx.clock.now() });
     expect(ctx.store.table('wakes').get(wake.id)).toMatchObject({ status: 'canceled', canceledBy: 'owner' });
     await hub.stop();
   });
@@ -68,7 +71,7 @@ describe('M07 模型目录等待中的档案合并', () => {
     await setLifecycle(ctx, bot.id, 'retired');
     const retired = ctx.store.table('bots').get(bot.id);
     catalog.resolve([option]);
-    await expect(updating).rejects.toThrow('退役机器人不能再修改档案');
+    await expect(updating).rejects.toThrow('已归档的员工不能再修改档案');
     expect(ctx.store.table('bots').get(bot.id)).toEqual(retired);
   });
 

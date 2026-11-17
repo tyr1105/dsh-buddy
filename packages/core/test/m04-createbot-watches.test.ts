@@ -80,8 +80,9 @@ describe('M04 新建机器人带起步关注', () => {
     const bot = okData(await api.createBot({ ...profile, aspirations: ['关注公开变化', '核对公开证据'], watches,
       goals: [goal, { ...goal, title: '整理核对结果', period: 'one_off', aspirationIndex: 1 }] }));
 
-    expect(bot).toMatchObject({ id, homeDir: home, lifecycle: 'probation', activity: 'queued', autonomy: 'L1', workDataAllowed: false,
-      probationEndsAt: ctx.clock.now() + ctx.settings.probationMs, lightCheckAt: ctx.clock.now() + ctx.settings.paceMaxActiveGoalMs });
+    expect(bot).toMatchObject({ id, homeDir: home, lifecycle: 'active', activity: 'watching', autonomy: 'L1', workDataAllowed: false,
+      // P73a（5.1 第 1 类）：原预期 lifecycle probation、probationEndsAt 为创建时间加试岗期；新预期 active、null。
+      probationEndsAt: null, lightCheckAt: ctx.clock.now() + ctx.settings.paceMaxActiveGoalMs });
     expect(ctx.store.table('bots').list()).toEqual([bot]);
     const aspirations = ctx.store.table('aspirations').list();
     expect(aspirations).toHaveLength(2);
@@ -101,8 +102,8 @@ describe('M04 新建机器人带起步关注', () => {
         relevance: ctx.settings.watchRelevanceByCreator.owner, intervalMs });
       expect(row.lastCheckedAt).toBe(['file', 'log'].includes(input.kind) ? ctx.clock.now() : null);
     }
-    expect(ctx.store.table('queue').list()).toEqual([expect.objectContaining({ botId: id, variant: 'trial', ownerInitiated: true,
-      reason: expect.objectContaining({ kind: 'trial', evidence: aspirations.map(row => row.id) }) })]);
+    // P72h H3：新建员工不再自动排试跑回合。
+    expect(ctx.store.table('queue').list()).toEqual([]);
     expect(scriptPreflight).toEqual([0]);
     expect(await ctx.fs.readText(script)).toBe('console.log("公开状态");\n');
     for (const path of ['AGENTS.md', 'memory/MEMORY.md', 'mind/goals.md', 'mind/watches.md'])

@@ -72,7 +72,7 @@ describe('F08 hub_task_list', () => {
     expect(result.text).not.toContain('任务 4');
     expect(result.text).not.toContain('任务 5');
     expect(result.text).not.toContain('任务 6');
-    expect(result.text).toContain('待验收');
+    expect(result.text).toContain('待你验收'); // P74a：事务状态词改名
   });
 
   it('没有任务或只剩已通过任务时给中文空态，不报错', async () => {
@@ -125,7 +125,7 @@ describe('F08 hub_task_update 正常推进', () => {
     const result = await runTool(ctx, tc, 'hub_task_update', { taskId: task.id, action: 'report_done' });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.text).toContain('待验收');
+      expect(result.text).toContain('待你验收'); // P74a：事务状态词改名
       expect(result.text).toContain('等主人验收');
     }
     expect(ctx.store.table('projectTasks').get(task.id)?.status).toBe('done_pending_check');
@@ -171,7 +171,7 @@ describe('F08 hub_task_update 拒绝越权与不可推进', () => {
     // 待办任务不能直接标记受阻（也不能被队友自行开始）。
     ctx.store.table('projectTasks').patch(task.id, { status: 'todo' });
     expect(await runTool(ctx, tc, 'hub_task_update', { taskId: task.id, action: 'block' }))
-      .toMatchObject({ ok: false, error: expect.stringContaining('只能从「进行中」发起') });
+      .toMatchObject({ ok: false, error: expect.stringContaining('只能从「执行中」发起') });
     ctx.store.table('projectTasks').patch(task.id, { status: 'doing' });
     // 交账后的回合不再允许写事项。
     const wakeId = id('w');

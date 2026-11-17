@@ -95,7 +95,7 @@ const grGone = grant({
 function grantRow(g: Grant, resourceName: string): ResourceGrantViewRow {
   const subjectName = BOT_NAME[g.subjectId] ?? null
   return {
-    grant: g, resourceName, subjectKind: 'bot', subjectKindLabel: '队友',
+    grant: g, resourceName, subjectKind: 'bot', subjectKindLabel: '员工',
     subjectId: g.subjectId, subjectName, level: g.level, levelLabel: g.level === 'read' ? '只读' : '读写',
   }
 }
@@ -121,8 +121,8 @@ export const fixtureResource: ResourceView = {
   asOf: NOW,
   resources: [
     row(resShared, '目录', '全员可读'),
-    row(resPlaybook, '文件', '指定队友可读'),
-    row(resDashboard, '链接', '指定队友可读'),
+    row(resPlaybook, '文件', '指定员工可读'),
+    row(resDashboard, '链接', '指定员工可读'),
     row(resOld, '文件', '全员可读'),
   ],
   grants: grantRows,

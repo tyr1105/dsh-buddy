@@ -137,7 +137,7 @@ describe('F17 setGrant 授权', () => {
     setGrant(ctx, { resourceId: resource.id, subjectKind: 'bot', subjectId: botA.id, level: 'read' });
     setGrant(ctx, { resourceId: resource.id, subjectKind: 'bot', subjectId: botB.id, level: 'write' });
     expect(() => setGrant(ctx, { resourceId: resource.id, subjectKind: 'bot', subjectId: 'dept_x', level: 'read' }))
-      .toThrow('subjectId：授权对象必须是 b_ 开头的队友 id');
+      .toThrow('subjectId：授权对象必须是 b_ 开头的员工 id');
     const audits = resourceAudits(ctx).filter(a => a.action === 'grant_set');
     expect(audits).toHaveLength(2);
     expect(audits.every(a => a.actor === 'owner')).toBe(true);
@@ -146,7 +146,7 @@ describe('F17 setGrant 授权', () => {
   it('授权队友不存在、资料不存在/已归档分别中文拒绝', () => {
     const { ctx, resource, botA } = grantFixture();
     expect(() => setGrant(ctx, { resourceId: resource.id, subjectKind: 'bot', subjectId: 'b_0000000099', level: 'read' }))
-      .toThrow('授权队友不存在');
+      .toThrow('授权员工不存在');
     expect(() => setGrant(ctx, { resourceId: 'res_0000000099', subjectKind: 'bot', subjectId: botA.id, level: 'read' }))
       .toThrow('资料不存在');
     archiveResource(ctx, resource.id);

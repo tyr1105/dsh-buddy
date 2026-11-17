@@ -151,9 +151,9 @@ export function archiveResource(ctx: HubContext, rawId: unknown): Resource {
 /** 授权对象只认队友本人：id 必须是 b_ 前缀且队友存在；取消编制后不再接受席位/部门授权。 */
 function assertGrantSubject(ctx: HubContext, kind: GrantSubjectKind, subjectId: string): string {
   void kind; // 枚举已收敛为 bot，保留入参便于阅读与未来扩展。
-  if (!subjectId.startsWith('b_')) throw new Error('subjectId：授权对象必须是 b_ 开头的队友 id');
+  if (!subjectId.startsWith('b_')) throw new Error('subjectId：授权对象必须是 b_ 开头的员工 id');
   const bot = ctx.store.table('bots').get(subjectId);
-  if (!bot) throw new Error(`授权队友不存在：${subjectId}`);
+  if (!bot) throw new Error(`授权员工不存在：${subjectId}`);
   return bot.name;
 }
 

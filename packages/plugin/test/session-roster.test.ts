@@ -88,6 +88,9 @@ describe('apply 接线：会话名册持久化到 <rootDir>/.hub/plugin（D07 �
       await vi.waitFor(() => expect(service.status()).toEqual({ ok: true, mode: 'engine' }), { timeout: 15_000 })
       const created = await service.api.command('createBot', { name: '守望', role: 'sentinel', persona: 'p', aspirations: ['a'] })
       expect(created.ok).toBe(true)
+      // P72h H3：新建员工不再自动试跑，会话要等主人发话时才创建。
+      expect((await service.api.command('pokeBot', { botId: created.data.id })).ok).toBe(true)
+      await vi.waitFor(async () => expect((await service.api.bot(created.data.id)).profile.sessionId).toBeTruthy(), { timeout: 15_000 })
       const bot = await service.api.bot(created.data.id)
       const sessionId = bot.profile.sessionId as string
       // 名册文件已写进 <rootDir>/.hub/plugin/session-roster.json。

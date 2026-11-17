@@ -61,7 +61,8 @@ describe('交账处理', () => {
     expect(ctx.store.log('thread').all().map(m => m.kind)).toEqual(expect.arrayContaining(['reply', 'report', 'question', 'proposal']));
     expect(ctx.store.table('inbox').list().find(i => i.title === '高价值')?.status).toBe('open');
     expect(ctx.store.table('inbox').list().find(i => i.title === '初步点子')).toMatchObject({ status: 'closed', answer: 'idea_pool' });
-    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(2);
+    // P76h：原断言是「员工提问与重要汇报各推一次，共 2 次」；现在员工提问、汇报都不推送。
+    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(0);
   });
   test('多目标没有明确关联时不冒认全完成', async () => {
     const { ctx, toolCtx } = await turnContext();

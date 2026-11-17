@@ -22,6 +22,64 @@
 .ah-set-nav .ah-pane-heading { padding: 0 10px 12px; }
 .ah-set-nav .ah-pane-heading h2 { white-space: nowrap; }
 .ah-set-usage { margin-top: 28px; }
+/* P76k：「给你自己留出」的三档单选，一行排开，窄窗自动换行。 */
+.ah-set-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ah-set-default-tag {
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-separator);
+  border-radius: 4px;
+}
+/* P76k：「最近 7 天的用量」只读表：细线、数字右对齐，窄窗里可以横向滚动。 */
+.ah-set-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--dsw-alias-text-primary);
+}
+.ah-set-usage-table th,
+.ah-set-usage-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--dsw-alias-separator);
+}
+.ah-set-usage-table thead th { color: var(--dsw-alias-label-secondary); font-weight: 500; }
+/* P76n：数字列右对齐，表头也右对齐，列头与下面数字同一条线。 */
+.ah-set-usage-table thead th:nth-child(n+2) { text-align: right; }
+.ah-set-usage-table tbody th { font-weight: 400; }
+.ah-set-usage-table td:nth-child(n+2) { text-align: right; font-variant-numeric: tabular-nums; }
+
+/*
+ * P76k：窄窗（手机上翻看、宿主侧栏收起后的小窗）里分区导航改到上方一行、内容单列。
+ * 原来的两列固定 184px 在 420 宽下会把内容挤到只剩几十像素，出现横向滚动。
+ */
+@media (max-width: 720px) {
+  .ah-set { grid-template-columns: minmax(0, 1fr); }
+  .ah-set-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 8px;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--dsw-alias-separator);
+  }
+  .ah-set-nav .ah-pane-heading { display: none; }
+  .ah-set-nav-item { width: auto; white-space: nowrap; }
+  .ah-set-main { min-width: 0; }
+  /* P76n：420 宽只靠外框单列还不够，行内控件与内容区自己也要换行，不能靠内部横向滚。 */
+  .ah-set-scroll { overflow-x: hidden; }
+  .ah-set-inline { flex-wrap: wrap; max-width: 100%; }
+}
 .ah-set-nav-item {
   display: flex;
   align-items: center;
@@ -137,10 +195,12 @@
 /* 窄窗：分区改成顶部横排，避免内容被挤窄。 */
 @container buddy (max-width: 760px) {
   .ah-set { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .ah-set-nav { flex-direction: row; align-items: center; overflow-x: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-separator); }
+  /* P76n：分区导航换行，不把「运行状态」挤出右缘；内容区也不做内部横向滚。 */
+  .ah-set-nav { flex-direction: row; flex-wrap: wrap; align-items: center; overflow: visible; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-separator); }
   .ah-set-nav .ah-pane-heading { padding: 0 8px 0 2px; }
   .ah-set-nav-item { width: auto; white-space: nowrap; }
-  .ah-set-scroll { padding: 16px 16px 32px; }
+  .ah-set-scroll { padding: 16px 16px 32px; overflow-x: hidden; }
+  .ah-set-inline { flex-wrap: wrap; max-width: 100%; }
   .ah-set-bar { padding: 10px 16px; }
   .ah-set-row-control { justify-items: start; }
 }

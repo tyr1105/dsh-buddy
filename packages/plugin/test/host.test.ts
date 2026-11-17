@@ -38,12 +38,14 @@ describe('resolveRootDir（config → 环境变量 → ~/AgentHub；D05 第 1 �
 })
 
 describe('apply（假 ctx，rootDir 一律临时目录；D05 第 2 条守护）', () => {
-  it('注册 13 条 /api/agent-hub 路由', () => {
+  it('注册 17 条 /api/agent-hub 路由', () => {
     const root = safeTempRoot('agent-hub-routes-')
     try {
       const { ctx, fetchRoutes } = createFakeCtx()
       apply(ctx, { rootDir: root })
-      expect(fetchRoutes).toHaveLength(13)
+      // 原 13 条；P75j 加 skill-library、skill-detail；P75k 加 memory-page；P76j 加 active-jobs；
+      // P76k 加 weekly-usage；P75r7 删去 recent-sessions。
+      expect(fetchRoutes).toHaveLength(17)
       expect(fetchRoutes.every((r) => r.path.startsWith('/api/agent-hub/'))).toBe(true)
       void ctx.dispose()
     } finally { rmSync(root, { recursive: true, force: true }) }

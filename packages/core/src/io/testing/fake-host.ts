@@ -5,6 +5,10 @@ export class FakeHost implements HostPort {
   readonly calls: Array<{ method: keyof HostPort; args: unknown[] }> = [];
   readonly sessions = new Map<string, { exists: boolean; running: boolean; contextRatio: number | null }>();
   readonly digests = new Map<string, string>();
+  /** P75i：测试预设的最近会话（按最近活动从新到旧返回）；默认为空，与原来「没有可选会话」一致。 */
+  readonly recentSessions: Array<{ sessionId: string; title: string; updatedAt: number }> = [];
+  /** P75i：这些会话读摘要时抛错（测试「读不到会话」的情形）。 */
+  readonly digestFailures = new Set<string>();
   /** 复制调用参数留作证据，避免事后修改对象污染断言。 */
   private record(method: keyof HostPort, args: unknown[]): void { this.calls.push({ method, args: structuredClone(args) }); }
   /** 创建模拟会话并置为运行中，供验证新会话路径。 */
@@ -29,14 +33,15 @@ export class FakeHost implements HostPort {
     this.record('sessionInfo', [sessionId]);
     return { ...(this.sessions.get(sessionId) ?? { exists: false, running: false, contextRatio: null }) };
   }
-  /** 记录历史查询并返回空列表，教学会话由测试显式指定。 */
+  /** 记录历史查询并返回测试预设的最近会话（默认空列表），教学会话由测试显式指定。 */
   async listRecentSessions(limit: number): Promise<Array<{ sessionId: string; title: string; updatedAt: number }>> {
     this.record('listRecentSessions', [limit]);
-    return [];
+    return [...this.recentSessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit).map(row => ({ ...row }));
   }
-  /** 按请求长度读取预设摘要，避免教学测试依赖真实会话。 */
+  /** 按请求长度读取预设摘要，避免教学测试依赖真实会话；预设为「读不到」的会话抛错。 */
   async readSessionDigest(sessionId: string, maxChars: number): Promise<string> {
     this.record('readSessionDigest', [sessionId, maxChars]);
+    if (this.digestFailures.has(sessionId)) throw new Error('读不到这段会话');
     return (this.digests.get(sessionId) ?? '').slice(0, maxChars);
   }
   /** 记录给主人推送的内容，供检查免打扰和预算。 */

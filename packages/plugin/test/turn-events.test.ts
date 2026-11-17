@@ -128,6 +128,24 @@ describe('机器人会话的回合翻译', () => {
     })
   })
 
+  // P74r16a 第 4 节：DSH 会话事件里的参数常常是 JSON 文字，交给中心前要解析成对象，否则台账取不到命令和路径。
+  it('P74r16a：字符串形式的 {"command":"node test.js"} 参数交给中心的是对象；不是 JSON 的字符串原样', async () => {
+    const { hub, translator } = makeTranslator()
+    translator.handle(botSession, ev('turn/start', { turn: 1 }))
+    translator.handle(botSession, ev('tool/call', { turn: 1, step: 1, name: 'bash', callId: 'j1', arguments: '{"command":"node test.js"}' }))
+    translator.handle(botSession, ev('tool/result', { turn: 1, step: 1, message: { toolCallId: 'j1', content: [{ type: 'text', text: 'ok' }], isError: false } }))
+    translator.handle(botSession, ev('tool/call', { turn: 1, step: 2, name: 'bash', callId: 'j2', arguments: 'node test.js' }))
+    translator.handle(botSession, ev('tool/result', { turn: 1, step: 2, message: { toolCallId: 'j2', content: [{ type: 'text', text: 'ok' }], isError: false } }))
+    // 反例：解析出来不是对象（数组、数字、null）也保持原样。
+    translator.handle(botSession, ev('tool/call', { turn: 1, step: 3, name: 'bash', callId: 'j3', arguments: '["a"]' }))
+    translator.handle(botSession, ev('tool/result', { turn: 1, step: 3, message: { toolCallId: 'j3', content: [], isError: false } }))
+    translator.handle(botSession, ev('tool/call', { turn: 1, step: 4, name: 'bash', callId: 'j4', arguments: '{"command":' }))
+    translator.handle(botSession, ev('tool/result', { turn: 1, step: 4, message: { toolCallId: 'j4', content: [], isError: false } }))
+    await Promise.resolve()
+    const calls = hub.turns.filter(e => e.type === 'tool_call')
+    expect(calls.map(c => c.args)).toEqual([{ command: 'node test.js' }, 'node test.js', '["a"]', '{"command":'])
+  })
+
   it('tool/result 失败且没有文本时用错误消息；找不到配对的 call 仍报「未知工具」（F02 反例）', async () => {
     const { hub, translator } = makeTranslator()
     translator.handle(botSession, ev('turn/start', { turn: 1 }))
@@ -218,6 +236,32 @@ describe('机器人会话的回合翻译', () => {
     await Promise.resolve()
     expect(hub.turns.find(e => e.type === 'error')).toMatchObject({ errorText: '额度不足' })
     expect(hub.turns.some(e => e.type === 'ended')).toBe(false)
+  })
+
+  // P76d：报错对象上有错误代号、状态码时一并交给中心；没有就不带，类型不对也不带（不臆造字段）。
+  it('reason.kind=error：错误代号和状态码一并传给中心', async () => {
+    const { hub, translator } = makeTranslator()
+    translator.handle(botSession, ev('turn/start', {}))
+    translator.handle(botSession, ev('turn/end', { reason: { kind: 'error', error: { message: '已达到 5 小时的使用上限，将于 15:53 恢复', code: 'RATE_LIMIT', status: 429 } } }))
+    await Promise.resolve()
+    expect(hub.turns.find(e => e.type === 'error')).toMatchObject({ errorText: '已达到 5 小时的使用上限，将于 15:53 恢复', errorCode: 'RATE_LIMIT', statusCode: 429 })
+  })
+
+  it('reason.kind=error：没有代号和状态码、或类型不对时不带这两项', async () => {
+    const { hub, translator } = makeTranslator()
+    translator.handle(botSession, ev('turn/start', {}))
+    translator.handle(botSession, ev('turn/end', { reason: { kind: 'error', error: { message: '网络断开' } } }))
+    await Promise.resolve()
+    const plain = hub.turns.find(e => e.type === 'error') as Record<string, unknown>
+    expect(plain.errorCode).toBeUndefined()
+    expect(plain.statusCode).toBeUndefined()
+    expect('errorCode' in plain || 'statusCode' in plain).toBe(false)
+    hub.turns.length = 0
+    translator.handle(botSession, ev('turn/start', {}))
+    translator.handle(botSession, ev('turn/end', { reason: { kind: 'error', error: { message: '怪', code: 42, status: '429' } } }))
+    await Promise.resolve()
+    const odd = hub.turns.find(e => e.type === 'error') as Record<string, unknown>
+    expect('errorCode' in odd || 'statusCode' in odd).toBe(false)
   })
 
   it('approval/asked 后紧跟配对的 decided（never 自动拒绝）不产生 awaiting_approval', async () => {

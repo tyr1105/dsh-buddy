@@ -10,13 +10,41 @@
  *   这些要么是别人叫它，要么是接着做已经交给它的活。
  */
 import type { Bot, WakeKind } from '../model/index.js';
+import { SKILL_WORK_SUBJECT_PREFIXES, isSkillWork } from '../skill/keys.js';
+
+export { SKILL_WORK_SUBJECT_PREFIXES, isSkillWork };
 
 /** 听吩咐的队友不接受的唤醒来源。 */
 export const ON_DEMAND_BLOCKED_KINDS: ReadonlySet<WakeKind> = new Set<WakeKind>([
   'percept', 'pile', 'drive', 'light_check', 'reflection', 'catch_up',
 ]);
 
-/** 这次唤醒是否该被挡住。 */
-export function onDemandBlocks(bot: Pick<Bot, 'onDemand'>, kind: WakeKind): boolean {
+/**
+ * 主人纠正引起的复盘的事项键（P73r2：原来产生它的触发已随 P75f 下线）。
+ * P75 之后不再产生，保留一个版本供读旧队列。
+ * 触发标记键是 `message:<消息 id>`，候选的主题键是 `reflection:message:<消息 id>`。
+ */
+export const OWNER_CORRECTION_KEY_PREFIX = 'message:';
+export const OWNER_CORRECTION_SUBJECT_PREFIX = `reflection:${OWNER_CORRECTION_KEY_PREFIX}`;
+
+/**
+ * 团队异常信号（员工卡住、被系统停用、交接超时）的事项键前缀（P73r3 S2：产生它的 peer/team.ts 与识别它的这里共用）。
+ * 这三类是系统在通知管理者，不是总管自己要动，听吩咐的总管也应当收到。
+ */
+export const TEAM_SIGNAL_SUBJECT_PREFIX = 'team_signal:';
+
+/** 是不是团队异常信号引起的候选。 */
+export function isTeamSignal(kind: WakeKind, subjectKey: string | undefined): boolean {
+  return kind === 'percept' && subjectKey !== undefined && subjectKey.startsWith(TEAM_SIGNAL_SUBJECT_PREFIX);
+}
+
+/** 这次唤醒是否该被挡住。subjectKey 用来识别「团队异常信号」「技能类回合」两个例外。
+ * P75f：「主人纠正引起的复盘」例外已删除（旧复盘触发下线，不再产生这类候选）。
+ * P75g：技能类回合（复盘、技能核对、每周整理，事项键 retro:/skillcheck:/tidy:）放行，作为第三个例外。
+ * 理由（方案第 8 节、第 16 节第 2 项）：复盘由主人的验收引起、整理只对因此变化的员工做，都受专门上限约束
+ * （每次 5 回合、全队每天 12 回合）；执行类员工全部是听吩咐，不放行的话第四块对它们永远无效。 */
+export function onDemandBlocks(bot: Pick<Bot, 'onDemand'>, kind: WakeKind, subjectKey?: string): boolean {
+  if (isTeamSignal(kind, subjectKey)) return false;
+  if (isSkillWork(kind, subjectKey)) return false;
   return bot.onDemand && ON_DEMAND_BLOCKED_KINDS.has(kind);
 }

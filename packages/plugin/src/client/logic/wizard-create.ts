@@ -85,7 +85,7 @@ export async function addTeammatesFromTemplates(
       taken.push(name)
       result.added.push({ botId: created.botId, name })
     } catch (error) {
-      console.error('[agent-hub] 从模板添加队友失败:', error)
+      console.error('[agent-hub] 从模板添加员工失败:', error)
       result.failed.push({ name, error: errorText(error) })
     }
   }
@@ -100,7 +100,7 @@ export function templateBatchError(result: TemplateBatchResult): string {
 /** 加上之后显示在线程顶部的提示；只加了一位且没有问题时不用额外说明。 */
 export function templateBatchNotice(result: TemplateBatchResult): string | undefined {
   const parts: string[] = []
-  if (result.added.length > 1) parts.push(`已添加 ${result.added.length} 位队友：${result.added.map(bot => bot.name).join('、')}。`)
+  if (result.added.length > 1) parts.push(`已添加 ${result.added.length} 位员工：${result.added.map(bot => bot.name).join('、')}。`)
   if (result.failed.length > 0) parts.push(templateBatchError(result))
   parts.push(...result.warnings)
   return parts.length > 0 ? parts.join(' ') : undefined

@@ -46,7 +46,8 @@ function navProps(compact: boolean): TeamSidebarNavProps {
     overview: fixtureOverview,
     project: null,
     view: 'main',
-    selectedThread: 'team',
+    // P71：团队全景下线后「没有选中」是空串（原来这里写的是 'team'）。
+    selectedThread: '',
     compact,
     onOpenOffice: () => undefined,
     onSelectBot: () => undefined,
@@ -110,6 +111,8 @@ describe('收起态图标列不吃展开态的搜索过滤（U01 第 46 轮，P5
     const host = createHookHost()
     const allIds = fixtureOverview.bots.filter(bot => bot.archived !== true).map(bot => bot.id)
     expect(allIds).toEqual(['bot-xunjian', 'bot-tanlu', 'bot-zongguan'])
+    // P72e：左栏里未退役的总管永远排第一，其余保持原顺序。
+    const railIds = ['bot-zongguan', 'bot-xunjian', 'bot-tanlu']
 
     // 先展开，在队友组搜索框里输入只命中一个人的词。
     let tree = host.render(TeamSidebarNav, navProps(false)) as StubElement
@@ -126,14 +129,14 @@ describe('收起态图标列不吃展开态的搜索过滤（U01 第 46 轮，P5
     // 收起：rail 必须无视残留搜索词，列出全部在岗队友（旧实现这里只剩巡检员）。
     let rail = host.render(TeamSidebarNav, navProps(true)) as StubElement
     expect(rail.type).toBe(CompactRail)
-    expect((rail.props.bots as Array<{ id: string }>).map(bot => bot.id)).toEqual(allIds)
+    expect((rail.props.bots as Array<{ id: string }>).map(bot => bot.id)).toEqual(railIds)
 
     // 换成无命中词再收起：旧实现 rail 会一个人都不剩，且收起态无处清除搜索。
     tree = host.render(TeamSidebarNav, navProps(false)) as StubElement
     const groupAgain = findElements(tree, TeammatesGroup)[0]!
     ;(groupAgain.props.onQueryChange as (query: string) => void)('查无此人的关键词')
     rail = host.render(TeamSidebarNav, navProps(true)) as StubElement
-    expect((rail.props.bots as Array<{ id: string }>).map(bot => bot.id)).toEqual(allIds)
+    expect((rail.props.bots as Array<{ id: string }>).map(bot => bot.id)).toEqual(railIds)
   })
 })
 

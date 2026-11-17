@@ -7,8 +7,8 @@
  */
 import type { OfficeLight } from '../../shared/views.js'
 
-/** 气泡色调只决定底色，不改变语义。 */
-export type OfficeBubbleTone = 'working' | 'waiting' | 'blocked' | 'resting' | 'offline' | 'unknown'
+/** 气泡色调只决定底色，不改变语义。arrival 是「报到」专用，见 officeBubble 的第二个参数。 */
+export type OfficeBubbleTone = 'working' | 'waiting' | 'blocked' | 'resting' | 'offline' | 'unknown' | 'arrival'
 
 export interface OfficeBubble {
   light: OfficeLight
@@ -19,8 +19,21 @@ export interface OfficeBubble {
   tone: OfficeBubbleTone
 }
 
-/** 九种灯 → 气泡；空位也给一个诚实的「空位」，不冒充离线。 */
-export function officeBubble(light: OfficeLight): OfficeBubble {
+/** 报到气泡的文字（设计稿场景 F）：短文案「报到」，完整文案说明是今天入职。 */
+export const ARRIVAL_BUBBLE = { label: '今天入职，报到', short: '报到' } as const
+
+/** 今天入职的员工，灯是这三种（空闲类）时才显示「报到」；工作中、待确认、受阻按真实状态显示。 */
+const IDLE_LIGHTS: ReadonlySet<OfficeLight> = new Set<OfficeLight>(['watching', 'resting', 'queued'])
+
+/**
+ * 九种灯 → 气泡；空位也给一个诚实的「空位」，不冒充离线。
+ * P73f：员工今天入职（joinedToday）且灯是空闲类（盯守、休息、排队）时显示「报到」；
+ * 灯是 working、waiting、blocked 时仍按真实状态显示（真实状态优先，报到不能盖住「受阻」「待确认」）。
+ */
+export function officeBubble(light: OfficeLight, opts: { joinedToday?: boolean } = {}): OfficeBubble {
+  if (opts.joinedToday === true && IDLE_LIGHTS.has(light)) {
+    return { light, label: ARRIVAL_BUBBLE.label, short: ARRIVAL_BUBBLE.short, tone: 'arrival' }
+  }
   switch (light) {
     case 'working':
       return { light, label: '正在工作', short: '工作', tone: 'working' }

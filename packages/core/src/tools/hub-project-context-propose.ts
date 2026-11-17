@@ -17,6 +17,6 @@ export const hubProjectContextPropose = defineTool('hub_project_context_propose'
     const proposal = proposeProjectContext(ctx, tc.botId, args);
     return {
       ok: true,
-      text: `建议已提交（项目 ${proposal.projectId}）：主人在项目页确认前不会写入共享上下文，也不会改变其他队友看到的内容。`,
+      text: `建议已提交（项目 ${proposal.projectId}）：主人在项目页确认前不会写入共享上下文，也不会改变其他员工看到的内容。`,
     };
   });

@@ -1,8 +1,8 @@
 {
   "name": "@tyr1105/dsh-buddy",
   "private": true,
-  "version": "0.2.0",
-  "description": "DeepSeek Harness 插件：你的 OPC 专业团队。像素办公室显示每位队友的状态，自主节奏和每日上限由你定。",
+  "version": "0.3.0",
+  "description": "DeepSeek Harness 插件：你的 OPC 专业团队。对总管说一件事，它先和你对齐约定与预计消耗，你点「定了」才开工；员工执行、逐条核对后交给你验收。像素办公室显示每位员工的状态。",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",

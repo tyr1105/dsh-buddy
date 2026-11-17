@@ -1,5 +1,6 @@
 /** 出站结果的主人文案统一由中心事实生成；外部响应正文只留在原结果和模型的不可信证据区。 */
 import type { OutboxAction } from '../model/outreach.js';
+import type { HubContext } from '../engine/context.js';
 import { C03_DEFAULTS } from '../config/defaults.js';
 import { describeAction } from './action-text.js';
 
@@ -34,16 +35,51 @@ export function outboxFailureReason(row: OutboxAction): string {
 /** 所有主人结果都用同一个分隔格式，避免把“已完成”粘成路径或命令参数的一部分。 */
 export function formatActionResult(action: string, result: string): string { return `${action} → ${result}`; }
 
+/**
+ * P69（总控裁定第 6 条）：执行回执和「你批准了：……」说同一句话。
+ * 取审批单上存的、给主人看的那句话；审批单是旧版本（没有新话）或查不到时返回 undefined，调用方退回现有写法。
+ */
+export function approvedActionText(ctx: Pick<HubContext, 'store'> | undefined, row: OutboxAction): string | undefined {
+  const approval = ctx && row.approvalId ? ctx.store.table('approvals').get(row.approvalId) : null;
+  return approval?.actionTextVersion === 3 && approval.actionText ? approval.actionText : undefined;
+}
+
+/** 给员工的唤醒原因里「错误」最多带多少字（P74r18b）。 */
+export const OUTBOX_ERROR_CLIP_CHARS = 200;
+
+/**
+ * 给员工看的错误输出（P74r18b）：取错误输出的前 200 字，换行折成空格。
+ * 出站记录的结果文字写法是「{失败原因}：{错误输出}」（命令类）；这里把前面那段失败原因拿掉，只留错误输出本身，
+ * 没有错误输出时退回失败原因，再没有写「没有错误输出」。
+ */
+export function outboxErrorText(row: OutboxAction): string {
+  const result = row.result ?? '';
+  const reason = row.ownerFailureReason;
+  const stderr = reason && result.startsWith(`${reason}：`) ? result.slice(reason.length + 1) : result;
+  const flat = stderr.replace(/\s+/g, ' ').trim() || reason || '没有错误输出';
+  return Array.from(flat).slice(0, OUTBOX_ERROR_CLIP_CHARS).join('');
+}
+
+/**
+ * 给提交这条动作的员工看的唤醒原因（P74r18b 第 3 节，逐字）：
+ * 成功 `你提交的动作已由中心运行成功：{说明}。`；失败 `你提交的动作由中心运行失败：{说明}。错误：{错误}。`
+ * 说明取主人批准时看到的那一句（approvedActionText），没有时退回 describeAction。
+ */
+export function outboxWakeReason(row: OutboxAction, action: string): string {
+  return row.status === 'done' ? `你提交的动作已由中心运行成功：${action}。`
+    : `你提交的动作由中心运行失败：${action}。错误：${outboxErrorText(row)}。`;
+}
+
 /** 系统感知用于汇总执行事实，不附加审批指令，也不复制外部返回内容。 */
-export function outboxOwnerResult(row: OutboxAction, commandMaxChars?: number): string {
-  const action = describeAction('hub_outbox_execute', row, commandMaxChars);
+export function outboxOwnerResult(row: OutboxAction, commandMaxChars?: number, ownerAction?: string): string {
+  const action = ownerAction ?? describeAction('hub_outbox_execute', row, commandMaxChars);
   return formatActionResult(action, row.status === 'done' ? '已完成'
     : row.executionStarted === false ? `未执行：${outboxFailureReason(row)}` : `执行失败：${outboxFailureReason(row)}`);
 }
 
 /** 已批准动作的线程和实时状态共用完整结果，明确区分未执行与执行失败。 */
-export function approvedOutboxResult(row: OutboxAction, commandMaxChars?: number): string {
-  const action = describeAction('hub_outbox_execute', row, commandMaxChars);
+export function approvedOutboxResult(row: OutboxAction, commandMaxChars?: number, ownerAction?: string): string {
+  const action = ownerAction ?? describeAction('hub_outbox_execute', row, commandMaxChars);
   if (row.executionStarted === false) return `未执行你批准的：${action}（原因：${outboxFailureReason(row)}）`;
   const success = row.kind === 'http_post' ? /^HTTP \d+/.exec(row.result ?? '')?.[0] ?? '网络请求已完成'
     : row.kind === 'run_command' ? '命令执行完成' : row.kind === 'write_file' ? '文件已写入' : '汇报已进入线程';

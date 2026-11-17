@@ -56,7 +56,7 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
       '2. 看 shared/ 交接目录：有没有别人已经做过的半成品或交接说明。',
       '3. 看待领与在做清单：这件事是不是已经有人领了；有就换一件或先沟通。',
       '',
-      '做完后把可交付物放进项目 sharedDir，并在交账里写清位置。',
+      '做完后把可交付物放进项目文件夹（你能用 hub_project_put 时用它），并在交账里写清位置。',
       '这份偏好不改变资料可见性与审批要求。',
     ].join('\n'),
   },
@@ -94,6 +94,11 @@ export const PRESET_SKILLS: readonly PresetSkill[] = [
   },
   ...ROLE_PRESET_SKILLS,
 ];
+
+// P75e：self- 前缀留给自己积累的技能目录；预置 id 一旦占用，预置同步与技能库的分组都会混淆。加载时断言一次。
+if (PRESET_SKILLS.some(skill => skill.id.startsWith('self-'))) {
+  throw new Error('预置技能的 id 不得以 self- 开头（self- 留给自己积累的技能）');
+}
 
 /** 界面用的只读选项（不含正文）：向导与档案页据此渲染勾选列表。 */
 export interface PresetSkillOption {

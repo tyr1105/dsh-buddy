@@ -14,6 +14,9 @@ import { HubPage } from '../src/client/pages/HubPage.js'
 import { fixtureOverview } from '../src/shared/fixtures.js'
 import type { OverviewView } from '../src/shared/views.js'
 import { createHookHost } from './helpers/hook-host.js'
+import { findElements } from './helpers/jsx-runtime-stub.js'
+import { ThreadPane } from '../src/client/components/ThreadPane.js'
+import { OfficeReplayPage } from '../src/client/pages/office-replay-page.js'
 
 // 把 react 换成 hook 宿主的替身；HubPage 里的 hook 都会走到这里。
 vi.mock('react', async () => (await import('./helpers/hook-host.js')).reactFacade)
@@ -106,13 +109,14 @@ describe('私聊开着时的已读', () => {
     expect(markCalls(command)).toHaveLength(0)
   })
 
-  it('团队线程同样处理：team 未读大于 0 时标已读', async () => {
-    const { hub, command, refreshOverview } = setup({
+  it('P71 团队全景下线：旧数据里团队线程还有未读，也不再替它标已读，页面落在办公室', async () => {
+    const { hub, command } = setup({
       overview: { ...fixtureOverview, team: { ...fixtureOverview.team, unread: 2 } }, selected: 'team',
     })
-    createHookHost().render(HubPage, { hub, clientCtx: null })
+    const tree = createHookHost().render(HubPage, { hub, clientCtx: null })
     await flush()
-    expect(markCalls(command)).toEqual([['markThreadRead', { threadId: 'team' }]])
-    expect(refreshOverview).toHaveBeenCalled()
+    expect(markCalls(command)).toHaveLength(0)
+    expect(findElements(tree, ThreadPane)).toEqual([])
+    expect(findElements(tree, OfficeReplayPage)).toHaveLength(1)
   })
 })

@@ -14,6 +14,7 @@
  * 和宿主服务打交道的部分全部在 new-session-bridge.tsx。
  */
 import type { BotCard } from '../../shared/views.js'
+import { isArchivedBot } from './lifecycle.js'
 
 /** 在宿主 @ 菜单里的来源名。 */
 export const TEAMMATE_SOURCE_NAME = 'dsh-buddy-teammates'
@@ -48,7 +49,7 @@ export function mentionRoute(situation: MentionSituation): MentionRoute | null {
 }
 
 /** 菜单分组标题：选之前就告诉主人，选了之后这句话会发给谁。 */
-export const MENTION_SECTION_TITLE = '队友 · 发给本人'
+export const MENTION_SECTION_TITLE = '员工 · 发给本人'
 
 /**
  * 能被 @ 的队友：已归档、已退役的不列（它们不再接活），其余按总览顺序。
@@ -57,8 +58,7 @@ export const MENTION_SECTION_TITLE = '队友 · 发给本人'
 export function mentionableTeammates(bots: readonly BotCard[], query: string): BotCard[] {
   const q = query.trim().toLowerCase()
   return bots.filter(bot =>
-    bot.archived !== true
-    && bot.lifecycle !== 'retired'
+    !isArchivedBot(bot)
     && (q === '' || `${bot.name} ${bot.roleLabel}`.toLowerCase().includes(q)))
 }
 

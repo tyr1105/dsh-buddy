@@ -9,18 +9,49 @@
  * 这个文件只放判断规则（全是纯函数，方便逐条测试），接线在仓库 hub-state 里。规则有四条：
  * 1. 「不存在」只认名册：最新一次成功加载的总览里没有这个 id。不看错误文案，文案以后会变。
  * 2. 名册不可用就不下结论：还没加载、加载失败、形状不对、中心停用时的空占位，一律不清选中。
- * 3. 退役、归档的队友还在名册里，不算不存在；团队线程不是队友，永远不受影响。
+ * 3. 退役、归档的队友还在名册里，不算不存在；「没有选中」不是队友，永远不受影响。
  * 4. 名册可能比选中旧：刚建好的队友，选中那一刻手里的名册还没有它，这份旧名册不能判它不存在。
  *
  * P63 起选中的也可能是项目主题（id 以 ptp_ 开头）。主题不在队友名册里，上面四条对它一律不适用；
  * 它「还在不在」只看项目视图，判断方法和名册一样，规则在本文件后半段。
+ *
+ * P71（主人决定砍掉团队全景）：原来「退回团队全景」的地方一律改成「退回办公室」。
+ * 选中值用空串表示「现在没有选中任何对话」；旧数据里存的 'team' 也按没有选中处理，
+ * 主视图（对话）没有可摆的对话时，落到办公室页。办公室本身就有「新建第一位队友」的引导，
+ * 没有队友时也不会是一页空白。
  */
-import type { HubState } from '../hub-state.js'
+import type { HubState, PageView } from '../hub-state.js'
 import type { OverviewView, ProjectView } from '../../shared/views.js'
 import { isTopicThreadId } from './topics.js'
 
-/** 团队线程的固定 id：它不是某位队友，不用名册核对。 */
-export const TEAM_THREAD_ID = 'team'
+/**
+ * 已下线的团队线程 id（P71）。界面不再显示它、也不能再选中它，
+ * 留着这个常量只为认出旧数据（本地记住的选中、旧版存档）并把它当成「没有选中」。
+ */
+export const LEGACY_TEAM_THREAD_ID = 'team'
+
+/** 「现在没有选中任何对话」的选中值（P71）：空串，不会和任何队友 id、主题 id 撞上。 */
+export const NO_THREAD = ''
+
+/** 没有对话可摆时的默认落点（P71）：办公室。 */
+export const DEFAULT_LANDING_VIEW: PageView = 'office'
+
+/** 这个选中值是不是「没有选中」：空串，或者旧数据里的团队线程。 */
+export function isNoThread(threadId: string): boolean {
+  return threadId === NO_THREAD || threadId === LEGACY_TEAM_THREAD_ID
+}
+
+/**
+ * 把一组「页面 + 选中」归一成能摆出来的样子（P71）：
+ * - 旧数据里的 'team' 一律改成「没有选中」；
+ * - 停在主视图（对话）却没有选中任何对话时，改落到办公室；
+ * - 其余页面（设置、项目、待你处理……）原样保留，只是不再记着团队线程。
+ * 纯函数，启动恢复、切页面、退回选中都走这一个，测试也只测这一个。
+ */
+export function landingSurface(view: PageView, threadId: string): { view: PageView; threadId: string } {
+  const thread = isNoThread(threadId) ? NO_THREAD : threadId
+  return { view: view === 'main' && thread === NO_THREAD ? DEFAULT_LANDING_VIEW : view, threadId: thread }
+}
 
 /**
  * 取名册里的全部队友 id。
@@ -32,9 +63,9 @@ export function rosterIds(overview: OverviewView | null): ReadonlySet<string> | 
   return new Set(overview.bots.map(bot => bot.id))
 }
 
-/** 这个线程是不是「名册明确说没有的队友」。团队线程和项目主题永远不算；名册不可用时一律不算。 */
+/** 这个线程是不是「名册明确说没有的队友」。「没有选中」和项目主题永远不算；名册不可用时一律不算。 */
 export function isMissingFromRoster(threadId: string, overview: OverviewView | null): boolean {
-  if (threadId === TEAM_THREAD_ID || isTopicThreadId(threadId)) return false
+  if (isNoThread(threadId) || isTopicThreadId(threadId)) return false
   const ids = rosterIds(overview)
   return ids !== null && !ids.has(threadId)
 }
@@ -69,7 +100,7 @@ export interface SelectionCheck {
   goneIds: ReadonlySet<string>
 }
 
-/** 这份名册落地后，当前选中是否该退回团队全景。 */
+/** 这份名册落地后，当前选中是否该退回办公室（P71 前是团队全景）。 */
 export function shouldExitSelection(check: SelectionCheck): boolean {
   if (!isMissingFromRoster(check.selectedThread, check.roster)) return false
   // 名册比选中旧时，「没有」说明不了问题，可能只是队友刚建好（规则 4）。
@@ -90,11 +121,12 @@ export interface RequestCheck {
 
 /**
  * 现在能不能按这个 id 请求详情和对话。
- * 两种情况不能：名册已确认它不存在；或者它是从本地恢复出来的选中，第一份名册还没到，
+ * 三种情况不能：「没有选中」（含旧数据里已下线的团队线程，P71）没有对话可拉；名册已确认它不存在；
+ * 或者它是从本地恢复出来的选中，第一份名册还没到，
  * 这时不知道它还在不在，等名册回来再决定，免得一打开页面就白打一次报错请求。
  */
 export function canRequestById(check: RequestCheck): boolean {
-  if (check.id === TEAM_THREAD_ID) return true
+  if (isNoThread(check.id)) return false
   if (check.goneIds.has(check.id)) return false
   // 主题不用等名册：它的线程接口不依赖队友，还在不在由项目视图判断。
   if (isTopicThreadId(check.id)) return true
@@ -103,14 +135,15 @@ export function canRequestById(check: RequestCheck): boolean {
 }
 
 /**
- * 把选中退回团队全景。
- * - 只改「选中了谁」，不改 view：主人正在看项目页或设置页时不把他拽走，
- *   他回到主视图时自然落在团队全景；正在看这条对话时就立刻回到团队全景。
+ * 把选中退回「没有选中」，正在看这条对话时落到办公室（P71 前是退回团队全景）。
+ * - 主人正在看项目页或设置页时不把他拽走，只清掉选中；他之后回主视图时由 landingSurface 落到办公室。
+ * - 中栏摆着草稿主题（P60）时也不动页面：草稿和这条被删的对话无关。
  * - 不顺手标已读：这不是主人点进来的。
  * - 本地记住的选中不用单独清：入口文件订阅着仓库，selectedThread 一变就写回本地。
  */
 export function exitMissingSelection(state: HubState): HubState {
-  return { ...state, selectedThread: TEAM_THREAD_ID, selectionExitSeq: state.selectionExitSeq + 1 }
+  const view = state.view === 'main' && state.topicDraft !== null ? state.view : landingSurface(state.view, NO_THREAD).view
+  return { ...state, view, selectedThread: NO_THREAD, selectionExitSeq: state.selectionExitSeq + 1 }
 }
 
 // ---------- 项目主题（P63）：还在不在只看项目视图，判断方法和名册同一套 ----------
@@ -156,7 +189,7 @@ export interface TopicSelectionCheck {
   goneIds: ReadonlySet<string>
 }
 
-/** 这份项目视图落地后，当前选中的主题是否该退回团队全景。刚建好的主题不能被旧视图判没了。 */
+/** 这份项目视图落地后，当前选中的主题是否该退回办公室（P71 前是团队全景）。刚建好的主题不能被旧视图判没了。 */
 export function shouldExitTopicSelection(check: TopicSelectionCheck): boolean {
   if (!isMissingTopic(check.selectedThread, check.project)) return false
   return !check.selectedAfterRequest || check.goneIds.has(check.selectedThread)

@@ -33,15 +33,24 @@ interface RenderContext {
   markDirty(): void
 }
 
-/** 假的 DOM 元素：只提供滚动测量会读到的几个属性。 */
+/** 假的 DOM 元素：只提供滚动测量会读到的几个属性；focus 把全局 document.activeElement 指到自己（P75r7 的焦点测试用）。 */
 export interface FakeElement {
   scrollHeight: number
   clientHeight: number
   getBoundingClientRect: () => { bottom: number }
+  focus: () => void
 }
 
 function createFakeElement(): FakeElement {
-  return { scrollHeight: 100, clientHeight: 100, getBoundingClientRect: () => ({ bottom: 100 }) }
+  const element: FakeElement = {
+    scrollHeight: 100, clientHeight: 100, getBoundingClientRect: () => ({ bottom: 100 }),
+    focus: () => {
+      // 测试用假 document（见 p75r7 测试的 stubFocusDocument）：元素被聚焦时记下焦点落点。
+      const doc = (globalThis as { document?: { activeElement?: unknown } }).document
+      if (doc !== undefined && doc !== null) doc.activeElement = element
+    },
+  }
+  return element
 }
 
 /** 两组依赖是否相同：undefined（不写依赖数组）表示每次都要重新执行。 */

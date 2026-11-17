@@ -65,6 +65,22 @@ function scenarioA() {
 }
 
 describe('F03 场景 A：在岗队友直接摆座', () => {
+  // P75r7（B13）：座位卡原来只画 roleLabel，评审员在办公室列表里写成「建议」，与左栏、组队卡、右侧栏的「评审」不一致。
+  it('P75r7（B13）：座位带模板的显示标签（评审员的「评审」）；没有来历或模板时为 null', () => {
+    const bots = [bot('b_0000000001', '评审员', { role: 'advisor' }), bot('b_0000000002', '小执')];
+    const view = projectOffice(office({
+      bots,
+      origins: [{
+        id: 'b_0000000001', botId: 'b_0000000001', templateId: 'reviewer', source: 'library', proposalId: null,
+        joinedAt: NOW, renamedFrom: null, mbtiSuggested: null, modelTierSuggested: null,
+      }],
+    }));
+    const reviewer = view.seats.find(seat => seat.botId === 'b_0000000001')!;
+    // 角色本身仍是「建议」（ROLE_LABELS），模板的显示标签是「评审」；界面用后者。
+    expect(reviewer.occupant).toMatchObject({ role: 'advisor', roleLabel: '建议', templateLabel: '评审' });
+    expect(view.seats.find(seat => seat.botId === 'b_0000000002')!.occupant.templateLabel).toBeNull();
+  });
+
   it('每个在岗队友一把椅子，按上岗先后排列，退役不上座', () => {
     const { bots } = scenarioA();
     const view = projectOffice(office({ bots }));

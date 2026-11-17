@@ -10,10 +10,18 @@ import type { ReactNode, Ref } from 'react'
 import type { DshSkillOption, PresetSkillOption } from '../../shared/views.js'
 import { modelSelectOptions } from '../logic/settings.js'
 import {
-  BRIEF_MAX, MBTI_OPTIONS, RHYTHM_OPTIONS, ROLE_CARDS, SPEECH_STYLE_OPTIONS, TEMPERAMENT_OPTIONS, problemField, rhythmAllowed,
-  type BotConfigDraft, type ChoiceOption, type MbtiDraft, type RoleCard,
+  BRIEF_MAX, RHYTHM_OPTIONS, ROLE_CARDS, SPEECH_STYLE_OPTIONS, TEMPERAMENT_OPTIONS, isFixedRhythmRole, problemField, rhythmAllowed,
+  type BotConfigDraft, type ChoiceOption, type RoleCard,
 } from '../logic/wizard.js'
+import { PersonalityField } from './PersonalityField.js'
 import { SkillPicker } from './skill-picker.js'
+
+/**
+ * 执行类员工自主节奏那一行的文字（设计稿场景 D 原文）：节奏固定为听吩咐，不再给选项。
+ * 放在组件文件里而不是 logic/wizard.ts：wizard.ts 被文案检查排除（里面是给员工看的身份复述），
+ * 而这一句是界面文案，要登记进 docs/copy/strings.json。
+ */
+export const FIXED_RHYTHM_TEXT = '听吩咐：执行类员工只在总管安排或你点名时工作。'
 
 /** 旧草稿里的模型序列化安全解析（坏数据当没选）。 */
 function safeModel(serialized: string): { provider: string; model: string } | undefined {
@@ -109,13 +117,10 @@ export function BotConfigFields(props: {
       <ChoiceField label="说话风格" options={SPEECH_STYLE_OPTIONS} value={draft.speechStyle} disabled={props.disabled}
         onChange={value => onChange({ speechStyle: value })} />
 
+      {/* P73f：性格（MBTI）改成「类型　改为…」，点开四个维度各二选一，下面四句话随之变化（设计稿场景 D）。 */}
+      <PersonalityField value={draft.mbti} disabled={props.disabled} onChange={mbti => onChange({ mbti })} />
+
       <div className="ah-config-pair">
-        <label className="ah-config-select">MBTI
-          <select value={draft.mbti} disabled={props.disabled} onChange={e => onChange({ mbti: e.target.value as MbtiDraft })}>
-            <option value="">不设置</option>
-            {MBTI_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
         {/* 下拉直接用视图的模型目录；旧草稿里已下架的模型补一项如实显示。 */}
         <label className="ah-config-select">模型
           <select value={draft.model === '' ? 'null' : draft.model} disabled={props.disabled} onChange={e => onChange({ model: e.target.value === 'null' ? '' : e.target.value })}>
@@ -132,22 +137,27 @@ export function BotConfigFields(props: {
         </label>
       </div>
 
+      {/* P73f：执行类员工的自主节奏固定为听吩咐，只显示一行说明；总管和盯守类保留选项。
+          切换上面的执行风格时，这一项随之切换显示方式。 */}
       <div className="ah-wizard-field">
         <span className="ah-wizard-label">自主节奏</span>
-        <div className="ah-wizard-roles ah-config-rhythm" role="group" aria-label="自主节奏">
-          {RHYTHM_OPTIONS.map(option => {
-            const blocked = !rhythmAllowed(draft.role, option.value)
-            return (
-              <button key={option.value} type="button" disabled={blocked || props.disabled} aria-pressed={draft.rhythm === option.value}
-                className={`ah-wizard-role${draft.rhythm === option.value ? ' ah-wizard-role-picked' : ''}${blocked ? ' ah-wizard-role-disabled' : ''}`}
-                onClick={() => onChange({ rhythm: option.value })}>
-                <strong>{option.label}</strong>
-                <span>{option.desc}</span>
-              </button>
-            )
-          })}
-        </div>
-        <p className="ah-wizard-note">新队友前 7 天动手前都会先问你，满 3 天没有越界可以提前转正。</p>
+        {isFixedRhythmRole(draft.role) ? (
+          <div className="ah-fixed-line">{FIXED_RHYTHM_TEXT}</div>
+        ) : (
+          <div className="ah-wizard-roles ah-config-rhythm" role="group" aria-label="自主节奏">
+            {RHYTHM_OPTIONS.map(option => {
+              const blocked = !rhythmAllowed(draft.role, option.value)
+              return (
+                <button key={option.value} type="button" disabled={blocked || props.disabled} aria-pressed={draft.rhythm === option.value}
+                  className={`ah-wizard-role${draft.rhythm === option.value ? ' ah-wizard-role-picked' : ''}${blocked ? ' ah-wizard-role-disabled' : ''}`}
+                  onClick={() => onChange({ rhythm: option.value })}>
+                  <strong>{option.label}</strong>
+                  <span>{option.desc}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       <div className="ah-wizard-field">
@@ -161,7 +171,7 @@ export function BotConfigFields(props: {
         <label>员工说明
           <textarea ref={props.briefInputRef} rows={4} value={draft.brief} disabled={props.disabled}
             aria-invalid={briefProblem !== null || undefined} aria-describedby={briefProblem !== null ? 'ah-config-err-brief' : undefined}
-            placeholder="这位队友负责什么、怎么算做好、有什么不能做的，都写在这里。"
+            placeholder="这位员工负责什么、怎么算做好、有什么不能做的，都写在这里。"
             onChange={e => onChange({ brief: e.target.value })} />
         </label>
         <p className="ah-right-kv">{[...draft.brief.trim()].length} / {BRIEF_MAX} 字</p>

@@ -37,9 +37,11 @@ describe('M10 审批状态随实际执行变化', () => {
     ctx.net.set(httpInput.payload.url, { status: ok ? 200 : 503, text: '外部内容不要再次调用', contentType: 'text/plain' });
     const action = await submitOutbox(ctx, bot.id, httpInput);
     await decideApproval(ctx, action.approvalId!, true);
-    expect((await botView(ctx, bot.id)).card.activityText).toBe('你批准了：向 example.com 发送网络请求，中心会在下次巡检时执行');
+    // P74r18b 同步（第 1 节改了时机）：批准的那一刻不再叫醒员工，员工的状态没有变化、队列里没有候选；运行完之后才带着结果叫醒他。
+    expect((await botView(ctx, bot.id)).card.activityText).toBe('正在关注公开信息');
+    expect(ctx.store.table('queue').list()).toHaveLength(0);
     await executeReadyOutbox(ctx);
-    const expected = `已执行你批准的：向 example.com 发送网络请求 → ${ok ? '已完成（HTTP 200）' : '失败：HTTP 503，请求未成功'}`;
+    const expected = `已执行你批准的：向 example.com 发送数据 → ${ok ? '已完成（HTTP 200）' : '失败：HTTP 503，请求未成功'}`;
     expect(resultText(ctx, action.id)).toBe(expected);
     expect(ctx.store.table('bots').get(bot.id)?.activityText).toBe(expected);
     expect((await botView(ctx, bot.id)).card.activityText).toBe(expected);
@@ -59,9 +61,10 @@ describe('M10 审批状态随实际执行变化', () => {
     ctx.net.set(httpInput.payload.url, { status: 200, text: 'ok', contentType: 'text/plain' });
     const action = await submitOutbox(ctx, bot.id, httpInput);
     await decideApproval(ctx, action.approvalId!, true);
-    await createDispatcher(ctx).pump();
+    // P74r18b 同步：批准的那一刻不再叫醒员工，所以「批准回合」改成「结果回合」：命令运行完、带着结果叫醒他、回合开始之后，状态与唤醒记录显示结果。
     await executeReadyOutbox(ctx);
-    const expected = '已执行你批准的：向 example.com 发送网络请求 → 已完成（HTTP 200）';
+    await createDispatcher(ctx).pump();
+    const expected = '已执行你批准的：向 example.com 发送数据 → 已完成（HTTP 200）';
     expect(ctx.store.table('bots').get(bot.id)?.activityText).toBe(`正在处理：${expected}`);
     expect((await botView(ctx, bot.id)).wakes[0]?.reasonText).toBe(expected);
   });
@@ -72,18 +75,23 @@ describe('M10 审批状态随实际执行变化', () => {
     const action = await submitOutbox(ctx, bot.id, httpInput);
     enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: variant, variant, score: 0.75, summary: '模型处理指令' }));
     await decideApproval(ctx, action.approvalId!, true);
-    // catch_up 与 regular 合并会按既有队列规则升级；旧在途补课档仍需同样的实时展示。
-    const entry = ctx.store.table('queue').list()[0]!;
-    if (variant === 'catch_up') ctx.store.table('queue').patch(entry.id, { variant });
-    await createDispatcher(ctx).pump();
-    const wake = ctx.store.table('wakes').list()[0]!;
-    await onTurnEvent(ctx, { type: 'started', sessionId: wake.sessionId!, at: ctx.clock.now() });
-    expect(ctx.store.table('bots').get(bot.id)?.activity).toBe(variant === 'reflection' ? 'thinking' : 'catching_up');
-    if (variant === 'reflection') expect(ctx.store.table('queue').list().map(row => row.variant)).toEqual(['reflection']);
+    // P74r18b 同步（第 1 节改了时机）：批准的那一刻不再叫醒员工，队列里仍只有原来的这一条；命令运行完之后，带着结果的唤醒另排一条：
+    // 与复盘不合并（复盘是只读回合，不能执行结果的跟进）；与补课合并按既有队列规则升级成可执行的普通回合。
+    expect(ctx.store.table('queue').list().map(row => row.variant)).toEqual([variant]);
     await executeReadyOutbox(ctx);
-    const expected = '已执行你批准的：向 example.com 发送网络请求 → 已完成（HTTP 200）';
+    const entries = ctx.store.table('queue').list();
+    const resultEntry = entries.find(row => row.reason.evidence.includes(action.approvalId!))!;
+    expect(resultEntry.variant).toBe('regular');
+    expect(resultEntry.reason.summary).toContain('你提交的动作已由中心运行成功');
+    if (variant === 'reflection') expect(entries.map(row => row.variant).sort()).toEqual(['reflection', 'regular']);
+    else expect(entries.map(row => row.variant)).toEqual(['regular']);
+    // 排上之后，结果的跟进回合开始时，状态与唤醒记录显示结果。
+    await createDispatcher(ctx).pump();
+    const wake = ctx.store.table('wakes').list().find(row => row.reason.evidence.includes(action.approvalId!))!;
+    await onTurnEvent(ctx, { type: 'started', sessionId: wake.sessionId!, at: ctx.clock.now() });
+    const expected = '已执行你批准的：向 example.com 发送数据 → 已完成（HTTP 200）';
     expect((await botView(ctx, bot.id)).card.activityText).toBe(`正在处理：${expected}`);
-    expect((await botView(ctx, bot.id)).wakes[0]?.reasonText).toBe(expected);
+    expect((await botView(ctx, bot.id)).wakes.find(row => row.reasonText === expected)).toBeDefined();
   });
 
   it('暂停期间批准说明等待恢复，批准过期明确未执行并终结出站单', async () => {
@@ -91,16 +99,17 @@ describe('M10 审批状态随实际执行变化', () => {
     const action = await submitOutbox(ctx, bot.id, httpInput);
     await setLifecycle(ctx, bot.id, 'paused');
     await decideApproval(ctx, action.approvalId!, true);
-    const expected = '你批准了：向 example.com 发送网络请求，队友恢复在岗后由中心执行（24 小时内有效）';
+    const expected = '你批准了：向 example.com 发送数据，员工恢复在岗后由中心执行（24 小时内有效）';
     expect(resultText(ctx, action.approvalId!)).toBe(expected);
-    expect(ownerReasonSummary(ctx.store.table('queue').list()[0]!.reason, ctx)).toBe(expected);
+    // P74r18b 同步（第 1 节改了时机）：批准的那一刻不再叫醒员工，队列里没有候选（主人文案只在线程里那一句）。
+    expect(ctx.store.table('queue').list()).toHaveLength(0);
     await executeReadyOutbox(ctx);
     expect(ctx.net.calls).toHaveLength(0);
     ctx.clock.advance(ctx.settings.approvalExpiryMs);
     await expireApprovals(ctx, ctx.clock.now());
     await executeReadyOutbox(ctx);
     expect(ctx.store.log('thread').all().filter(row => row.kind === 'system' && row.refId === action.approvalId).at(-1)?.text)
-      .toBe('批准已过期，未执行：向 example.com 发送网络请求');
+      .toBe('批准已过期，未执行：向 example.com 发送数据');
     expect(ctx.store.table('outbox').get(action.id)).toMatchObject({ status: 'rejected', executionStarted: false });
     expect(ctx.net.calls).toHaveLength(0);
   });
@@ -128,8 +137,8 @@ describe('M10 出站失败的事实与原因', () => {
     expect(ctx.store.table('outbox').get(action.id)?.status).toBe('pending_approval');
     expect(resultText(ctx, action.id)).toBeUndefined();
     await decideApproval(ctx, action.approvalId!, false);
-    expect(resultText(ctx, action.approvalId!)).toBe('你拒绝了：写文件 /outside/a.md');
-    expect((await botView(ctx, bot.id)).card.activityText).toBe('你拒绝了：写文件 /outside/a.md');
+    expect(resultText(ctx, action.approvalId!)).toBe('你拒绝了：在工作区之外写文件：/outside/a.md');
+    expect((await botView(ctx, bot.id)).card.activityText).toBe('你拒绝了：在工作区之外写文件：/outside/a.md');
     await executeReadyOutbox(ctx);
     expect(ctx.store.table('outbox').get(action.id)?.status).toBe('rejected');
     expect(await ctx.fs.readText('/outside/a.md')).toBeNull();
@@ -141,7 +150,7 @@ describe('M10 出站失败的事实与原因', () => {
     await decideApproval(ctx, action.approvalId!, true);
     ctx.settings = resolveSettings({ rootDir: '/hub', workDataPaths: ['/outside'] });
     await executeReadyOutbox(ctx);
-    expect(resultText(ctx, action.id)).toBe('未执行你批准的：写文件 /outside/a.md（原因：尚未允许访问工作数据目录）');
+    expect(resultText(ctx, action.id)).toBe('未执行你批准的：在工作区之外写文件：/outside/a.md（原因：尚未允许访问工作数据目录）');
     expect(await ctx.fs.readText('/outside/a.md')).toBeNull();
     expect(ctx.store.table('outbox').get(action.id)).toMatchObject({ status: 'failed', executionStarted: false });
     expect(ctx.store.table('approvals').get(action.approvalId!)?.status).toBe('approved');
@@ -157,8 +166,8 @@ describe('M10 出站失败的事实与原因', () => {
     const row = ctx.store.table('outbox').get(action.id)!;
     const { executionStarted: _executionStarted, ownerFailureReason: _ownerFailureReason, ...legacy } = row;
     ctx.store.table('outbox').put(legacy);
-    expect((await botView(ctx, bot.id)).card.activityText).toBe('未执行你批准的：写文件 /outside/a.md（原因：尚未允许访问工作数据目录）');
-    expect(ownerReasonSummary(ctx.store.table('queue').list()[0]!.reason, ctx)).toBe('未执行你批准的：写文件 /outside/a.md（原因：尚未允许访问工作数据目录）');
+    expect((await botView(ctx, bot.id)).card.activityText).toBe('未执行你批准的：在工作区之外写文件：/outside/a.md（原因：尚未允许访问工作数据目录）');
+    expect(ownerReasonSummary(ctx.store.table('queue').list()[0]!.reason, ctx)).toBe('未执行你批准的：在工作区之外写文件：/outside/a.md（原因：尚未允许访问工作数据目录）');
     expect(ctx.store.table('approvals').get(action.approvalId!)?.status).toBe('approved');
   });
 
@@ -168,7 +177,7 @@ describe('M10 出站失败的事实与原因', () => {
     const action = await submitOutbox(ctx, bot.id, { kind: 'write_file', payload: { path: '/outside/parent/a.md', content: '结果' }, why: '写入' });
     await decideApproval(ctx, action.approvalId!, true);
     await executeReadyOutbox(ctx);
-    expect(resultText(ctx, action.id)).toBe('已执行你批准的：写文件 /outside/parent/a.md → 失败：父路径不是目录：/outside/parent');
+    expect(resultText(ctx, action.id)).toBe('已执行你批准的：在工作区之外写文件：/outside/parent/a.md → 失败：父路径不是目录：/outside/parent');
     expect(ctx.store.table('outbox').get(action.id)).toMatchObject({ status: 'failed', executionStarted: true });
     expect(ctx.store.table('approvals').get(action.approvalId!)?.status).toBe('used');
   });
@@ -183,9 +192,9 @@ describe('M10 出站失败的事实与原因', () => {
     const action = await submitOutbox(ctx, bot.id, httpInput);
     await decideApproval(ctx, action.approvalId!, true);
     await executeReadyOutbox(ctx);
-    expect(resultText(ctx, action.id)).toBe(`已执行你批准的：向 example.com 发送网络请求 → 失败：${expected}`);
+    expect(resultText(ctx, action.id)).toBe(`已执行你批准的：向 example.com 发送数据 → 失败：${expected}`);
     const percept = ctx.store.table('percepts').list(row => row.kind === 'outbox_done')[0]!;
-    expect(ownerPerceptSummary(ctx, percept)).toBe(`向 example.com 发送网络请求 → 执行失败：${expected}`);
+    expect(ownerPerceptSummary(ctx, percept)).toBe(`向 example.com 发送数据 → 执行失败：${expected}`);
     expect(ctx.store.table('outbox').get(action.id)?.result).toContain('外部正文');
   });
 
@@ -201,7 +210,7 @@ describe('M10 出站失败的事实与原因', () => {
     }
     await executeReadyOutbox(ctx);
     const summaries = ctx.store.table('percepts').list(row => row.kind === 'outbox_done').map(row => ownerPerceptSummary(ctx, row));
-    expect(summaries).toEqual(['运行命令 echo 完成 → 已完成', '运行命令 echo 失败 → 执行失败：命令退出码 2']);
+    expect(summaries).toEqual(['请中心代为运行一条命令 → 已完成', '请中心代为运行一条命令 → 执行失败：命令退出码 2']);
   });
 });
 

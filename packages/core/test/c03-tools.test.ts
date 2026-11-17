@@ -3,13 +3,11 @@ import { describe,it,expect } from 'vitest';
 import { buildTools,runTool } from '../src/tools/index.js';
 import { toolFixture } from './c03-tool-fixtures.js';
 import { id } from './model-fixtures.js';
-import { claim } from '../src/peer/claims.js';
 import { byteLength } from '../src/util/text.js';
 import { answerInbox } from '../src/outreach/inbox.js';
 const agenda={kind:'task',title:'复核一条来源',abandonWhen:'来源撤回',priority:2};
 const watch={kind:'http',target:'https://example.test/new',why:'确认最新证据'};
 const goal={aspirationId:id('asp'),title:'完成复核',doneWhen:'来源可查看',period:'week',why:'推进志向'};
-const reflect={summary:'总结了经验',lessons:[],watchChanges:[],routineUpdates:[]};
 const toolCases=[
   ['hub_state_get',{}, {scope:'unknown'}],
   ['hub_commit','commit',{outcome:'invalid'}],
@@ -19,45 +17,41 @@ const toolCases=[
   ['hub_watch_propose',watch,{...watch,target:'not-url'}],
   ['hub_goal_upsert',goal,{...goal,aspirationId:'missing'}],
   ['hub_outbox_submit',{kind:'notify_owner',payload:{text:'核实完成'},why:'汇报结果'},{kind:'http_post',payload:{url:'not-url',body:''},why:'汇报'}],
-  ['hub_lesson_propose',{text:'先核实再汇报',scope:'self',why:'避免误报'},{text:'',scope:'self',why:'避免误报'}],
-  ['hub_reflect_commit',reflect,{...reflect,summary:''}],
   ['hub_send',{to:'b_0000000002',text:'请复核来源'},{to:'missing',text:'请复核来源'}],
-  ['hub_handoff',{to:'b_0000000002',task:'复核来源',why:'交叉核对'},{to:'b_0000000002',task:'复核来源',files:['/etc/passwd'],why:'交叉核对'}],
-  ['hub_claim',{resource:'report',minutes:30,why:'避免重复'},{resource:'report',minutes:1441,why:'避免重复'}],
-  ['hub_release',{resource:'report'},{resource:''}],
-  ['hub_routine_save',{name:'复核',whenToUse:'发现新来源',steps:['查看原文']},{name:'复核',whenToUse:'发现新来源',steps:[]}],
+  // P74b：hub_handoff、hub_claim、hub_release 已移出工具清单，逐项用例随之删除。
+  // P75f：hub_lesson_propose、hub_reflect_commit、hub_routine_save 三个旧工具也已移出，逐项用例随之删除；
+  // 它们不在清单里这件事由下面的「工具数量」用例断言。
 ] as const;
 describe('二十个工具逐项',()=>{
   for(const [name,valid,invalid] of toolCases){
     it(`${name} 有效参数产生预期结果`,async()=>{
       const {ctx,bot,tc,wake,commitArgs}=toolFixture();
-      if(name==='hub_reflect_commit') ctx.store.table('wakes').patch(wake.id,{variant:'reflection'});
-      if(name==='hub_release') claim(ctx,bot.id,{resource:'report',why:'正在做'});
+      // P74b：员工之间不再直接发消息，这条测 hub_send 本身的用例把发送方设为总管（断言不变）。
+      if(name==='hub_send') ctx.store.table('bots').patch(bot.id,{role:'chief'});
       const result=await runTool(ctx,tc,name,valid==='commit'?commitArgs:valid);
       expect(result.ok).toBe(true);
       if(!result.ok) return;
       expect(result.text).toMatch(/[\u4e00-\u9fff]/);
-      const counts:Record<string,number>={hub_commit:ctx.store.table('commits').count(),hub_reflect_commit:ctx.store.table('commits').count(),hub_handoff:ctx.store.table('handoffs').count(),hub_send:ctx.store.table('mail').count(),hub_routine_save:ctx.store.table('routines').count(),hub_lesson_propose:ctx.store.table('rules').count(),hub_outbox_submit:ctx.store.table('outbox').count()};
+      const counts:Record<string,number>={hub_commit:ctx.store.table('commits').count(),hub_send:ctx.store.table('mail').count(),hub_outbox_submit:ctx.store.table('outbox').count()};
       if(name in counts) expect(counts[name]).toBe(1);
       if(name==='hub_agenda_upsert') expect(ctx.store.table('agenda').count()).toBe(2);
       if(name==='hub_agenda_close') expect(ctx.store.table('agenda').get(id('a'))?.status).toBe('done');
       if(name==='hub_watch_update') expect(ctx.store.table('watches').get(id('wt'))?.intervalMs).toBe(1_800_000);
       if(name==='hub_watch_propose') expect(ctx.store.table('watches').count(w=>w.status==='active')).toBe(2);
       if(name==='hub_goal_upsert') expect(ctx.store.table('goals').count(g=>g.status==='active')).toBe(2);
-      if(name==='hub_release') expect(ctx.store.table('claims').count()).toBe(0);
-      if(name==='hub_claim') expect(ctx.store.table('claims').count()).toBe(1);
-      if(name==='hub_state_get') expect(result.text).toContain('今日余量');
+      // P76c：状态里的预算一行由「今日余量：n 回合，m token」改为「今天自己开工 n / 上限 回合（交给你的事不计入）」（只数员工自己发起的回合）。
+      // （夹具里这位员工有一个正在跑的、自己发起的回合，所以是 1。）
+      if(name==='hub_state_get') expect(result.text).toContain('今天自己开工 1 / 2 回合（交给你的事不计入）');
     });
     it(`${name} 拒绝错误参数并保持数据`,async()=>{
-      const {ctx,tc,wake}=toolFixture();
-      if(name==='hub_reflect_commit') ctx.store.table('wakes').patch(wake.id,{variant:'reflection'});
+      const {ctx,tc}=toolFixture();
       const before=ctx.store.table('agenda').list();
       const result=await runTool(ctx,tc,name,invalid);
       expect(result.ok).toBe(false); if(!result.ok) expect(result.error).toMatch(/[\u4e00-\u9fff]/);
       expect(ctx.store.table('agenda').list()).toEqual(before);
     });
   }
-  for(const name of ['hub_agenda_upsert','hub_agenda_close','hub_watch_update','hub_watch_propose','hub_goal_upsert','hub_outbox_submit','hub_send','hub_handoff','hub_claim','hub_release']) {
+  for(const name of ['hub_agenda_upsert','hub_agenda_close','hub_watch_update','hub_watch_propose','hub_goal_upsert','hub_outbox_submit','hub_send']) {
     it(`${name} L0 不允许改变工作状态`,async()=>{
       const {ctx,bot,tc}=toolFixture(); ctx.store.table('bots').patch(bot.id,{autonomy:'L0'});
       const args=toolCases.find(c=>c[0]===name)![1]; const result=await runTool(ctx,tc,name,args);
@@ -65,13 +59,17 @@ describe('二十个工具逐项',()=>{
     });
   }
 });
-it('工具数量恰好24，每个都有对象JSON Schema和中文说明',()=>{const{ctx}=toolFixture();const tools=buildTools(ctx);expect(tools).toHaveLength(24);expect(new Set(tools.map(t=>t.name)).size).toBe(24);expect(tools.some(t=>t.name==='hub_artifact_read')).toBe(true);expect(tools.some(t=>t.name==='hub_task_list')).toBe(true);expect(tools.some(t=>t.name==='hub_task_update')).toBe(true);expect(tools.some(t=>t.name==='hub_project_context_propose')).toBe(false);expect(tools.some(t=>t.name==='hub_project_task_upsert')).toBe(true);expect(tools.some(t=>t.name==='hub_project_background_update')).toBe(true);for(const t of tools){expect(t.description).toMatch(/[\u4e00-\u9fff]/);expect(t.jsonSchema).not.toHaveProperty('$schema');expect(t.jsonSchema).toMatchObject({type:'object',properties:expect.any(Object)});}});
+// P74b 时是 25；P74d 加入 hub_job_work 后是 26；P75c 加入 hub_memory 后是 27；P75f 移除三个旧工具后是 24。
+it('工具数量恰好25，每个都有对象JSON Schema和中文说明',()=>{const{ctx}=toolFixture();const tools=buildTools(ctx);expect(tools).toHaveLength(25);expect(new Set(tools.map(t=>t.name)).size).toBe(25);expect(tools.some(t=>t.name==='hub_job_work')).toBe(true);expect(tools.some(t=>t.name==='hub_memory')).toBe(true);expect(tools.some(t=>t.name==='hub_skill')).toBe(true);
+  // P74b：hub_job_manage 在清单里；hub_handoff、hub_claim、hub_release 已移出（派活只有一条路）。
+  // P75f：hub_lesson_propose、hub_reflect_commit、hub_routine_save 三个旧工具已移出（旧路径下线）。
+  expect(tools.some(t=>t.name==='hub_job_manage')).toBe(true);for(const gone of ['hub_handoff','hub_claim','hub_release','hub_lesson_propose','hub_reflect_commit','hub_routine_save'])expect(tools.some(t=>t.name===gone)).toBe(false);expect(tools.some(t=>t.name==='hub_agreement_submit')).toBe(true);expect(tools.some(t=>t.name==='hub_team_propose')).toBe(true);expect(tools.some(t=>t.name==='hub_project_put')).toBe(true);expect(tools.some(t=>t.name==='hub_artifact_read')).toBe(true);expect(tools.some(t=>t.name==='hub_task_list')).toBe(true);expect(tools.some(t=>t.name==='hub_task_update')).toBe(true);expect(tools.some(t=>t.name==='hub_project_context_propose')).toBe(false);expect(tools.some(t=>t.name==='hub_project_task_upsert')).toBe(true);expect(tools.some(t=>t.name==='hub_project_background_update')).toBe(true);for(const t of tools){expect(t.description).toMatch(/[\u4e00-\u9fff]/);expect(t.jsonSchema).not.toHaveProperty('$schema');expect(t.jsonSchema).toMatchObject({type:'object',properties:expect.any(Object)});}});
 it('未知工具不抛异常',async()=>{const{ctx,tc}=toolFixture();expect(await runTool(ctx,tc,'missing',{})).toMatchObject({ok:false});});
 it('错误会话不能冒充另一机器人',async()=>{const{ctx,tc}=toolFixture();expect(await runTool(ctx,{...tc,sessionId:'session-b'},'hub_state_get',{})).toMatchObject({ok:false,error:expect.stringContaining('sessionId')});});
 it('错误唤醒单不能借用身份',async()=>{const{ctx,tc}=toolFixture();expect(await runTool(ctx,{...tc,wakeId:'missing'},'hub_state_get',{})).toMatchObject({ok:false,error:expect.stringContaining('wakeId')});});
 it('handler 直接调用也执行等级检查',async()=>{const{ctx,tc,bot}=toolFixture();ctx.store.table('bots').patch(bot.id,{autonomy:'L0'});expect(await buildTools(ctx).find(t=>t.name==='hub_agenda_upsert')!.handler(ctx,tc,agenda)).toMatchObject({ok:false});});
 it('交账后不再允许写事项',async()=>{const{ctx,tc,wake}=toolFixture();ctx.store.table('wakes').patch(wake.id,{status:'committed',commitId:id('c')});expect(await runTool(ctx,tc,'hub_agenda_upsert',agenda)).toMatchObject({ok:false,error:expect.stringContaining('已结束')});});
-it('反思不允许直接发消息，但允许保存套路',async()=>{const{ctx,tc,wake}=toolFixture();ctx.store.table('wakes').patch(wake.id,{variant:'reflection'});expect(await runTool(ctx,tc,'hub_send',{to:'b_0000000002',text:'嗨'})).toMatchObject({ok:false,error:expect.stringContaining('只读')});expect(await runTool(ctx,tc,'hub_routine_save',{name:'方法',whenToUse:'复核',steps:['查看证据']})).toMatchObject({ok:true});});
+it('反思回合只读，写工具一律拒绝',async()=>{const{ctx,tc,wake}=toolFixture();ctx.store.table('wakes').patch(wake.id,{variant:'reflection'});expect(await runTool(ctx,tc,'hub_send',{to:'b_0000000002',text:'嗨'})).toMatchObject({ok:false,error:expect.stringContaining('只读')});expect(await runTool(ctx,tc,'hub_agenda_upsert',agenda)).toMatchObject({ok:false,error:expect.stringContaining('只读')});});
 it('建议等级目标提议接受前不覆盖原目标',async()=>{const{ctx,tc,bot}=toolFixture();ctx.store.table('bots').patch(bot.id,{autonomy:'L1'});expect(await runTool(ctx,tc,'hub_goal_upsert',{...goal,id:id('g'),title:'新标题'})).toMatchObject({ok:true});expect(ctx.store.table('goals').get(id('g'))?.title).not.toBe('新标题');const proposed=ctx.store.table('goals').list(g=>g.status==='proposed')[0]!;const inbox=ctx.store.table('inbox').list(i=>i.refId===proposed.id)[0]!;await answerInbox(ctx,inbox.id,'接受');expect(ctx.store.table('goals').get(id('g'))?.title).toBe('新标题');});
 it('试岗 L3 仍只能提议新增关注',async()=>{const{ctx,tc,bot}=toolFixture();ctx.store.table('bots').patch(bot.id,{autonomy:'L3',lifecycle:'probation'});await runTool(ctx,tc,'hub_watch_propose',watch);expect(ctx.store.table('watches').list(w=>w.target===watch.target)[0]?.status).toBe('proposed');});
 it('L2 家目录文件可生效，家目录外只能提议',async()=>{const{ctx,tc,bot}=toolFixture();await runTool(ctx,tc,'hub_watch_propose',{kind:'file',target:`${bot.homeDir}/work/data`,why:'关注'});await runTool(ctx,tc,'hub_watch_propose',{kind:'file',target:'/owner/data',why:'关注'});expect(ctx.store.table('watches').list(w=>w.target.endsWith('/work/data'))[0]?.status).toBe('active');expect(ctx.store.table('watches').list(w=>w.target==='/owner/data')[0]?.status).toBe('proposed');});
@@ -84,4 +82,4 @@ it('复查无变化后自动将同标题间隔加倍',async()=>{const{ctx,tc,now
 it('缺少wakeId也不能绕过当前反思的只读限制',async()=>{const{ctx,tc,wake}=toolFixture();ctx.store.table('wakes').patch(wake.id,{variant:'reflection'});expect(await runTool(ctx,{...tc,wakeId:null},'hub_send',{to:'b_0000000002',text:'继续'})).toMatchObject({ok:false,error:expect.stringContaining('只读')});});
 it('暂停和隔离机器人不能经工具写数据，仍可读状态',async()=>{const{ctx,tc,bot}=toolFixture();for(const lifecycle of ['paused','quarantined','retired','draft'] as const){ctx.store.table('bots').patch(bot.id,{lifecycle});expect(await runTool(ctx,tc,'hub_agenda_upsert',agenda)).toMatchObject({ok:false,error:expect.stringContaining('不在岗')});expect(await runTool(ctx,tc,'hub_state_get',{})).toMatchObject({ok:true});}});
 it('授权撤销后不能重新激活工作数据关注，但允许暂停',async()=>{const{ctx,tc}=toolFixture();ctx.settings.workDataPaths=['/hub/shared/company'];ctx.store.table('watches').patch(id('wt'),{kind:'file',target:'/hub/shared/company/data',intervalMs:null,status:'paused'});expect(await runTool(ctx,tc,'hub_watch_update',{id:id('wt'),status:'active'})).toMatchObject({ok:false,error:expect.stringContaining('工作数据')});expect(await runTool(ctx,tc,'hub_watch_update',{id:id('wt'),status:'paused'})).toMatchObject({ok:true});});
-it('超长目标不能把预算和等待事项挤出状态摘要',async()=>{const{ctx,tc}=toolFixture();ctx.store.table('goals').patch(id('g'),{title:'长目标'.repeat(3000)});const result=await runTool(ctx,tc,'hub_state_get',{});expect(result.ok).toBe(true);if(result.ok){expect(result.text).toContain('今日余量');expect(result.text).toContain('在等');expect(byteLength(result.text)).toBeLessThanOrEqual(ctx.settings.c03.stateMaxBytes);}});
+it('超长目标不能把预算和等待事项挤出状态摘要',async()=>{const{ctx,tc}=toolFixture();ctx.store.table('goals').patch(id('g'),{title:'长目标'.repeat(3000)});const result=await runTool(ctx,tc,'hub_state_get',{});expect(result.ok).toBe(true);if(result.ok){expect(result.text).toContain('今天自己开工');expect(result.text).toContain('在等');expect(byteLength(result.text)).toBeLessThanOrEqual(ctx.settings.c03.stateMaxBytes);}});

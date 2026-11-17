@@ -7,21 +7,23 @@ import { sendOwnerMessage } from '../src/outreach/thread.js';
 import { goalFixture } from './model-fixtures.js';
 import { resolveSettings } from '../src/config/defaults.js';
 
-test('通知失败仍保存提问和全部提议，返回明确提示', async () => {
+test('宿主通知不可用时，仍保存提问和全部提议（P76h：交账不再推送，也就没有结果路由失败的提示）', async () => {
   const { ctx, toolCtx } = await turnContext();
   ctx.host.notify = async () => { throw new Error('通知渠道离线'); };
   const result = await processCommit(ctx, toolCtx, commitArgs({ report: '需要关注的报告', importance: 9,
     ownerQuestion: { text: '确认路线', options: ['甲', '乙'], defaultOption: '甲', whyNeeded: '继续需要确认' },
     proposals: [{ title: '独立提议', detail: '值得尝试', value: 0.8, confidence: 0.8 }] }));
-  expect(result.ok).toBe(true); if (result.ok) expect(result.text).toContain('结果路由失败');
+  // P76h：原断言是返回文字含「结果路由失败」（单推失败被汇总抛出）；现在不推送，交账正常完成。
+  expect(result.ok).toBe(true); if (result.ok) expect(result.text).not.toContain('结果路由失败');
   expect(ctx.store.table('inbox').list().map(i => i.type)).toEqual(expect.arrayContaining(['question', 'proposal']));
   expect(ctx.store.log('thread').all().map(m => m.kind)).toEqual(expect.arrayContaining(['report', 'question', 'proposal']));
 });
-test('完成验收题会申请P1单推', async () => {
+test('完成验收题只进待你处理，不单推（P76h）', async () => {
+  // P76h：原断言是「验收题申请一次 P1 单推、条目 pushed 为 true」；验收不属于四类，不推送。
   const { ctx, toolCtx } = await turnContext(); ctx.store.table('goals').put(goalFixture);
   await processCommit(ctx, toolCtx, commitArgs({ outcome: 'done' }));
-  expect(ctx.host.calls.filter(c => c.method === 'notify')[0]?.args[0]).toMatchObject({ level: 'P1' });
-  expect(ctx.store.table('inbox').list()[0]?.pushed).toBe(true);
+  expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(0);
+  expect(ctx.store.table('inbox').list()[0]?.pushed).toBe(false);
 });
 test('保护文件读取失败不妨碍结束与计量', async () => {
   const { ctx, bot, ticket } = await turnContext();

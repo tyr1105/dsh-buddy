@@ -138,7 +138,7 @@ export function OfficeReplayPage(props: Props): ReactNode {
   /** 下钻和重试也属于宿主回调边界，错误保留在本页，不击穿桌面事件。 */
   const safeProps = { ...props,
     onOpenBot: (botId: string, wakeId?: string, artifactId?: string) => {
-      try { props.onOpenBot(botId, wakeId, artifactId) } catch { setError('队友详情没有打开，请重试') }
+      try { props.onOpenBot(botId, wakeId, artifactId) } catch { setError('员工详情没有打开，请重试') }
     },
     onOpenInbox: (inboxId?: string) => {
       try { props.onOpenInbox(inboxId) } catch { setError('待办没有打开，请重试') }

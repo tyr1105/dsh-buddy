@@ -8,6 +8,7 @@ import { quarantine } from '../src/health/quarantine.js';
 import { syncAlertItems } from '../src/outreach/alerts.js';
 import { createInboxItem, closeAlertItem } from '../src/outreach/inbox.js';
 import { pushHistory } from '../src/outreach/push.js';
+import { flushPushQueue } from '../src/outreach/notify.js';
 import { onQuotaError } from '../src/quota/window.js';
 import { buildSnapshot } from '../src/scheduler/snapshot.js';
 import { createSimWorld } from '../src/sim/runner.js';
@@ -46,9 +47,14 @@ function expectNewRound(ctx: Awaited<ReturnType<typeof setup>>['ctx'], code: str
   expect(next).toMatchObject({ firstAt: at, lastAt: at, count: 1 });
   const cards = ctx.store.table('inbox').list(row => row.type === 'alert' && row.refId === next.id);
   expect(cards).toHaveLength(1);
-  expect(cards[0]).toMatchObject({ status: 'open', pushed: true });
-  expect(ctx.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(2);
-  expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(2);
+  // P76h：原断言是「新一轮的卡 pushed 为 true、两轮共推送 2 次」；现在只有鉴权告警推送，其余告警（如隔离）不推送。
+  const pushes = code === 'auth';
+  expect(cards[0]).toMatchObject({ status: 'open', pushed: pushes });
+  // P71：中心告警（没有对应队友）只进「待你处理」和推送，不再写进任何对话；队友的告警两轮都落在它自己的私聊里。
+  const threadAlerts = ctx.store.log('thread').all().filter(row => row.kind === 'alert');
+  if (next.botId === null) expect(threadAlerts).toHaveLength(0);
+  else expect(threadAlerts.map(row => row.thread)).toEqual([next.botId, next.botId]);
+  expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(pushes ? 2 : 0);
   return cards[0]!;
 }
 
@@ -73,7 +79,8 @@ describe('M10 恢复或确认后的新一轮告警', () => {
     expect(secondCard.id).not.toBe(firstCard.id);
     expect(world.store.table('inbox').get(secondCard.id)?.refId).toBe(current.id);
     expect(world.host.notifications.filter(row => row.level === 'P0')).toHaveLength(2);
-    expect(world.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(2);
+    // P71：鉴权告警属于中心，不再写进团队线程或任何对话；新一轮靠新卡和 P0 推送体现。
+    expect(world.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(0);
     expect(buildSnapshot(snapshot, botFixture.id, world.clock.now()).authBlocked).toBe(true);
     expect(await world.hub.api.answerInbox(secondCard.id, '知道了')).toMatchObject({ ok: true });
     expect(buildSnapshot(snapshot, botFixture.id, world.clock.now()).authBlocked).toBe(false);
@@ -103,20 +110,22 @@ describe('M10 恢复或确认后的新一轮告警', () => {
     expect(buildSnapshot(ctx, bots[0]!.id, ctx.clock.now()).authBlocked).toBe(false);
   });
 
-  it.each([2, -2])('额度卡确认后时间戳差 %i 毫秒的故障建新卡并再次 P0 推送', async offset => {
+  // P76d 修改：原用例断言「额度卡确认后，时间戳差 2 毫秒的故障建新卡并再次 P0 推送」。额度用完不再建告警条目、不推送（设计稿场景 E），
+  // 所以改为断言：连续两次额度报错（第二次的时间戳早 2 毫秒或晚 2 毫秒）都不建告警、不建「待你处理」卡、不推送；告警「新一轮」的机制由上面的鉴权用例和下面的隔离用例继续覆盖。
+  it.each([2, -2])('额度报错（后一次时间戳差 %i 毫秒）不建告警、不建卡、不推送', async offset => {
     const { ctx, hub } = await setup();
     const firstAt = ctx.clock.now();
     onQuotaError(ctx, firstAt);
     await hub.tick();
-    const first = ctx.store.table('alerts').list(row => row.code === 'quota')[0]!;
-    expect(await hub.api.answerInbox(hub.api.inbox().items[0]!.id, '知道了')).toMatchObject({ ok: true });
     ctx.clock.advance(3 * MINUTE);
     onQuotaError(ctx, firstAt + offset);
     await hub.tick();
-    expectNewRound(ctx, 'quota', first.id, firstAt + offset);
+    expect(ctx.store.table('alerts').list(row => row.code === 'quota')).toEqual([]);
+    expect(hub.api.inbox().items).toEqual([]);
+    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(0);
   });
 
-  it.each([2, -2])('解除隔离后时间戳差 %i 毫秒再次隔离，保留新的开放卡与 P1 推送', async offset => {
+  it.each([2, -2])('解除隔离后时间戳差 %i 毫秒再次隔离，保留新的开放卡（P76h：隔离告警不推送）', async offset => {
     const { ctx, hub, bots } = await setup();
     const firstAt = ctx.clock.now();
     quarantine(ctx, bots[0]!.id, '连续错误', firstAt);
@@ -150,21 +159,27 @@ describe('M10 恢复或确认后的新一轮告警', () => {
     raiseAlert(ctx, input);
     await syncAlertItems(ctx);
     expect(ctx.store.table('inbox').list(row => row.status === 'open')).toHaveLength(1);
-    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(2);
+    // P76h：原断言是「P1 普通告警两轮各推送一次，共 2 次」；现在非鉴权告警不推送。
+    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(0);
   });
 
   it('持续故障跨一小时换记录仍属于同一轮，不能绕过 24 小时推送去重', async () => {
+    // P76h：原用例用额度告警，断言推送审计为 ['sent', 'duplicate']；额度告警不再推送，改用鉴权告警（会推送）。
+    // 同一轮不会再建第二张卡，也就不会再有第二次推送申请，审计里只有一条 sent。
     const { ctx } = await setup();
-    const first = raiseAlert(ctx, quota);
+    const auth = { ...quota, code: 'auth' };
+    const first = raiseAlert(ctx, auth);
     await syncAlertItems(ctx);
+    await flushPushQueue(ctx, ctx.clock.now());
     ctx.clock.advance(HOUR);
-    const next = raiseAlert(ctx, quota);
+    const next = raiseAlert(ctx, auth);
     await syncAlertItems(ctx);
+    await flushPushQueue(ctx, ctx.clock.now());
     expect(next.id).not.toBe(first.id);
     expect(next.episodeId).toBe(first.id);
     expect(next.count).toBe(2);
     expect(ctx.store.table('inbox').list(row => row.status === 'open')).toHaveLength(1);
-    expect(pushHistory(ctx).map(row => row.result)).toEqual(['sent', 'duplicate']);
+    expect(pushHistory(ctx).map(row => row.result)).toEqual(['sent']);
   });
 
   it('跨窗口普通告警确认后，不捡回更早 count=1 的历史观测', async () => {
@@ -182,7 +197,8 @@ describe('M10 恢复或确认后的新一轮告警', () => {
     expect(next.episodeId).toBe(next.id);
     await syncAlertItems(ctx);
     expect(ctx.store.table('inbox').list(row => row.status === 'open')).toHaveLength(0);
-    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(1);
+    // P76h：原断言是「额度告警推送过 1 次」；额度告警不再推送。
+    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(0);
   });
 });
 
@@ -213,8 +229,10 @@ describe('M10 旧档闭卡重开与开放卡合并', () => {
     await syncAlertItems(ctx);
     expect(ctx.store.table('inbox').list(row => row.status === 'open')).toHaveLength(delta > 0 ? 1 : 0);
     expect(ctx.store.table('inbox').get(card.id)?.status).toBe('closed');
-    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(delta > 0 ? 2 : 1);
-    expect(ctx.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(delta > 0 ? 2 : 1);
+    // P76h：原断言是「补卡时多推送一次（delta>0 共 2 次，否则 1 次）」；额度告警不再推送，两种情况都是 0 次。
+    expect(pushHistory(ctx).filter(row => row.result === 'sent')).toHaveLength(0);
+    // P71：中心告警不再写进任何对话，补卡与否只看卡片和推送。
+    expect(ctx.store.log('thread').all().filter(row => row.kind === 'alert')).toHaveLength(0);
   });
 
   it.each(['latest_closed', 'older_closed', 'all_closed'] as const)('FileStore 旧档 %s：保留唯一开放卡，全部关闭则补新卡', async mode => {
@@ -240,9 +258,10 @@ describe('M10 旧档闭卡重开与开放卡合并', () => {
     const open = store.table('inbox').list(row => row.status === 'open');
     expect(store.table('alerts').list(row => row.status === 'open')).toHaveLength(1);
     expect(open).toHaveLength(1);
-    expect(open[0]).toMatchObject({ refId: latest.id, title: '中心告警：额度', pushed: true });
+    // P76h：原断言是「补的新卡 pushed 为 true、补卡时推送 1 次」；额度告警不再推送，新卡 pushed 为 false；保留的旧卡仍是旧存档里的 true。
+    expect(open[0]).toMatchObject({ refId: latest.id, title: '中心告警：额度', pushed: mode !== 'all_closed' });
     if (mode === 'all_closed') expect(cards.map(row => row.id)).not.toContain(open[0]!.id);
     else expect(open[0]!.id).toBe(cards[mode === 'latest_closed' ? 0 : 1]!.id);
-    expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(mode === 'all_closed' ? 1 : 0);
+    expect(ctx.host.calls.filter(row => row.method === 'notify')).toHaveLength(0);
   });
 });

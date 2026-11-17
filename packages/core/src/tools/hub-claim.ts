@@ -1,4 +1,8 @@
-/** 认领工具返回实际持有者，冲突时不覆盖他人的负责范围。 */
+/**
+ * 认领工具返回实际持有者，冲突时不覆盖他人的负责范围。
+ * P74b 起不再注册为工具：一件事只有一位执行者，认领锁没有用处，少一个工具每次请求也少带一份说明。
+ * 文件保留，认领表与过期处理（peer/claims.ts）仍在用。
+ */
 import { claim, ClaimInputSchema } from '../peer/claims.js';
 import { defineTool } from './common.js';
 export const hubClaim = defineTool('hub_claim', '认领 resource，说明 why；minutes 默认 120、最长 1440。已被同伴持有会返回持有者和到期时间，不会抢占。', ClaimInputSchema, 'L1', (ctx, tc, args) => {

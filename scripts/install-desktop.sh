@@ -118,4 +118,4 @@ if [ -n "$BACKUP_DIR" ]; then rm -rf "$BACKUP_DIR"; fi
 # ⑥ 成功提示与下一步。
 echo "[install] 安装完成。装的是一份固定副本：$INSTALL_DIR"
 echo "[install] 开发时重新构建不会影响桌面版。想更新到最新代码，退出 DSH 后再运行一次这条命令。"
-echo "[install] 下一步：打开 DeepSeek Harness，左侧栏会出现「队友」。"
+echo "[install] 下一步：打开 DeepSeek Harness，在左栏顶部的「对话 / 员工」切换里点「员工」。"

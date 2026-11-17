@@ -1,7 +1,6 @@
 /** 状态工具用中文概览呈现事实和今日预算，避免模型为一个问题读取整份持久化 JSON。 */
 import { z } from 'zod';
-import { botBudgetFor, dailyThinkCapFor } from '../config/defaults.js';
-import { botUsageToday } from '../quota/usage.js';
+import { selfWorkUsageToday } from '../quota/usage.js';
 import { teamSummary } from '../peer/team.js';
 import { formatShort } from '../util/time.js';
 import { truncateBytes } from '../util/text.js';
@@ -16,8 +15,8 @@ export const hubStateGet = defineTool('hub_state_get', '了解自己的志向、
         return { ok: true, text: truncateBytes(`团队现在\n${teamSummary(ctx)}`, ctx.settings.c03.stateMaxBytes) };
     }
     const now = ctx.clock.now();
-    const usage = botUsageToday(ctx, bot.id, now);
-    const budget = botBudgetFor(bot.lifecycle, ctx.settings);
+    // P76c：只数员工自己发起的回合，与闸门同一口径。
+    const selfTurns = selfWorkUsageToday(ctx, bot.id, now).turns;
     const artifacts = await artifactList(ctx, bot.id, { kind: 'bot', botId: bot.id });
     /** 把已有事实拼成简短列表，空列表明确显示无，避免把缺内容误当成功。 */
     const describe = (items: string[]) => items.length ? items.join('；') : '无';
@@ -28,7 +27,7 @@ export const hubStateGet = defineTool('hub_state_get', '了解自己的志向、
         `关注：${describe(ctx.store.table('watches').list(w => w.botId === bot.id && w.status !== 'expired').map(w => `[${w.id}] ${w.target}（${w.status === 'active' ? '生效' : w.status === 'paused' ? '暂停' : '提议'}）`))}`,
         `产物固定引用：${describe(artifacts.versions.slice(0, 3).map(version => version.reference))}`,
         `在等：${describe(ctx.store.table('inbox').list(i => i.botId === bot.id && i.status === 'open').map(i => i.title).concat(ctx.store.table('handoffs').list(h => h.from === bot.id && h.status === 'offered').map(h => `同伴接收 ${h.task}`)))}`,
-        `今日余量：${Math.max(0, Math.min(budget.dailyTurns, dailyThinkCapFor(bot.autonomy, bot.lifecycle, ctx.settings)) - usage.turns)} 回合，${Math.max(0, budget.dailyTokens - usage.tokens)} token`];
+        `今天自己开工 ${selfTurns} / ${ctx.settings.botDailyTurnBudget} 回合（交给你的事不计入）`];
     // 每节保留独立字节份额，长目标不能挤掉最后的等待事项和预算。
     const allowance = Math.max(0, Math.floor((ctx.settings.c03.stateMaxBytes - summary.length + 1) / summary.length));
     return { ok: true, text: truncateBytes(summary.map(section => truncateBytes(section, allowance)).join('\n'), ctx.settings.c03.stateMaxBytes) };

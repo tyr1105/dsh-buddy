@@ -54,24 +54,27 @@ export function fallbackSpace(reason: SpaceFallbackReason): HostSpaceState {
 /**
  * 侧栏根：导航与工作区区域共同的父节点，也就是顶部切换器该待的地方。
  *
- * 主路径仍只认已验证的相邻结构（导航紧接工作区区域），不靠宿主随版本变化的
- * CSS 哈希；但真实宿主里区域常被再包一层，严格相邻会判定失败、整根侧栏降级，
- * 结果就是主人截图里的「原生侧栏 + 我们页面内又画一列」。因此补两级只读回退：
- * 1) 从入口图标所在导航向上找同时含功能列表与工作区区域的容器（找不到再用父节点）；
- * 2) 从标识行/新会话按钮向上找同一形状的容器。
- * 找不到才返回 null，交给页面内降级。
+ * 先从入口导航向上找带顶部标识/新会话行的完整侧栏，兼容新版把列表放入
+ * 独立滚动容器的结构；不能直接把导航父节点当根，否则空间切换器与功能折叠
+ * 按钮会同时争抢导航前的位置。旧版无顶部标识时保留相邻结构与祖先回退；
+ * 入口未注册时再从标识行探测。绝不把 body/html 当侧栏，找不到就页面内降级。
  */
 export function findHostSpaceRoot(doc: Document): HTMLElement | null {
   const nav = findHostNavigation(doc)
-  if (nav?.parentElement) return nav.parentElement
+  const entryNav = nav ?? (doc.querySelector('.ah-entry-icon')?.closest('nav') as HTMLElement | null)
+  // 新版 DSH 把功能导航和工作区包进 scrollArea；它只是滚动区域，不是整根侧栏。
+  // 必须先找到带顶部标识/新会话行的共同祖先，否则两个控件都会抢 nav 前的位置：
+  // 切换器不断补位，功能折叠按钮不断重建，观察器互相触发并让 React 持续重绘。
+  const frameRoot = enclosingSidebarRoot(entryNav, true)
+  if (frameRoot) return frameRoot
+  if (nav?.parentElement && !isPageRoot(nav.parentElement)) return nav.parentElement
   // 入口图标所在的导航可能被包在功能列表内部：直接取父节点会把「侧栏根」认成
   // 一小段面板，原生工作区区域就不在根下，去重时漏掉它。所以从这个节点向上找
   // 同时含功能列表与工作区区域的祖先，找不到才退回第一父节点。
-  const entryNav = doc.querySelector('.ah-entry-icon')?.closest('nav') as HTMLElement | null
   if (entryNav) {
     const wideRoot = enclosingSidebarRoot(entryNav)
     if (wideRoot) return wideRoot
-    if (entryNav.parentElement) return entryNav.parentElement
+    if (entryNav.parentElement && !isPageRoot(entryNav.parentElement)) return entryNav.parentElement
   }
   const anchor = (doc.querySelector('[class*="logoRow"]')
     ?? doc.querySelector('button[class*="newSession"]')) as HTMLElement | null
@@ -79,15 +82,24 @@ export function findHostSpaceRoot(doc: Document): HTMLElement | null {
 }
 
 /**
- * 向上找同时含「功能列表」与「工作区区域」的容器；找不到返回 null。
- * 只读，不依赖类名哈希前缀，宿主换版本时仍然有效。
+ * body/html 属于整页，不能把不同区域的标识、导航拼成一个侧栏。
  */
-function enclosingSidebarRoot(start: HTMLElement | null): HTMLElement | null {
+function isPageRoot(node: HTMLElement): boolean {
+  return node.tagName === 'BODY' || node.tagName === 'HTML'
+}
+
+/**
+ * 向上找同时含「功能列表」与「工作区区域」的容器；找不到返回 null。
+ * 完整框架还要求直属顶部标识或新会话行，避免把新版 scrollArea 或整页外壳认作侧栏。
+ * 只读，不依赖类名哈希前缀；旧版没有顶部标识的降级路径仍沿用原来的结构判断。
+ */
+function enclosingSidebarRoot(start: HTMLElement | null, requireHeader = false): HTMLElement | null {
   let current: HTMLElement | null = start
-  while (current) {
+  while (current && !isPageRoot(current)) {
     const hasPanels = current.querySelector('[class*="panelList"]') !== null
     const hasRegion = current.querySelector('[class*="regionArea"]') !== null
-    if (hasPanels && hasRegion) return current
+    const hasHeader = !requireHeader || current.querySelector(':scope > [class*="logoRow"], :scope > [class*="newSession"]') !== null
+    if (hasPanels && hasRegion && hasHeader) return current
     current = current.parentElement
   }
   return null

@@ -1,9 +1,14 @@
-/** 工具适配表把宿主常见名称变成明确的读、写或执行动作；未知参数保持审批，避免误放行。 */
+/**
+ * 工具适配表把宿主常见名称变成明确的读、写或执行动作；未知参数保持审批，避免误放行。
+ * P69：上下文校验里要声明 sandboxed、tmpDirs、projectDirs，zod 的普通对象会悄悄丢掉没声明的字段，
+ * 不声明的话沙箱开关根本传不进分类器。命令分类的结果还要过一道原文里的凭据字样检查（scanOpaque）。
+ */
 import { z } from 'zod';
 import { parseInput, validationMessage } from '../engine/validation.js';
 import { classifyCommand, classifyArgv } from './commands.js';
 import { classifyPath, mostDangerous, resolveGatePath } from './paths.js';
 import { classifyUrl } from './network-options.js';
+import { scanOpaque } from './sandbox-rules.js';
 import { pathArguments, editTargetPaths, selectedCommand, commandArguments } from './tool-targets.js';
 import type { GateContext, Classification } from './paths.js';
 export type { GateContext, Classification, ToolActionClass } from './paths.js';
@@ -64,7 +69,11 @@ export const TOOL_SHAPES: readonly ToolShape[] = [
     { kind: 'web_search', names: ['web_search'] }, { kind: 'web_fetch', names: ['web_fetch'] },
 ];
 const ContextSchema = z.object({ homeDir: z.string().min(1), sharedDir: z.string().min(1), rootDir: z.string().min(1), workDataAllowed: z.boolean(),
-    maxCommandDepth: z.number().int().min(1).max(4).optional(), ownerHome: z.string().optional(), workDataPaths: z.array(z.string()).optional(), cwd: z.string().optional(), reflection: z.boolean().optional(), autonomy: z.string().optional() });
+    maxCommandDepth: z.number().int().min(1).max(4).optional(), ownerHome: z.string().optional(), workDataPaths: z.array(z.string()).optional(), cwd: z.string().optional(), reflection: z.boolean().optional(), autonomy: z.string().optional(),
+    // P69：沙箱开关、临时目录、项目目录。缺省都等于旧行为。
+    sandboxed: z.boolean().optional(), tmpDirs: z.array(z.string()).optional(), projectDirs: z.array(z.string()).optional(),
+    // P74r16a：中心根目录的真实路径。zod 的普通对象会悄悄丢掉没声明的字段，不声明的话它传不进分类器。
+    realRootDir: z.string().optional() });
 /** 把宿主工具适配为读、写或命令分类；无法识别的工具和参数保守进入审批。 */
 export function classifyToolCall(tool: string, args: unknown, gctx: GateContext): Classification {
     const ctx = parseInput(ContextSchema, gctx, '动作上下文');
@@ -100,9 +109,10 @@ export function classifyToolCall(tool: string, args: unknown, gctx: GateContext)
         if (!command)
             return { cls: 'C', reason: '执行命令参数缺失' };
         const argv = commandArguments(input);
+        // 沙箱开着时，内联代码放行之后还要在命令原文里找一遍写死的凭据路径（尽力而为，见 sandbox-rules.ts）。
         if (argv)
-            return classifyArgv([command, ...argv], commandCtx);
-        return classifyCommand(command, commandCtx);
+            return scanOpaque(classifyArgv([command, ...argv], commandCtx), [command, ...argv].join(' '), commandCtx);
+        return scanOpaque(classifyCommand(command, commandCtx), command, commandCtx);
     }
     const paths = shape.paths?.(input, pathContext) ?? [];
     if (!paths.length)

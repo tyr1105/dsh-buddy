@@ -50,7 +50,7 @@ describe('空间能力探测', () => {
   })
 
   it('文案固定为「对话 / 队友」', () => {
-    expect(SPACE_MODE_LABELS).toEqual({ chat: '对话', team: '队友' })
+    expect(SPACE_MODE_LABELS).toEqual({ chat: '对话', team: '员工' })
   })
 })
 
@@ -72,7 +72,7 @@ describe('共享切换控件契约', () => {
   it('文案不写死第二份，统一从常量取', () => {
     expect(source).toContain('SPACE_MODE_LABELS[mode]')
     expect(source).not.toContain("'对话'")
-    expect(source).not.toContain("'队友'")
+    expect(source).not.toContain("'员工'")
   })
 })
 

@@ -1,6 +1,6 @@
 # scripts/ 说明（给主人看）
 
-这里放的是「队友中心」插件的各种脚本。按一条命令做什么来写。
+这里放的是 DSH Buddy 插件的各种脚本。按一条命令做什么来写。
 主人的终端跑不了带引号、反斜杠或空格路径的命令，所以桌面版的安装/卸载入口
 会先复制到 `$HOME/.agent-hub/` 下（复制命令见下面「总控要做的一次性准备」）。
 
@@ -8,7 +8,7 @@
 
 | 一条命令 | 做什么 |
 |---|---|
-| `bash $HOME/.agent-hub/install.sh` | 构建插件，复制一份固定副本到 `$HOME/.agent-hub/plugin`，再装进 DeepSeek Harness 桌面版。装好后打开 DSH，左侧栏会出现「队友」。运行前要先完全退出 DSH（菜单栏 → 退出）。 |
+| `bash $HOME/.agent-hub/install.sh` | 构建插件，复制一份固定副本到 `$HOME/.agent-hub/plugin`，再装进 DeepSeek Harness 桌面版。装好后打开 DSH，在左栏顶部的「对话 / 员工」切换里点「员工」。运行前要先完全退出 DSH（菜单栏 → 退出）。 |
 | `bash $HOME/.agent-hub/uninstall.sh` | 从桌面版移除插件，并删除固定副本。中心数据保留在 `~/AgentHub`，不会删除。运行前同样要先退出 DSH。 |
 
 两条脚本都会先检查 DSH 是否在运行：在运行就提示退出后重来，不会硬装。开着走查沙箱不算在运行。
@@ -47,5 +47,5 @@ make-entrypoints.sh 会在 `$HOME/.agent-hub/` 下生成两个极短的入口脚
 | `bash scripts/sandbox.sh e2e` | 端到端冒烟：隔离沙箱 + 假模型，建一个机器人跑两个回合，不花真实额度。 |
 | `bash scripts/sandbox.sh real` | 真实模型沙箱测试：沿用主人桌面版的模型配置（GLM）跑一个真实机器人的两个回合，会消耗少量额度。启动方式见脚本内注释：只把桌面版补丁的路径交给 dsh，脚本本身不读取它。 |
 | `bash scripts/sandbox.sh install / run / dump / remove / status` | 沙箱环境的安装、前台启动、配置查看、移除与状态。 |
-| `bash scripts/dev/ui-sandbox.sh` | 界面走查：开一个能在浏览器里点的隔离沙箱（端口 3951）+ 走查专用假模型，打印带 token 的网址。在队友线程里发带暗号的消息就能出对应场景：【提问】提问卡、【提议】提议卡、【审批】审批卡（批准后中心真的执行一次，发到假模型自己的 /hook-test）、【慢】回合故意拖 90 秒，用来测「打断」（要点两次确认）。Ctrl+C 结束。和 `sandbox.sh e2e` 共用 18080 端口，不要同时跑。 |
+| `bash scripts/dev/ui-sandbox.sh` | 界面走查：开一个能在浏览器里点的隔离沙箱（端口 3951）+ 走查专用假模型，打印带 token 的网址。在员工的对话里发带暗号的消息就能出对应场景：【提问】提问卡、【提议】提议卡、【审批】审批卡（批准后中心真的执行一次，发到假模型自己的 /hook-test）、【慢】回合故意拖 90 秒，用来测「打断」（要点两次确认）。Ctrl+C 结束。和 `sandbox.sh e2e` 共用 18080 端口，不要同时跑。 |
 | `node scripts/dev/fake-model-cards.mjs` | 走查专用假模型本体（ui-sandbox.sh 会自动拉起，一般不用单独跑）。日志在 `.sandbox/fake-model-cards.log`。 |

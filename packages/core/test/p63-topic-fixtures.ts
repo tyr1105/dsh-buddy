@@ -13,8 +13,10 @@ import { commitArgs } from './c03-turn-fixtures.js';
 import { okData } from './c04-api-fixtures.js';
 
 /** 第一位是总管（默认成为负责人），其余是执行风格的成员。 */
-export async function topicHub(names: string[] = ['老大', '小王', '小李'], settings: Record<string, unknown> = {}) {
-  const ctx = createTestContext();
+export async function topicHub(names: string[] = ['老大', '小王', '小李'], settings: Record<string, unknown> = {}, ctxExtra: Record<string, unknown> = {}) {
+  // P81：ctxExtra 并进测试上下文（例如 ownerHome：主人的主目录），默认不带，其余测试不受影响。
+  // 类型上按「没有覆盖项」处理（保持返回类型与以前一致）；运行时 ctxExtra 的字段照常并进上下文。
+  const ctx = createTestContext(ctxExtra as Record<never, never>);
   Object.assign(ctx.settings, settings);
   const now = ctx.clock.now();
   const bots: Bot[] = [];

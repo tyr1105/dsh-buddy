@@ -22,24 +22,28 @@ describe('场景 8–12：调度和运行边界', () => {
     }
   });
 
-  it('9a：当天六个自主回合后，第七个被个人预算拦住', async () => {
+  // P76c：原用例「当天六个自主回合后，第七个被个人预算拦住」靠显式设 6 验证边界，拦截原因是 bot_budget。
+  // 现在每天上限只剩一条（默认 2，原因 daily_cap），改为默认值：当天两个自己发起的回合之后，第三个被每天上限拦住；队列里保留这个候选。
+  it('9a：当天两个自主回合后，第三个被每天上限拦住', async () => {
     const world = await createSimWorld({ bots: bots(), startAt });
     world.host.registerBrain(botIds[0], progressBrain);
     await advance(world, 3 * minute);
-    for (let index = 0; index < 7; index++) {
+    for (let index = 0; index < 3; index++) {
       queue(world, botIds[0], `fact:${index}`);
       await world.hub.tick();
       await world.host.settle();
-      if (index < 6) await advance(world, 2 * hour);
+      if (index < 2) await advance(world, 2 * hour);
     }
-    expect(world.store.table('wakes').count()).toBe(6);
-    expect(world.store.log('ledger').all().filter(l => l.kind === 'turn')).toHaveLength(6);
-    expect(world.store.log('appraisals').all().some(a => a.suppressedBy === 'bot_budget')).toBe(true);
+    expect(world.store.table('wakes').count()).toBe(2);
+    expect(world.store.log('ledger').all().filter(l => l.kind === 'turn')).toHaveLength(2);
+    expect(world.store.log('appraisals').all().some(a => a.suppressedBy === 'daily_cap')).toBe(true);
     expect(world.store.table('queue').count()).toBe(1);
   });
 
   it('9b：额度报错全体休息，窗口后只放一轮探针并恢复', async () => {
-    const world = await createSimWorld({ bots: bots(2), startAt });
+    // 设为 6 只为在额度报错前后连续跑三个自己发起的回合（成功、报错、探针），否则默认的每天 2 个上限会先拦住探针；
+    // 本场景要证明的是额度恢复，与每天上限无关（P76b 加的显式设置，P76c 保留并改写原因）。
+    const world = await createSimWorld({ bots: bots(2), startAt, settings: { botDailyTurnBudget: 6 } });
     world.host.registerBrain(botIds[0], progressBrain);
     await advance(world, 3 * minute);
     queue(world, botIds[0], 'first-success');

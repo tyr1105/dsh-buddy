@@ -146,6 +146,6 @@ export const OWNER_SETTABLE_TASK_STATUSES = ['todo', 'doing', 'blocked', 'done_p
 /** 负责人改状态是否允许：只有已完成是终态，改不回去；其余都由负责人自己判断。允许时返回 null。 */
 export function explainOwnerStatusChange(from: TaskStatus, to: TaskStatus): string | null {
   if (from === to) return null;
-  if (from === 'accepted') return `这件事已经${TASK_STATUS_LABELS.accepted}，是终态，不能再改状态；要接着做请新建一件事务`;
+  if (from === 'accepted') return `这件事已经${TASK_STATUS_LABELS.accepted}，是终态，不能再改状态；要继续做请新建一件事务`;
   return null;
 }

@@ -18,12 +18,10 @@ export function requireSimSuccess(result: ToolResult): string {
   return result.text;
 }
 
-/** 复盘必须用专属交账入口；普通剧本也能在中心强制复盘时安全结束。 */
+/** 交账走统一入口；P75f 起旧复盘交账工具已下线，复盘变体的旧剧本同样用 hub_commit 收口。 */
 export async function commitBrain(input: BrainInput, commit: Partial<CommitInput> = {}): Promise<BrainResult> {
   const value = simCommit(commit);
-  if (input.variant === 'reflection') {
-    requireSimSuccess(await input.call('hub_reflect_commit', { summary: value.summary, lessons: [], watchChanges: [], routineUpdates: [] }));
-  } else requireSimSuccess(await input.call('hub_commit', value));
+  requireSimSuccess(await input.call('hub_commit', value));
   return { finalText: value.summary };
 }
 

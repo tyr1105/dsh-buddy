@@ -8,6 +8,7 @@ import { raiseAlert, closeAlert, maybeWriteHeartbeat, readLastHeartbeat, detectD
   catchUpCandidates, computeExpectedBy, checkDeadman, findStuckWakes, checkQuarantine, quarantine } from '../src/health/index.js';
 import { recordUsage } from '../src/quota/usage.js';
 import { botFixture, modelFixtures, id } from './model-fixtures.js';
+import { addLedger, addSelfTurns, addWake } from './p76c-fixtures.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -212,12 +213,15 @@ describe('隔离四类条件', () => {
     expect(checkQuarantine(ctx, botFixture.id, now + 2)).toBeNull();
     expect(checkQuarantine(ctx, botFixture.id, now + 3)).toContain('连续 3');
   });
-  it('未来复盘未交账不触发当前隔离', () => {
+  // P75r3 第 5 节改了预期：停用线不再依赖复盘变体，原断言「到点后原因含『复盘』」改为含『没有交账』；「未来的回合不计入当前」这一点不变。
+  // P75r4 第 1 节调整夹具：停用线改为看最近结束的 3 个回合，不再看档案上的累计数；断言的结论不变（未来的回合不计入当前）。
+  it('未来未交账的回合不触发当前隔离', () => {
     const ctx = setup(); const now = ctx.clock.now();
     ctx.store.table('bots').patch(botFixture.id, { consecutiveNoCommit: 3 });
-    ctx.store.table('wakes').put(wake({ variant: 'reflection', status: 'no_commit', endedAt: now + 1 }));
+    for (let n = 1; n <= 3; n += 1) ctx.store.table('wakes').put(wake({ id: `w_000000000${n}`, variant: 'regular', status: 'no_commit', endedAt: now - 2 + n }));
+    // 当前时刻只有两个已结束的回合，第三个在未来：不触发。
     expect(checkQuarantine(ctx, botFixture.id, now)).toBeNull();
-    expect(checkQuarantine(ctx, botFixture.id, now + 1)).toContain('复盘');
+    expect(checkQuarantine(ctx, botFixture.id, now + 1)).toContain('没有交账');
   });
   it('第三次越界触发，第二次不触发', () => {
     const ctx = setup(); ctx.store.table('bots').patch(botFixture.id, { violations: 2 });
@@ -225,26 +229,39 @@ describe('隔离四类条件', () => {
     ctx.store.table('bots').patch(botFixture.id, { violations: 3 });
     expect(checkQuarantine(ctx, botFixture.id, ctx.clock.now())).toContain('越界');
   });
-  it('两次未交账后复盘仍未交账触发，普通未交账不冒充复盘', () => {
-    const ctx = setup(); const now = ctx.clock.now(); ctx.store.table('bots').patch(botFixture.id, { consecutiveNoCommit: 3 });
-    ctx.store.table('wakes').put(wake({ variant: 'regular', status: 'no_commit', endedAt: now }));
-    expect(checkQuarantine(ctx, botFixture.id, now)).toBeNull();
-    ctx.store.table('wakes').patch(id('w'), { variant: 'reflection' });
-    expect(checkQuarantine(ctx, botFixture.id, now)).toContain('复盘');
-  });
-  it('单日 token 三倍预算边界触发，低一 token 不触发', () => {
+  // P75r3 第 5 节改了预期：原测试「普通未交账回合不触发、复盘变体才触发」；转复盘已随旧复盘下线，
+  // 现在连续没交账的回合数超过 2 并且最近一个回合是未交账，就触发，与回合是不是复盘变体无关。
+  // P75r4 第 1 节调整夹具：不再改档案上的累计数，改为放真实的回合记录（连续 2 个、3 个、最近一个已交账）；断言的结论不变。
+  it('连续 3 个回合未交账触发（原因逐字），连续 2 个、或最近一个回合已交账不触发', () => {
     const ctx = setup(); const now = ctx.clock.now();
-    ctx.store.log('ledger').append({ id: id('le'), who: botFixture.id, wakeId: null, tokens: 749_999, kind: 'other', at: now });
+    const put = (n: number, status: WakeTicket['status']) => ctx.store.table('wakes').put(wake({ id: `w_000000000${n}`, variant: 'regular', status, endedAt: now - 3 + n }));
+    put(1, 'no_commit'); put(2, 'no_commit');
     expect(checkQuarantine(ctx, botFixture.id, now)).toBeNull();
-    ctx.store.log('ledger').append({ id: 'le_0000000002', who: botFixture.id, wakeId: null, tokens: 1, kind: 'other', at: now });
-    expect(checkQuarantine(ctx, botFixture.id, now)).toContain('三倍预算');
+    put(3, 'no_commit');
+    expect(checkQuarantine(ctx, botFixture.id, now)).toBe('连续 3 个回合没有交账');
+    ctx.store.table('wakes').patch('w_0000000003', { status: 'committed' });
+    expect(checkQuarantine(ctx, botFixture.id, now)).toBeNull();
   });
-  it('单日回合三倍预算也触发，试岗用减半后的预算', () => {
-    const ctx = setup(); const now = ctx.clock.now(); ctx.store.table('bots').patch(botFixture.id, { lifecycle: 'probation' });
-    for (let n = 0; n < 8; n += 1) recordUsage(ctx, { botId: botFixture.id, wakeId: `turn-${n}`, tokens: 0, steps: 0, packetBytes: 0 });
+  // P76c：原用例「单日 token 三倍预算边界触发，低一 token 不触发」证明按 token 的停用线。这条线已取消（方案第 7.3 节：
+  // 一位执行者做一件中等的事就可能超过 token 线），所以改为证明相反的事实：token 再多、没有员工自己发起的回合，也不停用。
+  it('单日 token 不再触发停用：几百万 token 的非自己发起用量不隔离（P76c 取消按 token 的线）', () => {
+    const ctx = setup(); const now = ctx.clock.now();
+    ctx.store.log('ledger').append({ id: id('le'), who: botFixture.id, wakeId: null, tokens: 5_000_000, kind: 'other', at: now });
     expect(checkQuarantine(ctx, botFixture.id, now)).toBeNull();
-    recordUsage(ctx, { botId: botFixture.id, wakeId: 'turn-9', tokens: 0, steps: 0, packetBytes: 0 });
-    expect(checkQuarantine(ctx, botFixture.id, now)).toContain('三倍预算');
+    // 同时有一个自己发起的回合、100 万 token：回合数没到线（1 < 2×3），仍不停用。
+    const own = addWake(ctx); addLedger(ctx, own, 1_000_000);
+    expect(checkQuarantine(ctx, botFixture.id, now)).toBeNull();
+  });
+  // P76c：原用例「单日回合三倍预算也触发，试岗用减半后的预算」证明回合线的边界与试岗减半。试岗减半已取消（第二块已把试岗并入在岗），
+  // 所以改为证明：试岗员工与在岗员工同一条线（默认 2 × 3 = 6 个自己发起的回合）：5 个不停用，第 6 个停用。
+  it('单日自己发起的回合达到每天上限的三倍触发，试岗不再减半', () => {
+    const ctx = setup(); const now = ctx.clock.now(); ctx.store.table('bots').patch(botFixture.id, { lifecycle: 'probation' });
+    expect(ctx.settings.botDailyTurnBudget).toBe(2);
+    // P76r1 同步：用量这一支只在「刚结束的回合是自己发起的」时检查，所以把刚结束的唤醒单传进去；原因文字改为按倍数生成（「3 倍」）。
+    const five = addSelfTurns(ctx, 5);
+    expect(checkQuarantine(ctx, botFixture.id, now, five.at(-1))).toBeNull();
+    const sixth = addWake(ctx);
+    expect(checkQuarantine(ctx, botFixture.id, now, sixth)).toBe('自己发起的回合达到每天上限的 3 倍');
   });
   it('执行隔离只移除该机器人队列并立即报告 P1', () => {
     const ctx = setup(); const row = modelFixtures.QueueEntry.valid as QueueEntry;

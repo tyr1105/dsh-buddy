@@ -24,6 +24,7 @@ import {
 import type { Bot } from '../model/bot.js';
 import { V2_DEFAULTS } from '../config/defaults.js';
 import { newId } from '../util/ids.js';
+import { isJobClosed } from '../job/store.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { recordAcceptancePassed } from './artifacts.js';
@@ -84,12 +85,15 @@ function notifyProject(ctx: HubContext): void {
 /** 取一个存在且未退役的队友，否则中文报错说清是哪个队友。 */
 function requireLiveBot(ctx: HubContext, botId: string, what: string): Bot {
   const bot = ctx.store.table('bots').get(botId);
-  if (!bot || bot.lifecycle === 'retired') throw new Error(`${what}队友不存在或已退役：${botId}`);
+  if (!bot || bot.lifecycle === 'retired') throw new Error(`${what}员工不存在或已归档：${botId}`);
   return bot;
 }
 
-/** 新建或修改项目；成员按队友、去重、有上限；负责人必须是成员之一。 */
-export function saveProject(ctx: HubContext, raw: unknown): Project {
+/**
+ * 新建或修改项目；成员按队友、去重、有上限；负责人必须是成员之一。
+ * actor 只用于审计里记「谁做的」：主人在界面保存是 'owner'（默认），总管为约定建项目时传总管 id；其他行为完全不变。
+ */
+export function saveProject(ctx: HubContext, raw: unknown, actor = 'owner', auditExtra: Record<string, unknown> = {}): Project {
   const input = parseInput(SaveProjectSchema, raw, '项目保存');
   const now = ctx.clock.now();
   const existing = input.id ? ctx.store.table('projects').get(input.id) : null;
@@ -99,7 +103,7 @@ export function saveProject(ctx: HubContext, raw: unknown): Project {
   // 1. 成员：去重、上限、队友必须存在且未退役。
   const members = [...new Set(input.memberBotIds ?? existing?.memberBotIds ?? [])];
   if (members.length > V2_DEFAULTS.PROJECT_MEMBER_MAX) {
-    throw new Error(`项目成员不能超过 ${V2_DEFAULTS.PROJECT_MEMBER_MAX} 个队友，当前 ${members.length} 个`);
+    throw new Error(`项目成员不能超过 ${V2_DEFAULTS.PROJECT_MEMBER_MAX} 位员工，当前 ${members.length} 位`);
   }
   for (const botId of members) requireLiveBot(ctx, botId, '项目成员');
 
@@ -190,7 +194,7 @@ export function saveProject(ctx: HubContext, raw: unknown): Project {
   ctx.store.table('projects').put(record);
   writeOutreachAudit(ctx, existing ? 'project_update' : 'project_create',
     { id, name: record.name, status: record.status, ownerBotId, memberBotIds: members,
-      sharedDir: record.sharedDir, criterionCount: acceptanceCriteria.length }, 'owner', now);
+      sharedDir: record.sharedDir, criterionCount: acceptanceCriteria.length, ...auditExtra }, actor, now);
   notifyProject(ctx);
   return record;
 }
@@ -229,6 +233,13 @@ export function completeProject(ctx: HubContext, rawId: unknown): Project {
 }
 /** 归档：软归档不删任务；归档后不可改项目、不可改任务（恢复走 restoreProject）。 */
 export function archiveProject(ctx: HubContext, rawId: unknown): Project {
+  // P74r1（R7）：项目里还有没完成也没停止的事时不能归档——归档后项目文件夹和成员都不能再改，这些事却会照常续排、空耗回合。
+  const id = parseInput(ProjectIdSchema, rawId, '项目命令');
+  const running = ctx.store.table('jobs').list(job => job.projectId === id && !isJobClosed(job));
+  if (running.length > 0) {
+    const titles = running.map(job => `「${ctx.store.table('agreements').get(job.agreementId)?.title ?? '这件事'}」`).join('、');
+    throw new Error(`项目里有 ${running.length} 件进行中的事：${titles}。先完成或停止它们`);
+  }
   return changeProjectStatus(ctx, rawId, ['active', 'paused', 'done'], 'archived', 'project_archive', '只有未归档的项目能归档');
 }
 
@@ -273,7 +284,7 @@ export function saveTask(ctx: HubContext, raw: unknown): ProjectTask {
   if (assigneeBotId !== null) {
     requireLiveBot(ctx, assigneeBotId, '任务指派');
     if (!project.memberBotIds.includes(assigneeBotId)) {
-      throw new Error('任务只能指派给项目成员队友：请先把该队友加入项目成员');
+      throw new Error('任务只能指派给项目成员员工：请先把该员工加入项目成员');
     }
   }
   if (!existing && ctx.store.table('projectTasks').count(t => t.projectId === input.projectId) >= V2_DEFAULTS.PROJECT_TASK_MAX) {

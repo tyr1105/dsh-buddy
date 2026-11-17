@@ -101,7 +101,10 @@ describe('C04 Hub 启停与独立阶段', () => {
   });
 
   it('到期转正保留创建自主等级但 L3 自动转正上限 L2', async () => {
-    const { ctx, hub, bot } = await fixture({ lifecycle: 'probation', autonomy: 'L3', probationEndsAt: 1 });
+    // P73a：启动整理会先把试岗员工转在岗，这条 tick 里的到期转正路径只服务启动后才出现的旧数据；
+    // 所以先启动，再把档案改回旧的试岗状态，断言保持不变。
+    const { ctx, hub, bot } = await fixture();
+    ctx.store.table('bots').patch(bot.id, { lifecycle: 'probation', autonomy: 'L3', probationEndsAt: 1 });
     await hub.tick();
     expect(ctx.store.table('bots').get(bot.id)).toMatchObject({ lifecycle: 'active', autonomy: 'L2', probationEndsAt: null });
     expect(ctx.store.log('audit').all().some(a => a.action === 'lifecycle')).toBe(true);

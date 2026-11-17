@@ -22,7 +22,7 @@
  *   普通区域收起整栏），本 hook 不重复处理，避免两个监听器打架。
  * - 键盘监听挂在 document 捕获阶段：焦点若已落到背景或 body，按键事件不经过
  *   面板，面板级监听接不住；捕获阶段能在浏览器默认跳焦点之前拦下。面板之上再开
- *   模态弹窗（如「教它技能」）时主动让位，弹窗自己的 useDialogFocus 才是那一层
+ *   模态弹窗（如「编辑员工」）时主动让位，弹窗自己的 useDialogFocus 才是那一层
  *   的键盘主人，两个困守不能同时生效。
  * - 关闭后把焦点还给触发按钮（通常是线程头的「查看状态」）。该按钮在右栏打开期间条件
  *   卸载、关闭后重挂成新节点，渲染期缓存的旧引用必然失联，因此旧引用不可用时
@@ -45,6 +45,17 @@ const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), textarea:not(:di
 export function isDrawerMode(): boolean {
   const scrim = document.querySelector<HTMLElement>('.ah-right-scrim')
   return !!scrim && getComputedStyle(scrim).display !== 'none'
+}
+
+/**
+ * P74i-m3（第 2 节）：抽屉的「背景节点」判断，只用到节点的这些能力，测试可以用假节点代替真 DOM。
+ * 背景 = .ah-body 的子节点里，除抽屉面板、遮罩、以及弹窗遮罩（.ah-dialog-mask，例如编辑员工弹窗）之外的全部。
+ * 弹窗遮罩不算背景：弹窗是抽屉之上更晚出现的一层，由它自己的 useDialogFocus 管理隔离；
+ * 若把它当背景设为不可操作，弹窗就点不动（此前「查看状态」抽屉开着时点「编辑员工」的现象）。
+ */
+export interface DrawerKidProbe { classList: { contains(name: string): boolean } }
+export function isDrawerBackgroundKid(kid: DrawerKidProbe, isPanel: boolean): boolean {
+  return !isPanel && !kid.classList.contains('ah-right-scrim') && !kid.classList.contains('ah-dialog-mask')
 }
 
 export function useDrawerFocus(): { panelRef: RefObject<HTMLElement> } {
@@ -76,7 +87,7 @@ export function useDrawerFocus(): { panelRef: RefObject<HTMLElement> } {
     const backgroundKids = (): HTMLElement[] => body === null
       ? []
       : Array.from(body.children).filter((el): el is HTMLElement => el instanceof HTMLElement
-        && el !== panel && !el.classList.contains('ah-right-scrim'))
+        && isDrawerBackgroundKid(el, el === panel))
 
     /**
      * 按当前是否抽屉模式，同步模态语义。幂等：重复调用不会叠加状态；
@@ -181,14 +192,27 @@ export function useDrawerFocus(): { panelRef: RefObject<HTMLElement> } {
         panel.removeAttribute('role')
         panel.removeAttribute('aria-modal')
       } catch { /* 节点已随面板一起卸载时无需还原 */ }
-      // 优先还给当初打开右栏的触发按钮；它在打开期间已卸载时，按锚点找重挂后的新节点。
-      const previous = previousRef.current
-      if (previous?.isConnected) {
-        previous.focus()
-        return
+      // 优先还给重新挂上的触发按钮；它在打开期间已卸载，旧引用即使还在也快要被 React 移除，
+      // 不能再把它当成归还目标（P76n：此前焦点落到 BODY 就是先聚焦了旧节点）。
+      const restoreFocus = (): void => {
+        const remounted = document.querySelector<HTMLElement>('[data-testid="ah-detail-open"]')
+        if (remounted?.isConnected) {
+          remounted.focus()
+          return
+        }
+        const previous = previousRef.current
+        if (previous?.isConnected) previous.focus()
       }
-      const remounted = document.querySelector<HTMLElement>('[data-testid="ah-detail-open"]')
-      if (remounted?.isConnected) remounted.focus()
+      const retryRestore = (): void => {
+        try {
+          if (document.activeElement === document.body || document.activeElement === document.documentElement) restoreFocus()
+        } catch { /* 焦点恢复失败不影响宿主 */ }
+      }
+      // P76n：React 在清理之后才把触发按钮重新挂上，立即找通常还是 BODY；
+      // 下一帧与一个宏任务各补一次，只在焦点确实还停在页面最外层时接管。
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(retryRestore)
+      setTimeout(retryRestore, 0)
+      setTimeout(retryRestore, 50)
     }
   }, [])
 

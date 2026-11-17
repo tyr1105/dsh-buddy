@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { resolveSettings } from '../src/config/defaults.js';
 import type { QuotaState, WakeTicket } from '../src/model/index.js';
-import { classifyError, getQuotaState, computeLight, rollWindow, recordUsage, botUsageToday, botTurnsInWindow,
+import type { QuotaPlan } from '../src/model/quota-plan.js';
+import { defaultQuotaPlan } from '../src/quota/plan.js';
+import { raiseAlert } from '../src/health/alerts.js';
+import { classifyError, getQuotaState, computeLight, rollWindow, recordUsage, botUsageToday, selfWorkUsageToday,
   onQuotaError, maybeAllowProbe, consumeProbe, onProbeResult } from '../src/quota/index.js';
 import { botFixture, id, modelFixtures } from './model-fixtures.js';
 
@@ -35,21 +38,28 @@ describe('错误分类', () => {
   });
 });
 
+/**
+ * P76d 修改：额度灯原来按「本窗口回合数 / 回合上限」分档，现在按「员工份额已用比例」分档（员工份额 = 窗口估计容量 x 员工份额比例）。
+ * 下面几条的原意（分档边界、零容量保持红灯、阈值服从设置）不变，只把输入从回合数换成员工用的 token：
+ * 容量 1000、份额 0.7，员工份额 700，每 70 token 相当于原来的一个「十分之一」。
+ */
+const plan = (patch: Partial<QuotaPlan> = {}): QuotaPlan => ({ ...defaultQuotaPlan(0), capacityTokens: 1000, ...patch });
 describe('额度灯与滚窗', () => {
   it.each([[0, 'green'], [4, 'green'], [5, 'yellow'], [7, 'yellow'], [8, 'orange'], [9, 'orange'], [10, 'red']] as const)(
-    '%i / 10 回合为 %s', (turns, light) => expect(computeLight(state({ botTurns: turns }))).toBe(light));
-  it('取 token 与回合比率的较大者', () => {
-    expect(computeLight(state({ botTurns: 1, botTokens: 800, tokenLimit: 1000 }))).toBe('orange');
-    expect(computeLight(state({ botTurns: 8, botTokens: 1, tokenLimit: 1000 }))).toBe('orange');
+    '员工份额已用 %i / 10 为 %s', (tenths, light) => expect(computeLight(state(), resolveSettings(), plan({ staffTokens: tenths * 70 }))).toBe(light));
+  it('只看员工份额的 token：主人一侧用得再多不影响灯（原「取 token 与回合比率的较大者」的回合维度已取消）', () => {
+    expect(computeLight(state(), resolveSettings(), plan({ staffTokens: 560 }))).toBe('orange');
+    expect(computeLight(state({ botTurns: 8, botTokens: 1000 }), resolveSettings(), plan({ staffTokens: 1, ownerTokens: 5000 }))).toBe('green');
   });
-  it('零容量和红灯恢复期间保持 red', () => {
-    expect(computeLight(state({ tokenLimit: 0 }))).toBe('red');
-    expect(computeLight(state({ redUntil: 100 }))).toBe('red');
-    expect(computeLight(state({ light: 'red' }))).toBe('red');
+  it('零容量、真实额度用完和探针期间保持 red', () => {
+    expect(computeLight(state(), resolveSettings(), plan({ capacityTokens: 0 }))).toBe('red');
+    expect(computeLight(state(), resolveSettings(), plan({ exhausted: { at: 0, resetAt: 100, resetFromText: false } }))).toBe('red');
+    expect(computeLight(state({ probeAllowed: true }), resolveSettings(), plan())).toBe('red');
+    expect(computeLight(state({ probeInFlight: true }), resolveSettings(), plan())).toBe('red');
   });
   it('灯色阈值服从设置覆盖', () => {
     const settings = resolveSettings({ quotaYellowRatio: 0.2, quotaOrangeRatio: 0.4 });
-    expect(computeLight(state({ botTurns: 4 }), settings)).toBe('orange');
+    expect(computeLight(state(), settings, plan({ staffTokens: 280 }))).toBe('orange');
   });
   it('未开始回合时不会仅因 tick 提前建立窗口', () => {
     const ctx = setup();
@@ -119,7 +129,9 @@ describe('计量与机器人预算统计', () => {
     ctx.store.table('wakes').put({ ...(modelFixtures.WakeTicket.valid as WakeTicket), ownerInitiated: true, startedAt: now });
     recordUsage(ctx, { botId: botFixture.id, wakeId: id('w'), tokens: 100, steps: 1, packetBytes: 10 });
     expect(botUsageToday(ctx, botFixture.id, now)).toEqual({ turns: 0, tokens: 0 });
-    expect(botTurnsInWindow(ctx, botFixture.id, now)).toBe(0);
+    // P76c：原断言「主人发起的回合不计入窗口回合（botTurnsInWindow）」；该函数已随每窗口回合上限一起删除，
+    // 个人口径只剩「员工自己发起的回合数」，同一事实改用它断言：主人发起的回合不算。
+    expect(selfWorkUsageToday(ctx, botFixture.id, now)).toEqual({ turns: 0 });
     expect(getQuotaState(ctx, now)).toMatchObject({ botTurns: 1, botTokens: 120 });
   });
   it('今日用量按北京时间午夜隔开，不纳入未来账项', () => {
@@ -131,19 +143,18 @@ describe('计量与机器人预算统计', () => {
     expect(botUsageToday(ctx, botFixture.id, ctx.clock.now())).toEqual({ turns: 1, tokens: 240 });
     expect(botUsageToday(ctx, botFixture.id, ctx.clock.now() - 1000)).toEqual({ turns: 1, tokens: 120 });
   });
-  it('窗口回合只统计本窗口且过期未滚动时返回零', () => {
+  // P76c：原用例「窗口回合只统计本窗口且过期未滚动时返回零」测的是 botTurnsInWindow（每窗口回合上限用）。该上限与函数都已取消，
+  // 这件事已不存在，用例删除；额度窗口本身的计数（botTurns、窗口滚动）由本文件其余用例和 m02-quota 继续覆盖。
+  it('员工份额用满自动 red、全体 resting，不建告警条目（P76d 修改：原「立即开放额度告警」、按回合触顶）', () => {
     const ctx = setup(); const now = ctx.clock.now();
-    recordUsage(ctx, { botId: botFixture.id, wakeId: 'first', tokens: 10, steps: 1, packetBytes: 0 });
-    expect(botTurnsInWindow(ctx, botFixture.id, now)).toBe(1);
-    expect(botTurnsInWindow(ctx, botFixture.id, now + 5 * HOUR)).toBe(0);
-  });
-  it('用量触顶自动 red、全体 resting 并立即开放额度告警', () => {
-    const ctx = setup(); const now = ctx.clock.now();
-    ctx.store.table('quota').put(state({ windowStartAt: now, botTurns: 7, turnLimit: 8 }));
-    recordUsage(ctx, { botId: botFixture.id, wakeId: 'eighth', tokens: 1, steps: 1, packetBytes: 0 });
-    expect(getQuotaState(ctx, now)).toMatchObject({ light: 'red', redUntil: now + 5 * HOUR + 5 * MINUTE });
+    // 原来：上限 8 回合已用 7 个，第 8 个触顶亮红灯、休息并立即开放 P0 告警，红灯到「窗口结束加 5 分钟」。
+    // 现在：员工份额（容量 100 x 0.7 = 70 token）已用 69，再记 1 个 token 触顶；红灯到本窗口结束；员工休息；不建告警、不推送。
+    ctx.store.table('quota').put(state({ windowStartAt: now }));
+    ctx.store.table('quotaWindows').put({ ...defaultQuotaPlan(now), capacityTokens: 100, staffTokens: 69 });
+    recordUsage(ctx, { botId: botFixture.id, wakeId: 'full', tokens: 1, steps: 1, packetBytes: 0 });
+    expect(getQuotaState(ctx, now)).toMatchObject({ light: 'red', redUntil: now + 5 * HOUR });
     expect(ctx.store.table('bots').get(botFixture.id)?.activity).toBe('resting');
-    expect(ctx.store.table('alerts').list()).toMatchObject([{ code: 'quota', level: 'P0', status: 'open' }]);
+    expect(ctx.store.table('alerts').list()).toEqual([]);
   });
 });
 
@@ -157,11 +168,13 @@ describe('额度校准与探针', () => {
     const ctx = setup();
     expect(onQuotaError(ctx, ctx.clock.now())).toMatchObject({ turnLimit: 2, tokenLimit: null });
   });
-  it('额度错误用显式 now 写告警，和校准时刻一致', () => {
+  it('额度错误用显式 now 记录报错时刻，和校准时刻一致；不建告警（P76d 修改：原断言告警的 firstAt、lastAt）', () => {
     const ctx = setup(); const now = ctx.clock.now() + HOUR;
     const quota = onQuotaError(ctx, now);
-    expect(ctx.store.table('alerts').list()[0]).toMatchObject({ firstAt: now, lastAt: now });
+    expect(ctx.store.table('alerts').list()).toEqual([]);
+    expect(ctx.store.table('quotaWindows').get('quota')!.errors).toMatchObject([{ at: now }]);
     expect(quota.lastErrorAt).toBe(now);
+    expect(quota.calibratedAt).toBe(now);
   });
   it('窗口加宽限前不放探针，到点只授予一次', () => {
     const ctx = setup(); const state = onQuotaError(ctx, ctx.clock.now());
@@ -177,12 +190,14 @@ describe('额度校准与探针', () => {
     expect(consumeProbe(ctx)).toBe(false);
     expect(maybeAllowProbe(ctx, state.redUntil! + 10 * HOUR)).toBe(false);
   });
-  it('探针成功绿灯并关闭告警、恢复额度休息展示', () => {
+  it('探针成功绿灯、恢复额度休息展示，旧版本留下的开着的额度告警随之关闭（P76d 修改：新版本报错时不再建告警，旧告警由测试直接放进存档）', () => {
     const ctx = setup(); const quota = onQuotaError(ctx, ctx.clock.now());
+    raiseAlert(ctx, { code: 'quota', botId: null, text: '旧版本留下的额度告警', level: 'P0', immediate: true, at: ctx.clock.now() });
     ctx.clock.set(quota.redUntil!); maybeAllowProbe(ctx, ctx.clock.now()); consumeProbe(ctx);
     expect(onProbeResult(ctx, true).light).toBe('green');
     expect(ctx.store.table('alerts').list()[0]?.status).toBe('closed');
     expect(ctx.store.table('bots').get(botFixture.id)?.activity).toBe('watching');
+    expect(ctx.store.table('quotaWindows').get('quota')!.exhausted).toBeNull();
   });
   it('探针失败再等完整窗口及宽限', () => {
     const ctx = setup(); onQuotaError(ctx, ctx.clock.now()); ctx.clock.advance(6 * HOUR);

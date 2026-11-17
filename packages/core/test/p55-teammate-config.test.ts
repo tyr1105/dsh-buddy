@@ -56,13 +56,16 @@ describe('P55 建议风格', () => {
     expect(paceMinMsFor('advisor', 'normal', ctx.settings)).toBe(paceMinMsFor('researcher', 'normal', ctx.settings));
   });
 
-  it('反例：建议风格不能放权到会动手的等级，创建和修改都挡住', async () => {
+  it('建议风格放不到会动手的等级：执行类固定为 L1，传入 L2、L3 被忽略（P73a）', async () => {
+    // P73a（5.1 第 5 类）：原预期创建、修改传入 L2、L3 时报「建议风格只提意见不动手」；
+    // 新预期执行类（含建议风格）固定听吩咐 L1，传入值被忽略，不报错，建议风格自然也到不了会动手的等级。
     const ctx = createTestContext();
-    await expect(createBot(ctx, { name: '外脑', role: 'advisor', autonomy: 'L2' })).rejects.toThrow('建议风格只提意见不动手');
-    const bot = await createBot(ctx, { name: '外脑', role: 'advisor' });
-    await expect(updateBot(ctx, bot.id, { autonomy: 'L3' })).rejects.toThrow('建议风格只提意见不动手');
+    const advisor = await createBot(ctx, { name: '外脑', role: 'advisor', autonomy: 'L2' });
+    expect(advisor.autonomy).toBe('L1');
+    expect((await updateBot(ctx, advisor.id, { autonomy: 'L3' })).autonomy).toBe('L1');
     const doer = await createBot(ctx, { name: '干活的', role: 'executor', autonomy: 'L2' });
-    await expect(updateBot(ctx, doer.id, { role: 'advisor' })).rejects.toThrow('建议风格只提意见不动手');
+    expect(doer.autonomy).toBe('L1');
+    expect((await updateBot(ctx, doer.id, { role: 'advisor' })).autonomy).toBe('L1');
   });
 });
 
@@ -218,7 +221,8 @@ describe('P55 听吩咐是硬规则', () => {
     const ctx = createTestContext();
     const now = ctx.clock.now();
     const quiet = await onDemandBot(ctx);
-    const normal = await createBot(ctx, { name: '常驻', role: 'executor' });
+    // P73a：执行类固定听吩咐，「普通队友」这一方改用值守类（照传入值，不听吩咐）；断言不变。
+    const normal = await createBot(ctx, { name: '常驻', role: 'sentinel' });
     ctx.store.table('bots').patch(quiet.id, { lightCheckAt: now - 1 });
     ctx.store.table('bots').patch(normal.id, { lightCheckAt: now - 1 });
     const botIds = collectTimeCandidates(ctx, now).filter(row => row.reason.kind === 'light_check').map(row => row.botId);
@@ -253,13 +257,16 @@ describe('P55 听吩咐是硬规则', () => {
 
   it('反例：普通队友的身份文件里没有听吩咐', async () => {
     const ctx = createTestContext();
-    expect(renderBotAgentsMd(ctx, await createBot(ctx, base))).not.toContain('听吩咐');
+    // P73a：执行类固定听吩咐，普通队友改用值守类；断言不变。
+    expect(renderBotAgentsMd(ctx, await createBot(ctx, { ...base, role: 'sentinel' }))).not.toContain('听吩咐');
   });
 
   it('听吩咐默认用安静节奏，主人显式传了节奏时以主人为准', async () => {
     const ctx = createTestContext();
     expect((await createBot(ctx, { ...base, onDemand: true })).pace).toBe('quiet');
-    expect((await createBot(ctx, { name: '另一位', role: 'executor', onDemand: true, pace: 'active' })).pace).toBe('active');
+    // P73a（5.1 第 5 类）：执行类固定 quiet、忽略传入 pace；「以主人为准」只对值守类成立，这里改用值守类。
+    expect((await createBot(ctx, { name: '另一位', role: 'sentinel', onDemand: true, pace: 'active' })).pace).toBe('active');
+    expect((await createBot(ctx, { name: '第三位', role: 'executor', onDemand: true, pace: 'active' })).pace).toBe('quiet');
   });
 });
 

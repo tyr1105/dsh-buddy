@@ -91,7 +91,9 @@ describe('InboxPane：来自主题的事项', () => {
     const actions = card.props.actions as CardActions
     expect(await actions.onPick(card.props.card as CardPayload, 'A')).toBeNull()
     const after = host.render(InboxPane, props)
-    expect(textOf(after)).toContain('已提交。下一步：继续执行，负责人 探路。')
+    // P74i-m5（第 3 节）改了预期：原为「已提交。下一步：继续执行，负责人 探路。」，提示只写已发生的事。
+    expect(textOf(after)).toContain('已提交。')
+    expect(textOf(after)).not.toContain('下一步')
     ;(buttonNamed(after, '查看会话')!.props.onClick as () => void)()
     expect(onOpenThread).toHaveBeenCalledWith('ptp_weekly_price')
   })

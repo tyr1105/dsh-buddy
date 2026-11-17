@@ -19,10 +19,24 @@ export function sortInbox(items: readonly InboxItemView[]): InboxItemView[] {
   )
 }
 
+/**
+ * 界面现在会画的活动流种类（白名单）。核心新增、界面还没画的种类一律「不画、不抛错」，画好之后再加进来
+ * （写法同 shared/job-card-kinds.ts）。P75k 画出了 P75i 新增的 skill（技能库记录），所以它现在在白名单里。
+ */
+export const DRAWABLE_ACTIVITY_KINDS = ['wake', 'commit', 'approval', 'alert', 'handoff', 'peer', 'lifecycle', 'system', 'skill'] as const
+export type DrawableActivityKind = (typeof DRAWABLE_ACTIVITY_KINDS)[number]
+/** 界面会画的活动流行（种类在白名单内）。 */
+export type DrawableActivityRow = ActivityRow & { kind: DrawableActivityKind }
+
+/** 类型守卫：这一行的种类在白名单内才为真。 */
+export function isDrawableActivity(row: ActivityRow): row is DrawableActivityRow {
+  return (DRAWABLE_ACTIVITY_KINDS as readonly string[]).includes(row.kind)
+}
+
 /** 活动流类型的中文名（页面筛选用；不出现英文状态码，16.0.3）。 */
-export const ACTIVITY_KIND_LABELS: Readonly<Record<ActivityRow['kind'], string>> = {
+export const ACTIVITY_KIND_LABELS: Readonly<Record<DrawableActivityKind, string>> = {
   wake: '唤醒', commit: '交账', approval: '审批', alert: '告警',
-  handoff: '交接', peer: '同伴消息', lifecycle: '生命周期', system: '中心',
+  handoff: '交接', peer: '同伴消息', lifecycle: '生命周期', system: '中心', skill: '技能库',
 }
 
 /**
@@ -30,7 +44,7 @@ export const ACTIVITY_KIND_LABELS: Readonly<Record<ActivityRow['kind'], string>>
  * core 的唤醒行本身写成「唤醒：<原因>」，界面又在行首加了类型标签「唤醒」，
  * 不处理会读成「唤醒 探路：唤醒：……」。只去掉紧跟开头的同义前缀，正文原样保留。
  */
-export function activityLine(kind: ActivityRow['kind'], text: string): string {
+export function activityLine(kind: DrawableActivityKind, text: string): string {
   const label = ACTIVITY_KIND_LABELS[kind]
   for (const sep of ['：', '——', ':']) {
     const prefix = `${label}${sep}`
@@ -42,9 +56,10 @@ export function activityLine(kind: ActivityRow['kind'], text: string): string {
 /** 活动流筛选：按队友与类型（空选项 = 不筛）。 */
 export function filterActivity(
   rows: readonly ActivityRow[],
-  filter: { botId?: string | null; kind?: ActivityRow['kind'] | null },
-): ActivityRow[] {
-  return rows.filter(row =>
+  filter: { botId?: string | null; kind?: DrawableActivityKind | null },
+): DrawableActivityRow[] {
+  // 白名单之外的种类（核心新增、界面还没画的，例如技能库记录）这里直接不要，既不画也不抛错。
+  return rows.filter(isDrawableActivity).filter(row =>
     (filter.botId == null || filter.botId === '' || row.botId === filter.botId)
     && (filter.kind == null || row.kind === filter.kind),
   )
@@ -54,8 +69,11 @@ export function filterActivity(
  * P65：收件箱里一件事「查看对话」该去哪条线程。
  * 来自项目主题的事，主人处理后队友回到主题里接着做，所以去主题（主题 id 就是线程 id）；
  * 其余的去这位队友的私聊；全队事项没有队友，返回 null，不显示入口。
+ * P72g B2：约定条目是例外——约定的对齐发生在总管私聊，待确认的那张卡在私聊里，
+ * 所以即使条目带着主题 id，也去总管（botId）的私聊，不去主题。
  */
-export function inboxThreadId(item: Pick<InboxItemView, 'botId' | 'topicId'>): string | null {
+export function inboxThreadId(item: Pick<InboxItemView, 'botId' | 'topicId'> & { agreementId?: string | null }): string | null {
+  if (item.agreementId !== undefined && item.agreementId !== null && item.agreementId !== '') return item.botId ?? null
   return item.topicId ?? item.botId ?? null
 }
 

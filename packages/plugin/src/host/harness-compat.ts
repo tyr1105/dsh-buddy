@@ -81,6 +81,7 @@ const OPTIONAL_PROBES: CapabilityProbe[] = [
   { key: 'permissionPresets.set', label: '无人值守权限（permissionPresets.set）', paths: [['permissionPresets', 'set']] },
   { key: 'approval.overrideOf', label: '审批策略（approval.overrideOf）', paths: [['approval', 'overrideOf']] },
   { key: 'sandboxPolicy.overrideOf', label: '沙箱策略（sandboxPolicy.overrideOf）', paths: [['sandboxPolicy', 'overrideOf']] },
+  { key: 'sandboxPolicy.resolve', label: '沙箱档位查询（sandboxPolicy.resolve）', paths: [['sandboxPolicy', 'resolve']] },
   {
     key: 'agentDefaultModel',
     label: '选模型后还原默认（agentDefaultModel）',

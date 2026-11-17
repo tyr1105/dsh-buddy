@@ -29,6 +29,8 @@ export async function syncPresetSkills(ctx: HubContext, bot: Bot): Promise<{ wri
   const selectedIds = new Set(selected.map(skill => skill.id));
   const written: string[] = [];
   for (const skill of selected) {
+    // P75e：预置同步不碰 self- 开头的目录（那是员工自己积累技能的位置；清单断言也禁止预置 id 用这个前缀，这里再挡一道旧数据）。
+    if (skill.id.startsWith('self-')) continue;
     const path = presetSkillPath(bot, skill.id);
     const content = renderPresetSkillFile(skill);
     // 内容已一致就不写，避免无意义的文件修改时间变化。

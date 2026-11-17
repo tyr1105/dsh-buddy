@@ -3,10 +3,11 @@
  * - DialogShell：遮罩 + 宽对话框 + 头部关闭，焦点圈定走 useDialogFocus
  *   （打开聚焦、Tab 不外逃、Esc 关闭、提交中不关闭），项目页所有模态表单共用；
  * - FieldError：字段级错误，命令错误优先显示在外壳底部，避免同一句红字出现两遍；
- * - botText：队友选项的一行文案（名字＋生命周期），项目表单里选负责人和成员时用。
+ * - botText：员工选项的一行文案（名字＋状态：在岗、停用、归档），项目表单里选负责人和成员时用。
  * 单独成文件是为了让 project-dialogs.tsx 聚焦项目表单本身，也方便其他弹窗复用外壳。
  */
 import { type ReactNode } from 'react'
+import { staffLabelOfLifecycle } from '../logic/lifecycle.js'
 import type { BotOption } from '../logic/project-page.js'
 import { useDialogFocus } from './use-dialog-focus.js'
 
@@ -37,10 +38,9 @@ export function DialogShell(props: {
   )
 }
 
-/** 队友一行的显示文案：名字＋生命周期，让主人勾选时知道选的是谁。 */
+/** 员工一行的显示文案：名字＋状态（在岗、停用、归档），让主人勾选时知道选的是谁。 */
 export function botText(option: BotOption): string {
-  const lifecycle = option.lifecycle === 'probation' ? '试岗' : option.lifecycle === 'active' ? '在岗' : option.lifecycle
-  return `${option.name}（${lifecycle}）`
+  return `${option.name}（${staffLabelOfLifecycle(option.lifecycle)}）`
 }
 
 /**

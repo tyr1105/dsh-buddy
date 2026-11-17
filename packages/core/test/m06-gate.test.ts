@@ -131,10 +131,10 @@ describe('M06 家目录普通写入与受保护边界', () => {
         expect(classifyCommand(`touch ${path}`, context).cls).toBe(cls);
     });
 
-    it('L0 仍只允许原有 work 和 MEMORY 写入，L1 家目录根写不再需要审批', () => {
+    it('L0 仍只允许原有 work 写入（技能库三处 P75e 起只读），L1 家目录根写不再需要审批', () => {
         expect(decide(classifyToolCall('write', { file_path: 'hello.txt' }, context), 'L0', 'active')).toBe('deny');
         expect(decide(classifyToolCall('write', { file_path: 'work/hello.txt' }, context), 'L0', 'active')).toBe('allow');
-        expect(decide(classifyToolCall('write', { file_path: 'memory/MEMORY.md' }, context), 'L0', 'active')).toBe('allow');
+        expect(decide(classifyToolCall('write', { file_path: 'memory/MEMORY.md' }, context), 'L0', 'active')).toBe('deny');
     });
 
     it('守卫允许家目录根新建与修改，受保护文件拒绝，家外文件仍提交审批', async () => {

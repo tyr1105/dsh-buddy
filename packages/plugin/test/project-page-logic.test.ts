@@ -9,7 +9,7 @@ import type { ProjectView, ProjectViewRow } from '../src/shared/views.js'
 import { fixtureProject } from '../src/shared/fixture-project.js'
 import {
   PROJECT_EMPTY_TEXT, backgroundMetaText, botOptions, canManageProject, canOpenTopic, projectMemberRows,
-  projectPathRows, projectPickRows, projectStatusActions, projectTaskRows, type BotOption,
+  projectPathRows, projectPickRows, projectStatusActions, projectTaskRows, workspaceDirDisplay, type BotOption,
 } from '../src/client/logic/project-page.js'
 import {
   PROJECT_BACKGROUND_MAX, PROJECT_MEMBER_MAX, PROJECT_NAME_MAX, PROJECT_SHARED_DIR_MAX,
@@ -28,7 +28,7 @@ function option(botId: string, patch: Partial<BotOption> = {}): BotOption {
 describe('项目名列表（没选项目时）', () => {
   it('每个项目一行，顺序沿用 core 给的，归档沉底', () => {
     const rows = projectPickRows(fixtureProject)
-    expect(rows.map(row => row.id)).toEqual(['prj_weekly', 'prj_empty', 'prj_migrate', 'prj_onboard', 'prj_old'])
+    expect(rows.map(row => row.id)).toEqual(['prj_weekly', 'prj_empty', 'prj_migrate', 'prj_onboard', 'prj_signup', 'prj_old'])
     expect(rows[0]).toEqual({ id: 'prj_weekly', name: '竞品周报自动化', statusLabel: '进行中' })
   })
 
@@ -47,14 +47,14 @@ describe('有哪些队友', () => {
 
   it('反例：队友已删除时写固定说法，不露内部 id', () => {
     const gone = projectMemberRows(rowWeekly).find(row => row.botId === 'bot-gone')!
-    expect(gone).toMatchObject({ name: '队友已删除或退役', roleLabel: null, invalid: true })
+    expect(gone).toMatchObject({ name: '员工已删除或归档', roleLabel: null, invalid: true })
   })
 })
 
 describe('当前事务清单', () => {
   it('事务名、谁在跟进、状态；有主题的带上主题 id', () => {
     const first = projectTaskRows(rowWeekly)[0]!
-    expect(first).toMatchObject({ title: '抓取本周竞品动态', assignee: '探路', statusLabel: '进行中', topicId: 'ptp_weekly_price' })
+    expect(first).toMatchObject({ title: '抓取本周竞品动态', assignee: '探路', statusLabel: '执行中', topicId: 'ptp_weekly_price' })
   })
 
   it('反例：没人跟进时写「待安排」；老事务没有主题时 topicId 为 null', () => {
@@ -74,12 +74,32 @@ describe('项目背景的署名', () => {
 })
 
 describe('项目文件路径', () => {
-  it('工作目录和共享目录相同时只列一行', () => {
-    expect(projectPathRows({ workspaceDir: '/a/', sharedDir: '/a/' })).toEqual([{ label: '项目目录', value: '/a/' }])
+  it('工作目录和共享目录相同时只列一行，正文只显示目录名，完整路径进悬停', () => {
+    expect(projectPathRows({ workspaceDir: '/Users/demo/AgentHub/projects/prj_weekly/', sharedDir: '/Users/demo/AgentHub/projects/prj_weekly/' }))
+      .toEqual([{
+        label: '项目目录',
+        value: '/Users/demo/AgentHub/projects/prj_weekly/',
+        display: 'prj_weekly/',
+        title: '/Users/demo/AgentHub/projects/prj_weekly/',
+      }])
   })
 
-  it('反例：不同时两行都列', () => {
-    expect(projectPathRows({ workspaceDir: '/a/', sharedDir: '/b/' }).map(row => row.value)).toEqual(['/a/', '/b/'])
+  it('反例：不同时两行都列，各自按自己的目录名显示', () => {
+    const rows = projectPathRows({ workspaceDir: '/Users/demo/work', sharedDir: '/Users/demo/shared/' })
+    expect(rows.map(row => row.value)).toEqual(['/Users/demo/work', '/Users/demo/shared/'])
+    expect(rows.map(row => row.display)).toEqual(['work/', 'shared/'])
+  })
+
+  it('workspaceDirDisplay：目录名补结尾斜杠，兼容反斜杠与多余结尾分隔符', () => {
+    expect(workspaceDirDisplay('/a/b/prj_weekly')).toEqual({ display: 'prj_weekly/', title: '/a/b/prj_weekly' })
+    expect(workspaceDirDisplay('  /a/b/prj_weekly/  ')).toEqual({ display: 'prj_weekly/', title: '/a/b/prj_weekly/' })
+    expect(workspaceDirDisplay('D:\\AgentHub\\prj_weekly\\')).toEqual({ display: 'prj_weekly/', title: 'D:\\AgentHub\\prj_weekly\\' })
+  })
+
+  it('workspaceDirDisplay：空路径写「未设置」且不挂悬停；根路径照实显示', () => {
+    expect(workspaceDirDisplay('')).toEqual({ display: '未设置' })
+    expect(workspaceDirDisplay('   ')).toEqual({ display: '未设置' })
+    expect(workspaceDirDisplay('/')).toEqual({ display: '/', title: '/' })
   })
 })
 

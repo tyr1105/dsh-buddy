@@ -1,5 +1,5 @@
 /** 内存存储：同步读写、隔离引用并追踪脏数据，文件存储复用同一套行为。 */
-import { DEFAULTS, V2_DEFAULTS } from '../config/defaults.js';
+import { DEFAULTS, JOB_DEFAULTS, V2_DEFAULTS } from '../config/defaults.js';
 import type { Settings } from '../model/index.js';
 import { clone, recordTime, requireRecord, serializableRecord, type StoredRecord } from './records.js';
 import { LOG_NAMES, TABLE_NAMES, type Log, type LogName, type LogTypes,
@@ -29,6 +29,8 @@ export class MemoryStore implements Store {
       ...DEFAULTS.RETENTION_MS_BY_COLLECTION,
       wakeLedger: V2_DEFAULTS.LEDGER_RETENTION_MS,
       resultChecks: V2_DEFAULTS.LEDGER_RETENTION_MS,
+      // P74a：一件事的事件日志保留期不在 Settings 里（同账本的做法）；缺了它清理时会把待写日志全部丢掉。
+      jobEvents: JOB_DEFAULTS.EVENT_RETENTION_MS,
       ...options.retentionMsByCollection,
     };
     this.logMemoryRetentionMs = options.logMemoryRetentionMs ?? DEFAULTS.LOG_MEMORY_RETENTION_MS;

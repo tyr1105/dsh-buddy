@@ -19,7 +19,7 @@ import { writeOutreachAudit } from '../outreach/audit.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import type { HubContext } from '../engine/context.js';
 import { buildBackfillEntry } from './backfill.js';
-import { capLedgerEntry } from './caps.js';
+import { capLedgerEntry, hasLongDetail } from './caps.js';
 import { buildOpenLedger, sealLedger, sealMissingWake } from './entry.js';
 import { snapshotEvidence, type EvidenceCandidate } from './evidence.js';
 import { botCanSeeTopic } from '../project/topics.js';
@@ -213,7 +213,9 @@ export function recordDshToolAction(
     try { target = describeAction(input.name, input.args, V2_DEFAULTS.LEDGER_DETAIL_MAX_CHARS); }
     catch { target = '（参数无法解析）'; }
   } else markPartial(ctx, entry);
-  const detail = truncate(input.resultText.trim(), V2_DEFAULTS.LEDGER_DETAIL_MAX_CHARS) || (input.isError ? '工具返回失败，宿主未提供详情' : '成功');
+  // P74r16c：只有 hub_ 开头的工具（中心自己的工具）保留到 800 字，其余工具回到 160 字。
+  const detail = truncate(input.resultText.trim(), hasLongDetail({ kind: 'dsh_tool', name: input.name })
+    ? V2_DEFAULTS.LEDGER_TOOL_RESULT_MAX_CHARS : V2_DEFAULTS.LEDGER_DETAIL_MAX_CHARS) || (input.isError ? '工具返回失败，宿主未提供详情' : '成功');
   appendLedgerAction(ctx, wakeId, {
     kind: 'dsh_tool', name: input.name, target, outcome: input.isError ? 'error' : 'ok', source: 'observed',
     refId: input.callId || null, detail, durationMs,

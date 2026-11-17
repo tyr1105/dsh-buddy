@@ -9,7 +9,7 @@ import { OwnerTaskUpsertSchema, upsertTaskByOwner } from '../project/owner-tasks
 import { TASK_STATUS_LABELS } from '../model/project.js';
 
 export const hubProjectTaskUpsert = defineTool('hub_project_task_upsert',
-  '（仅项目负责人）新建或更新项目事务清单：不传 taskId 是新建（title 必填），传了是更新；可设 assigneeBotId（跟进的成员）、status、topicId。建事务不会叫醒人，要谁动手在主题里 @ 他。成员改自己的事务用 hub_task_update。',
+  '（仅项目负责人）新建或更新项目事务清单：不传 taskId 是新建（title 必填），传了是更新；可设 assigneeBotId（跟进的成员，写员工名字或机器人 id）、status、topicId。建事务不会叫醒人，要谁动手在主题里 @ 他。成员改自己的事务用 hub_task_update。',
   OwnerTaskUpsertSchema, 'L1', (ctx, tc, args) => {
     const wake = tc.wakeId ? ctx.store.table('wakes').get(tc.wakeId) : null;
     const { task, created } = upsertTaskByOwner(ctx, tc.botId, args, wake?.topicId ?? null);

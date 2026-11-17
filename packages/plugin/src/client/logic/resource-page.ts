@@ -13,6 +13,7 @@
  * 主人取消编制后授权对象只认队友本人，不再有部门与席位授权。
  */
 import type { Lifecycle, ResourceGrantViewRow, ResourceView, ResourceViewRow } from '../../shared/views.js'
+import { isArchivedBot } from './lifecycle.js'
 
 /** 资料类型（从视图行上取索引类型，避免再抄一份枚举；note 本期 core 拒绝创建）。 */
 export type ResourceKind = ResourceViewRow['resource']['kind']
@@ -37,10 +38,10 @@ export const RESOURCE_KIND_OPTIONS: ReadonlyArray<{ value: FormResourceKind; lab
 ]
 export const RESOURCE_SENSITIVITY_OPTIONS: ReadonlyArray<{ value: ResourceSensitivity; label: string }> = [
   { value: 'normal', label: '全员可读' },
-  { value: 'restricted', label: '指定队友可读' },
+  { value: 'restricted', label: '指定员工可读' },
 ]
 export const GRANT_SUBJECT_OPTIONS: ReadonlyArray<{ value: GrantSubjectKind; label: string }> = [
-  { value: 'bot', label: '队友' },
+  { value: 'bot', label: '员工' },
 ]
 export const GRANT_LEVEL_OPTIONS: ReadonlyArray<{ value: GrantLevel; label: string }> = [
   { value: 'read', label: '只读' },
@@ -51,7 +52,7 @@ export const GRANT_LEVEL_OPTIONS: ReadonlyArray<{ value: GrantLevel; label: stri
  * 常驻边界横幅原文（U11 文案 audit #30 定稿，替换任务卡旧句）：
  * 先说管什么、再说不管什么，不用「治理」「授权矩阵」这类内部词。
  */
-export const RESOURCE_BOUNDARY_TEXT = '这里只管一件事：队友通过插件读资料时，要不要你批准。它自己在 DSH 里打开文件，不归这里管。'
+export const RESOURCE_BOUNDARY_TEXT = '这里只管一件事：员工通过插件读资料时，要不要你批准。它自己在 DSH 里打开文件，不归这里管。'
 
 /** 顶部一句话计数：资料总数、活跃、归档与授权条数都取自 core 视图，界面不自己数。 */
 export function resourceSummary(view: ResourceView): string {
@@ -75,18 +76,18 @@ export function archivedRows(view: ResourceView): ResourceViewRow[] {
  * - 受限资料只认显式授权，直接报授权对象个数（0 个也要如实说，提醒主人还没人能读）。
  */
 export function accessConclusion(row: ResourceViewRow): string {
-  if (row.resource.sensitivity === 'normal') return '在岗队友都能读'
-  return row.grants.length === 0 ? '暂未选择队友，当前无人可读' : `${row.grants.length} 位队友能读`
+  if (row.resource.sensitivity === 'normal') return '在岗员工都能读'
+  return row.grants.length === 0 ? '暂未选择员工，当前无人可读' : `${row.grants.length} 位员工能读`
 }
 
 /** 授权对象名：历史授权的对象可能已删除或归档（视图给 null），用固定中文占位。 */
 export function grantSubjectText(grant: ResourceGrantViewRow): string {
-  return grant.subjectName ?? '队友已删除或退役'
+  return grant.subjectName ?? '员工已删除或归档'
 }
 
 /**
  * 授权 chip 文案：对象类型＋对象名＋级别，例如「队友：探路（只读）」。
- * 对象找不到时不显示裸 id，而是「队友：队友已删除或退役（只读）」，id 放 title 供追查。
+ * 对象找不到时不显示裸 id，而是「队友：员工已删除或归档（只读）」，id 放 title 供追查。
  */
 export function grantChipText(grant: ResourceGrantViewRow): string {
   return `${grant.subjectKindLabel}：${grantSubjectText(grant)}（${grant.levelLabel}）`
@@ -124,9 +125,9 @@ export interface GrantSubjectGroups {
  * 是否生效由 core 在读取时按生命周期把关。这里如实标注状态，避免主人误选。
  */
 const BOT_STATE_SUFFIX: Partial<Record<Lifecycle, string>> = {
-  draft: '草稿',
-  paused: '已暂停',
-  quarantined: '隔离中',
+  // P73f：状态只有在岗、停用、归档三种；暂停和隔离都显示「停用」，草稿按在岗算（不加后缀）。
+  paused: '停用',
+  quarantined: '停用',
 }
 
 /**
@@ -137,7 +138,7 @@ export function grantSubjectGroups(
   bots: ReadonlyArray<{ id: string; name: string; lifecycle: Lifecycle }>,
 ): GrantSubjectGroups {
   const bot: GrantSubjectOption[] = bots
-    .filter(b => b.lifecycle !== 'retired')
+    .filter(b => !isArchivedBot(b))
     .map(b => {
       const suffix = BOT_STATE_SUFFIX[b.lifecycle]
       return { kind: 'bot' as const, id: b.id, label: suffix ? `${b.name}（${suffix}）` : b.name }
@@ -217,8 +218,8 @@ export function validateResourceForm(values: ResourceFormValues): ResourceFormEr
 
 /** 「谁能读」的校验：必须明确选一项，选了指定队友就至少勾一位。 */
 export function validateResourceAccess(access: ResourceSensitivity | null, botIds: readonly string[]): ResourceFormError | null {
-  if (access === null) return { field: 'access', message: '谁能读：请选择全员可读或指定队友可读' }
-  if (access === 'restricted' && botIds.length === 0) return { field: 'access', message: '谁能读：至少勾选一位队友' }
+  if (access === null) return { field: 'access', message: '谁能读：请选择全员可读或指定员工可读' }
+  if (access === 'restricted' && botIds.length === 0) return { field: 'access', message: '谁能读：至少勾选一位员工' }
   return null
 }
 

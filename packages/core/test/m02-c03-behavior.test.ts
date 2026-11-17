@@ -13,7 +13,6 @@ import { createTicket } from '../src/wake/ticket.js';
 import { createHandoff } from '../src/peer/handoffs.js';
 import { createInboxItem, answerInbox } from '../src/outreach/inbox.js';
 import { sendOwnerMessage } from '../src/outreach/thread.js';
-import { maybeSendDigest } from '../src/outreach/digest.js';
 import { refreshBotFiles, verifyProtectedFiles } from '../src/memory/files.js';
 import { renderMindFiles } from '../src/memory/render.js';
 import { byteLength } from '../src/util/text.js';
@@ -79,11 +78,11 @@ describe('M02 C03 回合与交账', () => {
     const question = ctx.store.table('inbox').list()[0]!;
     expect(question.subjectKey).toBe(`question:${question.id}`);
   });
-  test.each([8, 9])('report importance=%i 的单推门槛', async importance => {
+  test.each([8, 9])('report importance=%i 都不单推（P76h）', async importance => {
+    // P76h：原断言是「重要度 9 推一次 P2、8 不推」；汇报不再推送，不论重要度。
     const { ctx, toolCtx } = await turnContext();
     await processCommit(ctx, toolCtx, commitArgs({ report: '证据整理完成', importance }));
-    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(importance === 9 ? 1 : 0);
-    if (importance === 9) expect(ctx.host.calls.find(c => c.method === 'notify')?.args[0]).toMatchObject({ level: 'P2' });
+    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(0);
   });
   test.each(['progress', 'done'] as const)('%s只更新相关目标lastProgressAt并清受挫', async outcome => {
     const { ctx, toolCtx, bot } = await turnContext();
@@ -119,21 +118,18 @@ describe('M02 C03 工具与议程', () => {
     expect(await runTool(ctx, tc, 'hub_goal_upsert', { ...goalInput, id: id('g') })).toMatchObject({ ok: true });
     expect(ctx.store.table('goals').get(id('g'))?.createdBy).toBe('owner');
   });
-  test.each(['hub_goal_upsert', 'hub_lesson_propose', 'hub_watch_propose'])('%s周额度用完如实说点子池', async name => {
+  // P75f：hub_lesson_propose 已移出工具清单，从两组逐项用例里删去。
+  test.each(['hub_goal_upsert', 'hub_watch_propose'])('%s周额度用完如实说点子池', async name => {
     const { ctx, tc, bot } = toolFixture(); ctx.store.table('bots').patch(bot.id, { autonomy: 'L1' });
     for (let n = 0; n < 3; n++) createInboxItem(ctx, { botId: bot.id, type: 'proposal', title: `提议${n}`, body: '细节', subjectKey: `proposal:${n}` });
-    const args = name === 'hub_goal_upsert' ? goalInput : name === 'hub_watch_propose' ? { kind: 'http', target: 'https://example.test/new', why: '跟进' } : { text: '核实事实', scope: 'self', why: '避免误报' };
+    const args = name === 'hub_goal_upsert' ? goalInput : { kind: 'http', target: 'https://example.test/new', why: '跟进' };
     expect(await runTool(ctx, tc, name, args)).toMatchObject({ ok: true, text: expect.stringContaining('本周提议额度已用完，已记进点子池') });
     expect(ctx.store.table('inbox').list().at(-1)).toMatchObject({ status: 'closed', answer: 'idea_pool' });
   });
-  test.each(['hub_state_get', 'hub_commit', 'hub_lesson_propose', 'hub_reflect_commit', 'hub_routine_save'])('%s全部等级确实包括L0', async name => {
-    const { ctx, tc, bot, wake, commitArgs: args } = toolFixture(); ctx.store.table('bots').patch(bot.id, { autonomy: 'L0' });
-    if (name === 'hub_reflect_commit') ctx.store.table('wakes').patch(wake.id, { variant: 'reflection' });
-    const input = name === 'hub_commit' ? args : name === 'hub_lesson_propose' ? { text: '先查来源', scope: 'self', why: '可复核' }
-      : name === 'hub_routine_save' ? { name: '核查', whenToUse: '分析资料', steps: ['核对来源'] }
-      : name === 'hub_reflect_commit' ? { summary: '复盘完成', lessons: [], watchChanges: [], routineUpdates: [] } : {};
+  test.each(['hub_state_get', 'hub_commit'])('%s全部等级确实包括L0', async name => {
+    const { ctx, tc, bot, commitArgs: args } = toolFixture(); ctx.store.table('bots').patch(bot.id, { autonomy: 'L0' });
+    const input = name === 'hub_commit' ? args : {};
     expect(await runTool(ctx, tc, name, input)).toMatchObject({ ok: true });
-    if (name === 'hub_lesson_propose') expect(ctx.store.table('inbox').count(i => i.type === 'proposal')).toBe(1);
   });
   test('第31条未完成议程被拒', async () => {
     const { ctx, tc } = toolFixture(); const seed = ctx.store.table('agenda').get(id('a'))!;
@@ -178,20 +174,9 @@ describe('M02 C03 路由日报记忆与交接', () => {
     expect(ctx.store.table('queue').list().map(q => q.botId)).toEqual([bot.id]);
     expect(ctx.store.log('thread').all().some(m => m.kind === 'system' && m.text.includes('不在岗'))).toBe(true);
   });
-  test.each([
-    { digest: '23:30', quiet: { start: '23:00', end: '08:00' }, due: '2026-11-05T23:30:00+08:00', release: '2026-11-06T08:00:00+08:00' },
-    { digest: '12:30', quiet: { start: '12:00', end: '13:00' }, due: '2026-11-05T12:30:00+08:00', release: '2026-11-05T13:00:00+08:00' },
-  ])('日报 $digest 到点入线程，免打扰结束只补一次通知', async ({ digest, quiet, due, release }) => {
-    const { ctx } = toolFixture(); ctx.settings.digestAt = digest; ctx.settings.quietHours = quiet;
-    ctx.clock.set(Date.parse(due)); await maybeSendDigest(ctx, ctx.clock.now());
-    expect(ctx.store.log('thread').all().filter(m => m.kind === 'digest')).toHaveLength(1);
-    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(0);
-    ctx.clock.set(Date.parse(release) - 1); await maybeSendDigest(ctx, ctx.clock.now());
-    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(0);
-    ctx.clock.advance(1); await maybeSendDigest(ctx, ctx.clock.now()); await maybeSendDigest(ctx, ctx.clock.now());
-    expect(ctx.host.calls.filter(c => c.method === 'notify')).toHaveLength(1);
-    expect(ctx.store.log('thread').all().filter(m => m.kind === 'digest')).toHaveLength(1);
-  });
+  // P76c：原来这里有两条参数化用例「日报 23:30 / 12:30 到点生成（P71 起不进任何对话），免打扰结束只补一次通知」，测 maybeSendDigest 的到点生成、
+  // 免打扰顺延、只补一次。日报不再推送，maybeSendDigest 已删除，这件事已不存在，两条一并删除；
+  // 「日报不再生成、不再推送」由 test/p76c-retired.test.ts 经真实 Hub 的 tick 断言（跨过原来的 23:30、12:30 与免打扰结束时刻）。
   test('mind时间以当前渲染日为准，仅显示七天内关闭项并守8KB', async () => {
     const { ctx, bot, now } = toolFixture(); ctx.clock.advance(3 * day);
     ctx.store.table('agenda').patch(id('a'), { title: '今日事项', dueAt: ctx.clock.now(), updatedAt: now });

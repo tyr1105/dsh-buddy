@@ -5,19 +5,40 @@ import { nonempty } from '../model/primitives.js';
 import { resolveSettings } from '../config/defaults.js';
 import { answerInbox as answerItem } from '../outreach/inbox.js';
 import { decideApproval as decide } from '../gate/approvals.js';
+import { startApprovedRunFor } from '../gate/outbox.js';
 import { markRead, sendOwnerMessage } from '../outreach/thread.js';
+import { confirmAgreementCommand } from '../project/agreement-confirm.js';
+import { acceptJobCommand } from '../job/accept.js';
+import { readJobEvidence } from '../job/evidence-read.js';
+import { jobPreviewTarget } from '../job/preview.js';
+import { answerJobCapCommand, answerJobStallCommand } from '../job/blocked-answer.js';
+import { chooseJobOptionCommand } from '../job/choose-option.js';
+import { flushJobHooks } from '../job/agreement-hooks.js';
+import { answerTeamQuestion, settleTeamSetup } from '../team/setup.js';
+import { setupAskingFor, TEAM_SETUP_POKE_TEXT } from '../team/setup-hold.js';
+import { confirmTeamProposalCommand, editTeamCandidate } from '../team/proposals.js';
 import { upsertRule as saveRule } from '../memory/rules.js';
 import { refreshBotFiles } from '../memory/files.js';
+import { legacyRulesInEffect } from '../memory/memory-read.js';
+import { upsertRuleAsMemory } from '../memory/rule-edit.js';
+import { correctMemoryCommand, deleteMemoryCommand, undoCorrectMemoryCommand, undoDeleteMemoryCommand, undoMemoryCommand } from '../memory/undo.js';
+import { memoryPageView } from './memory-page-views.js';
+import { ChooseLearnSessionInputSchema, RestoreSkillInputSchema, RollbackSkillInputSchema, skillDetailView, skillLibraryView } from './skill-views.js';
+import { chooseLearnSession } from '../skill/learn.js';
+import { rollbackSkill, setSkillState } from '../skill/store.js';
 import { syncFileWatches } from '../perception/files.js';
-import { editRoutine as saveRoutine, RoutineInputSchema } from '../routines/save.js';
-import { enqueueTeach } from '../routines/teach.js';
+import { recomputeLightAndSave } from '../quota/window.js';
 import { archiveBot, archiveBotCheck, createBot, deleteArchivedBot, lifecycleAction, restoreArchivedBot, setLifecycle, updateBot } from './bots.js';
 import { closeGoal, decideWatchProposal, upsertAspiration, upsertGoal, upsertWatch } from './entities.js';
 import { commandRunner, input, requireBot } from './common.js';
 import { RuleInputSchema } from './schemas.js';
 import { overview } from './summary-views.js';
 import { botView } from './bot-view.js';
-import { activityView, inboxView, recentSessions, settingsView, threadView } from './feed-views.js';
+import { activityView, inboxView, recentSessions, settingsView } from './feed-views.js';
+import { threadViewWithAway } from './thread-away.js';
+import { activeJobsView } from './active-jobs-views.js';
+import { weeklyUsageView } from './usage-views.js';
+import { dismissAwaySummary, ownerSeen } from '../outreach/presence.js';
 import { wakeLedgerDetail, wakeLedgerList } from './ledger-views.js';
 import { resourceView } from './resource-views.js';
 import { projectView } from './project-views.js';
@@ -41,8 +62,49 @@ import { checkKnowledgeConnection } from '../knowledge/index.js';
 import type { UiApi } from './types.js';
 export type * from './types.js';
 export type { CostView, CostTotals, CostBotRow, DailyCostView } from './cost-views.js';
+// P76d：本窗口额度的视图结构与函数（插件在 P76j 使用）。
+export { QuotaWindowViewSchema, buildQuotaWindowView, quotaWindowView, tokensPerTurnOf } from './quota-views.js';
+export type { QuotaWindowView, QuotaViewInput } from './quota-views.js';
 export { LIFECYCLE_TRANSITIONS, LifecycleActionSchema } from './bots.js';
 export type { LifecycleAction } from './bots.js';
+// P73c：三问与组队卡的视图函数和 schema（插件的示例数据、一致性测试使用）。
+export { teamCardView, teamCardViewFor, teamQuestionView, teamQuestionViewFor, TeamCardViewSchema, TeamQuestionViewSchema } from './team-views.js';
+export type { TeamCardViewInput } from './team-views.js';
+// P74a：「一件事」的三个视图及其 zod 结构（插件的一致性测试用）。
+export { JobProgressViewSchema, TopicFloorsViewSchema, ProjectJobRowSchema } from './job-view-schemas.js';
+// P74e：约定卡上执行中改约定的两栏。
+export { JobSplitViewSchema } from './job-view-schemas.js';
+// P74d：交回卡、核对卡的视图结构与纯函数（插件的示例数据、一致性测试使用）。
+export { EvidenceItemViewSchema, EvidenceViewSchema, JobCardViewSchema, ReviewCardViewSchema, SubmissionCardViewSchema, DeliveryCardViewSchema, ReceiptCardViewSchema } from './job-view-schemas.js';
+export type { EvidenceImage } from '../job/evidence-read.js';
+export type { PreviewTarget } from '../job/preview.js';
+// P74g：审批卡的三行说明与「由谁执行」的结构与纯函数（插件的示例数据、一致性测试使用）。
+export { ARGS_FULL_MAX_CHARS, ApprovalCardPartsSchema, ApprovalNotesViewSchema, approvalNotesView, isLaunchApproval, onBehalfOfText } from './approval-card-view.js';
+// P74f：交付卡、回执的纯函数（插件的示例数据使用）。
+export { buildDeliveryCard, buildReceiptCard, deliveryCardTitle } from './job-delivery-views.js';
+export type { DeliveryCardInput } from './job-delivery-views.js';
+// P74f-2：三轮不过卡的纯函数与结构（插件的示例数据使用）。
+export { EscalationCardViewSchema } from './job-view-schemas.js';
+export { buildEscalationCard } from './job-escalation-views.js';
+export type { EscalationCardInput } from './job-escalation-views.js';
+export { buildReviewCard, buildSubmissionCard, cardTitleFor, jobCardView, reviewCardTitle, submissionCardTitle, REVIEW_CARD_FOOTER } from './job-card-views.js';
+export type { ReviewCardInput, SubmissionCardInput } from './job-card-views.js';
+export { jobProgressView, topicFloorsView, chiefJobLine, projectJobRows } from './job-views.js';
+// P76i：在办的事、用量表、离开期间摘要的视图结构与函数（插件在 P76j、P76k 使用）。
+export { ActiveJobRowSchema, ActiveJobsViewSchema, activeJobsView } from './active-jobs-views.js';
+export type { ActiveJobRow, ActiveJobsView } from './active-jobs-views.js';
+export { WeeklyUsageViewSchema, weeklyUsageView } from './usage-views.js';
+export type { WeeklyUsageView } from './usage-views.js';
+export { buildAwaySummary } from './away-views.js';
+export type { AwayInput, AwayJobInput, AwaySummary } from './away-views.js';
+export { threadViewWithAway } from './thread-away.js';
+export type { JobProgressInput, TopicFloorsInput } from './job-views.js';
+// P75c：「已记住」一行的视图结构（插件的示例数据、一致性测试使用）。
+export { MemoryNoteViewSchema } from './memory-views.js';
+export type { MemoryNoteView } from './memory-views.js';
+// P75d：记忆页视图的纯函数、读存储版和 schema（插件的示例数据、一致性测试使用）。
+export { MemoryPageViewSchema, MemoryEntryViewSchema, buildMemoryPage, memoryPageView } from './memory-page-views.js';
+export type { MemoryPageView, MemoryEntryView, MemoryPageInput } from './memory-page-views.js';
 export { HUB_EVENT_SCOPES } from './event-scopes.js';
 export type { HubEventScope } from './event-scopes.js';
 export type { HubModelOption, ListModels } from './models.js';
@@ -77,7 +139,11 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
       }
     },
     reviewArtifact: raw => run('reviewArtifact', () => reviewArtifact(ctx, raw)),
-    overview: () => overview(ctx), bot: botId => botView(ctx, botId), thread: (threadId, page) => threadView(ctx, threadId, page),
+    // P74g：读证据截图、打开预览前的校验都是只读，不进入命令串行与调度后处理；两个函数自己不抛出，问题都变成中文错误。
+    readJobEvidence: raw => readJobEvidence(ctx, raw),
+    jobPreviewTarget: raw => jobPreviewTarget(ctx, raw),
+    // P76i：总管私聊的线程视图顶部带离开期间摘要（threadViewWithAway 只在有未收起的摘要时多一个字段）。
+    overview: () => overview(ctx), bot: botId => botView(ctx, botId), thread: (threadId, page) => threadViewWithAway(ctx, threadId, page),
     inbox: () => inboxView(ctx), activity: page => activityView(ctx, page), settings: () => settingsView(ctx), recentSessions: () => recentSessions(ctx),
     // 账本是只读视图，不进入命令串行与调度后处理。
     wakeLedgerList: (botId, limit, before) => wakeLedgerList(ctx, botId, limit, before),
@@ -116,6 +182,35 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
     assignTask: raw => run('assignTask', () => assignTask(ctx, raw)),
     dispatchTask: raw => run('dispatchTask', () => dispatchTask(ctx, raw)),
     // P63：开主题走统一命令出口；之后的消息沿用 sendMessage，线程 id 就是主题 id。
+    // P72c：约定卡上的「定了」按钮。
+    // P74e：约定固定后这件事的收尾（重写主题文件、叫醒执行者）是异步的，命令等它做完再返回。
+    confirmAgreement: raw => run('confirmAgreement', async () => {
+      const result = confirmAgreementCommand(ctx, raw);
+      await flushJobHooks(ctx);
+      return result;
+    }),
+    // P74f：交付卡上的「验收通过」按钮，与「待你处理」、打字三条途径落到同一个函数。
+    acceptJob: raw => run('acceptJob', async () => {
+      const result = acceptJobCommand(ctx, raw);
+      await flushJobHooks(ctx);
+      return result;
+    }),
+    // P74f-2：三轮不过卡上选办法、回合上限条目和「停住了」条目的答复；与「待你处理」里的按钮落到同一个函数。
+    chooseJobOption: raw => run('chooseJobOption', async () => {
+      const result = chooseJobOptionCommand(ctx, raw);
+      await flushJobHooks(ctx);
+      return result;
+    }),
+    answerJobCap: raw => run('answerJobCap', async () => {
+      const result = answerJobCapCommand(ctx, raw);
+      await flushJobHooks(ctx);
+      return result;
+    }),
+    answerJobStall: raw => run('answerJobStall', async () => {
+      const result = answerJobStallCommand(ctx, raw);
+      await flushJobHooks(ctx);
+      return result;
+    }),
     createProjectTopic: raw => run('createProjectTopic', () => createProjectTopic(ctx, raw)),
     taskBlock: id => run('taskBlock', () => taskBlock(ctx, id)),
     taskResume: id => run('taskResume', () => taskResume(ctx, id)),
@@ -132,9 +227,32 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
     deleteArchivedBot: botId => run('deleteArchivedBot', () => deleteArchivedBot(ctx, botId)),
     interruptBot: raw => run('interruptBot', () => interruptBot(ctx, raw)),
     setLifecycle: (botId, lifecycle) => run('setLifecycle', () => setLifecycle(ctx, botId, lifecycle)),
-    sendMessage: (threadId, text) => run('sendMessage', () => sendOwnerMessage(ctx, threadId, text)),
-    answerInbox: (id, answer) => run('answerInbox', () => answerItem(ctx, id, answer)),
-    decideApproval: (id, approve, note) => run('decideApproval', () => decide(ctx, id, approve, note)),
+    // P73c：三问进行中，打字回答里需要异步收尾的部分（建项目、生成组队卡）在这里等做完再返回。
+    sendMessage: (threadId, text) => run('sendMessage', async () => {
+      const message = sendOwnerMessage(ctx, threadId, text);
+      await settleTeamSetup(ctx);
+      await flushJobHooks(ctx);
+      return message;
+    }),
+    // P73c：三问点选、组队卡内修改与确认。
+    answerTeamQuestion: raw => run('answerTeamQuestion', () => answerTeamQuestion(ctx, raw)),
+    editTeamCandidate: raw => run('editTeamCandidate', () => editTeamCandidate(ctx, raw)),
+    confirmTeamProposal: raw => run('confirmTeamProposal', () => confirmTeamProposalCommand(ctx, raw)),
+    // P79：提议可附一句话（note）；其他条目带了也不起作用。
+    answerInbox: (id, answer, note) => run('answerInbox', async () => {
+      const item = await answerItem(ctx, id, answer, note);
+      await flushJobHooks(ctx);
+      // P74r18b：「待你处理」里点「批准」走的是这条路：批准的出站动作立刻开始执行（只开始、不等做完）。
+      if (item.type === 'approval') startApprovedRunFor(ctx, item.refId);
+      return item;
+    }),
+    // P74r18b：批准一条由中心代为执行的出站动作之后，立刻开始一次执行（以前要等下一次巡检，最长 60 秒）；
+    // 与巡检里的执行不会重入，员工正在复盘、已暂停时照现有规则跳过，留给巡检兜底。只开始、不等做完，主人点「批准」的命令不会卡住。
+    decideApproval: (id, approve, note) => run('decideApproval', async () => {
+      const approval = await decide(ctx, id, approve, note);
+      startApprovedRunFor(ctx, approval.id);
+      return approval;
+    }),
     upsertAspiration: raw => run('upsertAspiration', () => upsertAspiration(ctx, raw)),
     upsertGoal: raw => run('upsertGoal', () => upsertGoal(ctx, raw)),
     closeGoal: (id, outcome) => run('closeGoal', () => {
@@ -146,11 +264,53 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
       const value = input(z.strictObject({ id: nonempty, approve: z.boolean() }), { id, approve }, '关注提议决定');
       return decideWatchProposal(ctx, value.id, value.approve);
     }),
-    upsertRule: raw => run('upsertRule', () => saveRule(ctx, { ...input(RuleInputSchema, raw, '规矩'), source: 'owner' })),
-    editRoutine: (id, patch) => run('editRoutine', () => saveRoutine(ctx, input(nonempty, id, 'id'), input(RoutineInputSchema.partial(), patch, '套路修改'))),
-    teach: (botId, sessionId, note) => run('teach', () => enqueueTeach(ctx, botId, sessionId, note)),
-    pokeBot: (botId, text) => run('pokeBot', () => sendOwnerMessage(ctx, requireBot(ctx, botId).id,
-      input(nonempty.trim().min(1, '消息不能为空'), text ?? '请看看当前情况，告诉我进展。', 'text'))),
+    // P75r1：输入带 id、这个 id 是旧规矩表里的一行、并且旧规矩表仍要读（迁移未完成）时，照旧写旧规矩表（改的是那条旧规矩本身）；
+    // 其余情况（新建、改记忆、归档记忆）都写记忆（经 memory/service.ts）。
+    upsertRule: raw => run('upsertRule', async () => {
+      // 先只取出 id 来判断走哪一边（记忆编号 mem_ 不符合旧规矩的输入形状，不能先整体按旧形状校验）。
+      const rawId = typeof raw === 'object' && raw !== null ? (raw as { id?: unknown }).id : undefined;
+      if (typeof rawId === 'string' && legacyRulesInEffect(ctx) && Boolean(ctx.store.table('rules').get(rawId))) {
+        return saveRule(ctx, { ...input(RuleInputSchema, raw, '规矩'), source: 'owner' });
+      }
+      return upsertRuleAsMemory(ctx, raw);
+    }),
+    // P75c：记忆的四个命令（撤销「已记住」、记忆页更正、删除、撤销删除）。宿主路由由 P75k 接。
+    undoMemory: raw => run('undoMemory', () => undoMemoryCommand(ctx, raw)),
+    undoCorrectMemory: raw => run('undoCorrectMemory', () => undoCorrectMemoryCommand(ctx, raw)),
+    // 记忆页视图是只读，不进入命令串行与调度后处理。
+    memoryPage: () => memoryPageView(ctx),
+    // P75e：技能库的两个视图只读；回退与放回两个命令走统一出口（宿主路由由 P75j 接，活动流由 P75i 接）。
+    skillLibrary: botId => skillLibraryView(ctx, requireBot(ctx, botId).id),
+    skillDetail: skillId => skillDetailView(ctx, input(nonempty, skillId, 'skillId')),
+    rollbackSkill: raw => run('rollbackSkill', async () => {
+      const args = input(RollbackSkillInputSchema, raw, '回退技能');
+      await rollbackSkill(ctx, args.skillId, args.versionNo);
+      return { skillId: args.skillId, versionNo: args.versionNo };
+    }),
+    restoreSkill: raw => run('restoreSkill', async () => {
+      const args = input(RestoreSkillInputSchema, raw, '放回技能');
+      await setSkillState(ctx, args.skillId, 'active');
+      return { skillId: args.skillId };
+    }),
+    // P75i：学习选会话（教它技能）：总管私聊里提问卡上的按钮。与「待你处理」里回答同一条提问结果相同（见 skill/learn.ts）。
+    // 不叫醒总管；宿主路由由 P75k 接。
+    chooseLearnSession: raw => run('chooseLearnSession', async () => {
+      const args = input(ChooseLearnSessionInputSchema, raw, '学习选会话');
+      await chooseLearnSession(ctx, { runId: args.runId, option: args.option, via: 'button' });
+      return { runId: args.runId };
+    }),
+    correctMemory: raw => run('correctMemory', () => correctMemoryCommand(ctx, raw)),
+    deleteMemory: raw => run('deleteMemory', () => deleteMemoryCommand(ctx, raw)),
+    undoDeleteMemory: raw => run('undoDeleteMemory', () => undoDeleteMemoryCommand(ctx, raw)),
+    // P75f：editRoutine、teach 两个命令下线（套路并入技能库、教它技能改为对总管说），宿主路由返回停用说明。
+    pokeBot: (botId, text) => run('pokeBot', async () => {
+      // P73r3 S6：总管正在问三个问题时，「戳一下」不当作回答，直接拒绝。
+      if (setupAskingFor(ctx, requireBot(ctx, botId).id) !== null) throw new Error(TEAM_SETUP_POKE_TEXT);
+      const message = sendOwnerMessage(ctx, requireBot(ctx, botId).id,
+        input(nonempty.trim().min(1, '消息不能为空'), text ?? '请看看当前情况，告诉我进展。', 'text'));
+      await settleTeamSetup(ctx);
+      return message;
+    }),
     updateSettings: patch => run('updateSettings', async () => {
       const raw = input(z.record(z.string(), z.unknown()), patch, '设置修改');
       const next = resolveSettings(mergeSettings(ctx.settings, raw));
@@ -158,8 +318,14 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
       if (next.maxBots < ctx.store.table('bots').count(row => row.lifecycle !== 'retired')) throw new Error('maxBots：不能小于现有机器人数量');
       if (next.maxChiefs < ctx.store.table('bots').count(row => row.role === 'chief' && row.lifecycle !== 'retired')) throw new Error('maxChiefs：不能小于现有总管数量');
       if (Object.hasOwn(raw, 'defaultModel')) await validateModelChoice(ctx, next.defaultModel);
+      // 要在换上新设置之前比较，才知道灯相关的几项有没有变。
+      const quotaLightChanged = (['botQuotaShare', 'quotaYellowRatio', 'quotaOrangeRatio', 'quotaRedRatio'] as const)
+        .some(key => next[key] !== ctx.settings[key]);
       ctx.settings = next;
       ctx.store.table('settings').put(next);
+      // P76r2 第 4 节：员工份额比例或灯的比例变了，存着的灯按新设置重算（红灯变成不红时恢复被额度挡住的员工）；
+      // 否则员工份额用完的红灯会被闸门当成真实额度用完，主人自己的消息也被拦到窗口结束。
+      if (quotaLightChanged) recomputeLightAndSave(ctx, ctx.clock.now());
       await syncFileWatches(ctx);
       for (const bot of ctx.store.table('bots').list()) await refreshBotFiles(ctx, bot.id);
       ctx.emit(HUB_EVENT_SCOPES.settings);
@@ -193,5 +359,10 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
       return { state: 'failed' as const, host, protocol, reason: result.reason, errors: [] };
     }),
     markThreadRead: threadId => run('markThreadRead', () => markRead(ctx, threadId)),
+    // P76i：在办的事与用量表是只读视图；两个离开期间命令走统一出口（宿主路由由 P76k 接）。
+    activeJobs: botId => activeJobsView(ctx, requireBot(ctx, botId).id),
+    weeklyUsage: () => weeklyUsageView(ctx),
+    ownerSeen: () => run('ownerSeen', () => ownerSeen(ctx)),
+    dismissAwaySummary: () => run('dismissAwaySummary', () => ({ dismissed: dismissAwaySummary(ctx) })),
   };
 }

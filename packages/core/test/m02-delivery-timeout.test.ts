@@ -58,7 +58,8 @@ it.each(['createSession', 'sessionInfo', 'deliver'] as const)(
 
 it('M02 [17] tick 自己发起的投递悬挂，也能由重叠 tick 释放并发', async () => {
   const ctx = createTestContext();
-  const bot = { ...botFixture, lightCheckAt: ctx.clock.now() };
+  // P73a：启动整理会把执行类员工统一成听吩咐（不做到点轻复查）；这条测的是 tick 自己发起的投递，所以用值守类员工。
+  const bot = { ...botFixture, role: 'sentinel' as const, lightCheckAt: ctx.clock.now() };
   ctx.store.table('bots').put(bot); await createBotHome(ctx, bot);
   const hub = createHub(ctx); await hub.start();
   ctx.clock.advance(ctx.settings.startupQuietMs);

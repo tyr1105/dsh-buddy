@@ -2,6 +2,7 @@
 export * from './thread.js';
 export * from './inbox.js';
 export * from './push.js';
+export * from './notify.js';
 export * from './digest.js';
 export * from './proposals.js';
 export * from './alerts.js';

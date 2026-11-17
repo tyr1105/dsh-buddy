@@ -4,7 +4,7 @@
  * 数据全部来自 HubStore（唯一仓库）；加载超过 300ms 显示骨架；宿主连不上整页提示；
  * 每个页面块外包 BlockBoundary（出错只显示「这块没显示出来，刷新试试」）。
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { KnowledgeConnectionState } from '@agent-hub/core'
 import type { HubStore, PageView } from '../hub-state.js'
 import { createStore, useStore, type Store } from '../store.js'
@@ -12,9 +12,9 @@ import { TopBar } from '../components/TopBar.js'
 import { CommandPalette } from '../components/command-palette.js'
 import type { CommandActionId } from '../logic/command-palette.js'
 import { TeamSidebarNav, type NewSessionInput } from '../components/team-sidebar-nav.js'
-import type { ArchiveCheckInfo } from '../components/bot-archive-dialog.js'
 import { ThreadPane, type ThreadHeaderInfo } from '../components/ThreadPane.js'
 import { RightPanel } from '../components/RightPanel.js'
+import { TeammateEditHost } from '../components/teammate-edit-host.js'
 import { InboxPane } from '../components/InboxPane.js'
 import { ActivityPane } from '../components/ActivityPane.js'
 import { SettingsPane } from '../components/SettingsPane.js'
@@ -23,18 +23,25 @@ import { ResourcePage } from './ResourcePage.js'
 import { ProjectPage } from './ProjectPage.js'
 import { addTeammatesFromTemplates, createTeammate } from '../logic/wizard-create.js'
 import { NewBotWizard } from '../components/NewBotWizard.js'
-import { TeachDialog } from '../components/TeachDialog.js'
-import { FirstTeammate } from '../components/office-start.js'
+import { MemoryPage } from './MemoryPage.js'
+import { undoCommandOf } from '../logic/memory.js'
+import { settingsSectionOfView } from '../logic/settings-sections.js'
+import { restoreEditFocus } from '../logic/edit-focus.js'
 import { BlockBoundary } from '../components/ErrorBoundary.js'
 import { Skeleton } from '../components/Ui.js'
 import type { CardActions } from '../components/Cards.js'
 import { cardSubmission } from '../logic/cards.js'
+import { teamCardActions } from '../logic/team-actions.js'
+import { modelTiers } from '@agent-hub/core/team'
+import { displayRoleLabel, isChiefEntry } from '../logic/agreement.js'
 import { OPEN_SESSION_HINTS, openBotSessionWith } from '../logic/thread.js'
-import { lifecycleAllTargets, pauseResumeAction } from '../logic/lifecycle.js'
+import { STATUS_OK_TEXT, headerStatusAction, staffAllTargets } from '../logic/lifecycle.js'
 import { collectWorkSessions, sessionsForBot, type WorkSession } from '../logic/work-session.js'
 import { findTopic, isTopicThreadId, openNewTopic, topicPaneInfo } from '../logic/topics.js'
 import { sendDraftFirstMessage, sidebarSelectedThread, topicDraftThreadId } from '../logic/topic-draft.js'
 import { TopicDraftPane } from '../components/topic-draft-pane.js'
+import { isNoThread, landingSurface } from '../logic/missing-teammate.js'
+import { createOwnerSeenReporter } from '../logic/owner-seen.js'
 
 /**
  * 没有外部定位来源时的空仓库（P43）：保证 useStore 始终被调用，
@@ -62,11 +69,34 @@ export function HubPage(props: {
 }): ReactNode {
   const hub = props.hub
   const state = useStore(hub)
+  // P74i-m2（第二次，第 4 节第 1 条）：「待你处理」里约定确认条目下面的说明，改为只看条目自己带的
+  // agreementJobSplit、agreementStop（核心 P74r8 给出）；此处原先从已打开的对话里收集约定 id 的写法已去掉。
   const [rightOpen, setRightOpen] = useState(false)
+  /** 正在编辑的员工 id（P78）：null 表示「编辑员工」弹窗没开；两个入口共用这一个状态。 */
+  const [editStaffId, setEditStaffId] = useState<string | null>(null)
+  /**
+   * P74i-m4（第 5 节第 2 条）：打开「编辑员工」弹窗时记下触发它的元素，关弹窗后把焦点还回去。
+   * 两个入口（右栏按钮、「更多」菜单项）点下去之后都会从页面上消失，弹窗自己记的触发元素随之失效，
+   * 焦点会落到页面最外层；这里在弹窗关闭后补一次：原按钮还在就回原按钮，不在就回左栏里这位员工那一行。
+   */
+  const editOpenerRef = useRef<HTMLElement | null>(null)
+  const lastEditIdRef = useRef<string | null>(null)
+  const openEditStaff = (botId: string): void => {
+    try { editOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null } catch { editOpenerRef.current = null }
+    setEditStaffId(botId)
+  }
+  useEffect(() => {
+    const was = lastEditIdRef.current
+    lastEditIdRef.current = editStaffId
+    // 只在「刚从打开变成关闭」时处理；此时弹窗已卸载（它自己的还焦点逻辑已先执行）。
+    if (editStaffId !== null || was === null) return
+    const opener = editOpenerRef.current
+    editOpenerRef.current = null
+    restoreEditFocus(opener, was, selector => document.querySelector<HTMLElement>(selector))
+  }, [editStaffId])
   const [busyInboxId, setBusyInboxId] = useState<string | null>(null)
   const [threadError, setThreadError] = useState<string | null>(null)
   const [wizardOpen, setWizardOpen] = useState(false)
-  const [teachOpen, setTeachOpen] = useState(false)
   /** 跳转面板（WCAG 2.4.5）：打开时覆盖在页面上，关闭后不渲染、不占布局。 */
   const [paletteOpen, setPaletteOpen] = useState(false)
   /**
@@ -75,6 +105,8 @@ export function HubPage(props: {
    * 记了 id，切到别的线程回程钮自然就不成立，不会挂在不相干的对话上。
    */
   const [inboxReturnThread, setInboxReturnThread] = useState<string | null>(null)
+  /** P72g B2：从待你处理的约定条目点「查看对话」进总管私聊时，要滚到的那份约定；用过一次就由 ThreadPane 消费，换线程时清掉。 */
+  const [focusAgreementId, setFocusAgreementId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   /** 试跑提示归属的机器人：它的线程里出现第一条回复后自动消失（D04 3c-3）。 */
   const [noticeAutoClearBot, setNoticeAutoClearBot] = useState<string | null>(null)
@@ -83,6 +115,43 @@ export function HubPage(props: {
   /** 从办公室门口点进来时要聚焦的收件箱卡（F04）；普通进入收件箱为 null。 */
   const [focusInboxId, setFocusInboxId] = useState<string | null>(null)
 
+  /**
+   * P76k：页面可见时上报「你正在看」（ownerSeen）——挂载时一次，之后每 5 分钟一次；
+   * 页面由隐藏变为可见时立刻再报一次，隐藏时停。节奏由 logic/owner-seen.ts 控制（可用假计时器单测）。
+   * 失败只记日志；旧宿主没有这个命令时，第一次收到「未知命令」之后不再调用。
+   */
+  const ownerSeenSupported = useRef(true)
+  useEffect(() => {
+    const node = typeof document === 'undefined' ? null : document
+    const hidden = (): boolean => node === null || node.visibilityState === 'hidden'
+    const reporter = createOwnerSeenReporter({
+      hidden,
+      report: () => {
+        if (!ownerSeenSupported.current) return
+        void hub.command('ownerSeen', {}).then(result => {
+          try {
+            if (!result.ok && result.error.includes('未知命令')) ownerSeenSupported.current = false
+          } catch { /* 结果处理失败只影响是否继续上报 */ }
+        }).catch(() => undefined)
+      },
+    })
+    reporter.reportNow()
+    if (!hidden()) reporter.start()
+    const onVisibility = (): void => { reporter.onVisibilityChange() }
+    try { node?.addEventListener('visibilitychange', onVisibility) } catch { /* 环境没有 document 时只影响上报 */ }
+    return () => {
+      reporter.stop()
+      try { node?.removeEventListener('visibilitychange', onVisibility) } catch { /* 忽略 */ }
+    }
+  }, [hub])
+
+  /** P76k：收起离开期间摘要；成功后重拉线程，让它从视图里消失。 */
+  const dismissAway = async (threadId: string): Promise<void> => {
+    const result = await hub.command('dismissAwaySummary', {})
+    if (!result.ok) throw new Error(result.error)
+    await hub.refreshThread(threadId)
+  }
+
   const selectedThread = state.selectedThread
   /**
    * P60 草稿主题：中栏摆着「新开会话」的空聊天时，本页把它当成单独的视图 'topic-draft'。
@@ -90,31 +159,40 @@ export function HubPage(props: {
    * 不开它的右侧边栏、不留它的回程钮。仓库里的 view 仍是 'main'；换页、切线程都会清掉草稿。
    */
   const topicDraft = state.view === 'main' ? state.topicDraft : null
-  const view: PageView | 'topic-draft' = topicDraft !== null ? 'topic-draft' : state.view
+  // P71：团队全景下线后，主视图没有选中任何对话时摆办公室。仓库本身已经这样归一，这里再兜一次底，
+  // 万一哪条旧路径把页面停在「主视图 + 没有选中」，也不会出现一页空对话或去拉一条不存在的线程。
+  const view: PageView | 'topic-draft' = topicDraft !== null ? 'topic-draft' : landingSurface(state.view, selectedThread).view
 
   // 首次挂载拉全部基础视图；此后由 SSE changed 事件驱动刷新。
   useEffect(() => {
     void hub.refreshAll()
     void hub.refreshSettings()
   }, [hub])
+  /**
+   * P76k：设置页打开时拉一次「最近 7 天的用量」表。只读视图，失败只在设置页那一块显示原因；
+   * 不放进 refreshAll：这块只有设置页用，别的页面不必为它多发一次请求。
+   */
+  useEffect(() => {
+    if (view !== 'settings') return
+    void hub.refreshWeeklyUsage()
+  }, [hub, view])
   // P58：选中某位队友时，等名册到手再拉对话，因为本地记住的 id 可能早已不存在。
-  // 团队线程不依赖名册，照旧立刻拉；这个布尔值只在名册第一次到手时翻转，不会造成多拉。
-  const threadLoadable = selectedThread === 'team' || state.overview !== null
+  // 这个布尔值只在名册第一次到手时翻转，不会造成多拉。P71：没有选中任何对话时什么都不拉。
+  const threadLoadable = !isNoThread(selectedThread) && state.overview !== null
   useEffect(() => {
     if (state.connectionDown || !threadLoadable) return
     setThreadError(null)
     void hub.refreshThread(selectedThread).catch(() => setThreadError('线程读取失败。点击「重试」；仍失败请确认插件未停用。'))
   }, [hub, selectedThread, state.connectionDown, threadLoadable])
 
-  // P58：选中的队友已不存在、仓库把选中退回团队全景时，页面里跟这位队友绑定的状态也要归位，
-  // 否则团队全景上会留着旧提示条，下次选别人时右侧边栏和教学弹窗也会莫名打开。
+  // P58：选中的队友已不存在、仓库把选中退回办公室时（P71 前是团队全景），页面里跟这位队友绑定的状态也要归位，
+  // 否则会留着旧提示条，下次选别人时右侧边栏也会莫名打开。
   // 挂载时也会跑一次，这些状态本来就是初始值，等于什么都没做。
   // 这段必须排在下面几个「接住定位请求」的 effect 前面：同一轮里既退出又有新请求时，新请求要赢。
   const selectionExitSeq = state.selectionExitSeq
   useEffect(() => {
     setInboxReturnThread(null)
     setRightOpen(false)
-    setTeachOpen(false)
     setNotice(null)
     setNoticeAutoClearBot(null)
   }, [selectionExitSeq])
@@ -158,21 +236,31 @@ export function HubPage(props: {
     setPendingNewProject(true)
   }, [hub, newProjectRequest])
 
-  // 选中机器人时拉它的详情；打开教学时拉最近会话。
+  // 选中机器人时拉它的详情。
   const overview = state.overview
   const selectedBot = overview?.bots.find(b => b.id === selectedThread) ?? null
   useEffect(() => {
     if (selectedBot && !state.bots[selectedBot.id]) void hub.refreshBot(selectedBot.id)
   }, [hub, selectedBot, state.bots])
+  // P75k：页面停在「关于你的记忆」却还没有视图时（例如从上次的页面状态恢复）取一次；入口点击时仓库已经取过。
+  const memoryMissing = view === 'memory' && state.memoryPage === null && state.memoryError === null
   useEffect(() => {
-    if (teachOpen) void hub.refreshRecentSessions()
-  }, [hub, teachOpen])
+    if (memoryMissing) void hub.refreshMemory()
+  }, [hub, memoryMissing])
 
   // 工作会话投影（P33）：项目视图还没到时是 null，右侧边栏显示骨架，不假装没有工作。
   const workSessions = state.project === null ? null : collectWorkSessions(state.project)
   const selectedSessions = selectedBot !== null && workSessions !== null
     ? sessionsForBot(workSessions, selectedBot.id)
     : null
+
+  // P76j：选中一位员工时取一次它的「在办的事」；总览刷新后（有回合、有条目、有约定变化）
+  // 再取一次，右栏的消耗与「在等」跟着更新。取不到时 store 里没有这个键，右栏退回工作会话列表。
+  const selectedBotId = selectedBot?.id ?? null
+  useEffect(() => {
+    if (selectedBotId === null) return
+    void hub.refreshActiveJobs(selectedBotId)
+  }, [hub, selectedBotId, overview])
 
   /**
    * 当前线程是项目主题时的页面信息（P63）。只看 id 前缀来判断，
@@ -192,13 +280,11 @@ export function HubPage(props: {
   // P68：私聊同理。仓库的 selectThread 只在「点进去」那一下标已读，主人开着对话时队友又回了新消息，
   // 左栏这位队友的未读点就一直亮着。这里照主题的写法：页面正摆着这条私聊（view === 'main'）、
   // 名册里它的未读数大于 0 时，再标一次已读并刷新名册。
-  // - 团队线程（'team'）也是私聊同类的线程，未读数在 overview.team.unread，一并处理。
+  // - P71：团队全景下线，原来给团队线程补的那份处理跟着收掉，这里只管队友私聊。
   // - 名册里查不到这个 id（已删除的队友）时 selectedBot 为 null，未读数按 0 算，不发标已读（P58 的规矩）。
   // - 不会循环：未读为 0 不发；标完刷新名册后未读归 0，依赖变了但条件不成立，就停了；
   //   标已读失败时未读数不变、依赖不变，effect 不会重跑。
-  // 少数夹具/占位名册没有 team 字段，所以按可选读取，缺了就当 0。
-  const teamUnread = (overview?.team as { unread?: number } | undefined)?.unread ?? 0
-  const chatUnread = selectedThread === 'team' ? teamUnread : (selectedBot?.unread ?? 0)
+  const chatUnread = selectedBot?.unread ?? 0
   useEffect(() => {
     if (view !== 'main' || isTopicThreadId(selectedThread) || chatUnread === 0) return
     void hub.command('markThreadRead', { threadId: selectedThread }).then(() => hub.refreshOverview()).catch(() => undefined)
@@ -265,17 +351,7 @@ export function HubPage(props: {
    */
   const createSession = (input: NewSessionInput): Promise<string | null> => openNewTopic(hub, input.projectId, input.text)
 
-  /** P48：归档前置校验；失败转成中文错误字符串，左栏据此弹拦截框。 */
-  const checkArchive = async (botId: string): Promise<ArchiveCheckInfo | string> => {
-    try {
-      const result = await hub.command('archiveBotCheck', { botId })
-      if (!result.ok) return result.error
-      return result.data as ArchiveCheckInfo
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e)
-    }
-  }
-  /** 归档 / 恢复 / 删除共用：成功后刷新总览、项目与办公室，失败把中文错误交回弹窗。 */
+  /** 删除已归档员工：成功后刷新总览、项目与办公室，失败把中文错误交回弹窗。（P73f：归档改在编辑员工弹窗里做。） */
   const runBotArchiveCommand = async (name: string, botId: string): Promise<string | null> => {
     try {
       const result = await hub.command(name, { botId })
@@ -293,7 +369,25 @@ export function HubPage(props: {
   // 收件箱/线程卡片上的操作（D06 第 4 条）：按 cardSubmission 分流——审批卡用
   // approvalId 走 decideApproval（绝不把 inboxId 当 approvalId），其他卡走 answerInbox。
   // 卡片作答（D07 第 11 条）：失败要把原因返回给卡片显示（按钮恢复可点），不再只进 console。
+  /**
+   * P75k：记忆命令（「已记住」行的撤销，记忆页的更正、删除、撤销删除）的统一执行：成功后重取记忆页、当前线程（「已记住」行改字）
+   * 和总览（左栏与总管右侧栏的条数）；失败把原因交回那一行显示，按钮复位。
+   */
+  const runMemoryCommand = async (name: string, input: Record<string, unknown>): Promise<string | null> => {
+    try {
+      const result = await hub.command(name, input)
+      if (!result.ok) return result.error
+      await Promise.all([hub.refreshMemory(), hub.refreshThread(selectedThread), hub.refreshOverview()])
+      return null
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+  }
   const cardActions: CardActions = {
+    // P75k：「已记住」「已删除」「已更正」行上的「撤销」，按动作选命令（undoMemory、undoDeleteMemory、undoCorrectMemory）。
+    onUndoMemory: note => runMemoryCommand(undoCommandOf(note), { memoryId: note.memoryId }),
+    // P75k：约定卡已定事项的出处点开记忆页并定位到那一条。
+    onOpenMemory: memoryId => hub.requestMemory(memoryId),
     onPick: async (card, option, note) => {
       setBusyInboxId(card.inboxId)
       try {
@@ -307,19 +401,33 @@ export function HubPage(props: {
         return e instanceof Error ? e.message : String(e)
       } finally { setBusyInboxId(null) }
     },
+    // P72：约定卡上点「定了」。命令名和入参（agreementId、version、choices）由 core 校验；
+    // 成功后刷新当前线程、总览、待你处理和项目（主题第一层也要变成「已固定」）。失败把原因交回卡片显示。
+    onConfirmAgreement: async (agreementId, version, choices) => {
+      try {
+        const result = await hub.command('confirmAgreement', { agreementId, version, choices })
+        if (!result.ok) return result.error
+        await Promise.all([hub.refreshThread(selectedThread), hub.refreshInbox(), hub.refreshOverview(), hub.refreshProject()])
+        return null
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e)
+      }
+    },
+    // P73e：三问卡回答、组队卡编辑与确认、第二问的选择文件夹。接线集中在 logic/team-actions.ts。
+    ...teamCardActions(hub, () => selectedThread, props.clientCtx),
   }
 
-  // 线程头部信息（团队线程没有）。
-  const header: ThreadHeaderInfo | null = selectedThread === 'team' ? null : topicInfo !== null ? {
-    name: topicInfo.title, roleLabel: null, activityText: null, nextThinkText: null, lifecycle: null, thinking: false,
+  // 线程头部信息：主题用主题名，队友用名册里的名片，名册里查不到时用线程标题兜底。
+  const header: ThreadHeaderInfo | null = topicInfo !== null ? {
+    name: topicInfo.title, roleLabel: null, activityText: null, nextThinkText: null, staffStatus: null, thinking: false,
   } : selectedBot ? {
     name: selectedBot.name,
-    roleLabel: selectedBot.roleLabel,
+    roleLabel: displayRoleLabel(selectedBot),
     activityText: selectedBot.activityText,
     nextThinkText: selectedBot.nextThinkText,
-    lifecycle: selectedBot.lifecycle,
+    staffStatus: selectedBot.staffStatus,
     thinking: selectedBot.activity === 'thinking',
-  } : { name: state.threads[selectedThread]?.title ?? '队友', roleLabel: null, activityText: null, nextThinkText: null, lifecycle: null, thinking: false }
+  } : { name: state.threads[selectedThread]?.title ?? '员工', roleLabel: null, activityText: null, nextThinkText: null, staffStatus: null, thinking: false }
 
   // 打断当前回合（D06 第 2 条）：interruptBot 经路由命令交给 core（取消、线程消息
   // 与感知恢复都由 core 完成），插件不再自己 cancel 或写系统消息。
@@ -341,13 +449,13 @@ export function HubPage(props: {
   }
   const togglePause = (): void => {
     if (!selectedBot) return
-    // D06 第 3 条 / D07 第 24 条：暂停/恢复走 lifecycleAction，动作由纯函数按状态选。
-    const picked = pauseResumeAction(selectedBot.lifecycle)
+    // P73f：线程头部的快捷按钮只有「停用」「恢复在岗」，走 lifecycleAction 的 suspend、reinstate，动作由纯函数按状态选。
+    const picked = headerStatusAction(selectedBot.staffStatus)
     if (picked === null) return
     const action = picked
     void (async () => {
       const result = await hub.command('lifecycleAction', { botId: selectedBot.id, action })
-      setNotice(result.ok ? (action === 'pause' ? '已暂停。暂停期间的变化仍记录，可恢复。' : '已恢复。下一步：待安排。') : result.error)
+      setNotice(result.ok ? STATUS_OK_TEXT[action] : result.error)
       await Promise.all([hub.refreshOverview(), hub.refreshBot(selectedBot.id)])
     })()
   }
@@ -364,19 +472,18 @@ export function HubPage(props: {
     if (result.ok && result.data) return result.data as KnowledgeConnectionState
     return result.ok ? '自检无返回结果。请稍后重试；仍失败请检查知识库连接配置。' : result.error
   }
-  const lifecycleAll = async (target: 'paused' | 'active'): Promise<string | null> => {
+  const lifecycleAll = async (action: 'suspend' | 'reinstate'): Promise<string | null> => {
     if (!overview) return '总览读取失败。请稍后重试；仍失败请检查 DSH 运行状态。'
-    const action = target === 'paused' ? 'pause' : 'resume'
-    // D07 第 24 条：目标选取也是纯函数（lifecycleAllTargets），与按钮表同一份规则。
-    const targets = lifecycleAllTargets(overview.bots, target).map(id => overview.bots.find(b => b.id === id)!)
+    // P73f：目标选取是纯函数（staffAllTargets）：全部停用只动在岗的，全部恢复在岗只动停用的，按 staffStatus 选。
+    const targets = staffAllTargets(overview.bots, action).map(id => overview.bots.find(b => b.id === id)!)
     let failed = 0
     for (const bot of targets) {
-      // D06 第 3 条：全体暂停/恢复同样走 lifecycleAction（逐个执行，失败只计数）。
+      // 全部停用、全部恢复在岗同样走 lifecycleAction（逐个执行，失败只计数）。
       const result = await hub.command('lifecycleAction', { botId: bot.id, action })
       if (!result.ok) failed += 1
     }
     await hub.refreshOverview()
-    return failed === 0 ? null : `有 ${failed} 个队友操作未成功。请重试，或在对话页点「查看状态」后用「编辑队友」单独操作；仍失败请检查 DSH 运行状态。`
+    return failed === 0 ? null : `有 ${failed} 位员工操作未成功。请重试，或在对话页点「查看状态」后用「编辑员工」单独操作；仍失败请检查 DSH 运行状态。`
   }
 
   /**
@@ -464,11 +571,16 @@ export function HubPage(props: {
 
       {/* 建队友 + 存色的两步编排见 logic/wizard-create（createBot → updateBot color）。 */}
       {wizardOpen && overview ? (
-        <BlockBoundary label="新建队友">
+        <BlockBoundary label="新建员工">
           <NewBotWizard
             existingBots={overview.bots}
             modelOptions={state.settings?.modelOptions ?? []}
             modelOptionsError={state.settings ? null : state.settingsError}
+            // P73e：轻档是否可用（目录里有轻量模型）；模板卡片底部据此写档位，规则与 core 组队卡同一份（modelTiers）。
+            lightAvailable={modelTiers(
+              (state.settings?.modelOptions ?? []).flatMap(option => option.value === null ? [] : [{ provider: option.value.provider, model: option.value.model, label: option.label }]),
+              state.settings?.settings.defaultModel ?? null,
+            ).lightAvailable}
             presetSkillOptions={state.settings?.presetSkillOptions ?? []}
             dshSkillOptions={state.settings?.dshSkillOptions ?? []}
             onCreate={input => createTeammate(hub, input)}
@@ -478,28 +590,14 @@ export function HubPage(props: {
               setWizardOpen(false)
               hub.selectThread(botId)
               // 提示条改放线程顶部（D04 3c-3），该机器人第一次交账（线程出现 reply）后自动消失。
-              setNotice(`${warning ? `${warning} ` : ''}正在试跑：先进行自我介绍，请稍候。`)
-              setNoticeAutoClearBot(botId)
+              // P72h H3：新建员工不再自动试跑，没有「正在试跑」提示；只有创建时带了警告才显示警告本身。
+              if (warning) {
+                setNotice(warning)
+                setNoticeAutoClearBot(botId)
+              }
               void hub.refreshOverview()
             }}
             onClose={() => setWizardOpen(false)}
-          />
-        </BlockBoundary>
-      ) : null}
-
-      {teachOpen && selectedBot ? (
-        <BlockBoundary label="教它技能">
-          <TeachDialog
-            botName={selectedBot.name}
-            sessions={state.recentSessions}
-            onTeach={async (sessionId, note) => {
-              const result = await hub.command('teach', { botId: selectedBot.id, sessionId, note })
-              if (!result.ok) return result.error
-              setTeachOpen(false)
-              await Promise.all([hub.refreshThread(selectedBot.id), hub.refreshBot(selectedBot.id)])
-              return null
-            }}
-            onClose={() => setTeachOpen(false)}
           />
         </BlockBoundary>
       ) : null}
@@ -521,7 +619,7 @@ export function HubPage(props: {
               selectedThread={sidebarSelectedThread(state)}
               activeProjectId={view === 'project' ? state.activeProjectId : null}
               onOpenOffice={() => { hub.setView('office'); void hub.refreshOffice() }}
-              // 团队全景和队友都直接进对话（P64）。
+              // 点队友直接进对话（P64）；团队全景已在 P71 下线。
               onSelectBot={threadId => hub.selectThread(threadId)}
               onOpenInbox={() => openInbox()}
               onOpenSettings={() => { hub.setView('settings'); void hub.refreshSettings() }}
@@ -541,9 +639,6 @@ export function HubPage(props: {
               onOpenTopic={topicId => hub.selectThread(topicId)}
               onCreateSession={createSession}
               onOpenTopicDraft={projectId => hub.openTopicDraft(projectId)}
-              onCheckArchive={checkArchive}
-              onArchiveBot={botId => runBotArchiveCommand('archiveBot', botId)}
-              onRestoreArchivedBot={botId => runBotArchiveCommand('restoreArchivedBot', botId)}
               onDeleteArchivedBot={botId => runBotArchiveCommand('deleteArchivedBot', botId)}
             />
           </BlockBoundary>
@@ -555,6 +650,9 @@ export function HubPage(props: {
               run={hub.command}
               office={state.office}
               loading={state.office === null}
+              // P76k：午休牌与窗口弧读额度窗口视图（总览里 core 已给）；休息时段按设置时区写在牌上。
+              quotaWindow={overview?.quota?.window ?? null}
+              timezone={state.settings?.settings?.timezone}
               onNewBot={() => setWizardOpen(true)}
               onRetry={() => void hub.refreshOffice()}
               onOpenBot={(botId, wakeId) => {
@@ -598,8 +696,18 @@ export function HubPage(props: {
               onRetry={() => void hub.refreshInbox()}
               actions={cardActions}
               busyId={busyInboxId}
-              onOpenThread={id => { setInboxReturnThread(id); hub.selectThread(id) }}
+              onOpenThread={(id, agreementId) => { setInboxReturnThread(id); setFocusAgreementId(agreementId ?? null); hub.selectThread(id) }}
               focusInboxId={focusInboxId}
+              // P79：「要修改」「有不符」「都不合适」写的那句话，走对话输入框发消息用的同一条路径（hub.send），
+              // 失败把原因交回条目显示（草稿保留）。
+              onSendMessage={async (threadId, text) => {
+                try {
+                  await hub.send(threadId, text)
+                  return null
+                } catch (e) {
+                  return e instanceof Error ? e.message : String(e)
+                }
+              }}
             />
           </BlockBoundary>
         ) : view === 'activity' ? (
@@ -617,21 +725,53 @@ export function HubPage(props: {
               }}
             />
           </BlockBoundary>
-        ) : view === 'settings' || view === 'resource' ? (
+        ) : view === 'settings' || view === 'resource' || view === 'memory' ? (
           <BlockBoundary label="设置">
             <SettingsPane
               settings={state.settings}
               loadError={state.settingsError}
               overview={overview}
+              weeklyUsage={state.weeklyUsage}
+              weeklyUsageError={state.weeklyUsageError}
+              onRetryWeeklyUsage={() => void hub.refreshWeeklyUsage()}
               loading={state.settings === null}
               onRetry={() => void hub.refreshSettings()}
               onRetryOverview={() => void hub.refreshOverview()}
               onSave={saveSettings}
-              onPauseAll={() => lifecycleAll('paused')}
-              onResumeAll={() => lifecycleAll('active')}
+              onPauseAll={() => lifecycleAll('suspend')}
+              onResumeAll={() => lifecycleAll('reinstate')}
               onTestKnowledge={testKnowledgeConnection}
-              requestedSection={view === 'resource' ? 'resources' : null}
-              onOpenSection={id => { if (id === 'resources') void hub.refreshResource() }}
+              // P86：内部视图 memory（约定卡出处跳转、从上次页面状态恢复）也落在设置页，直接选中「关于你的记忆」分区。
+              requestedSection={settingsSectionOfView(view) ?? null}
+              onOpenSection={id => {
+                if (id === 'resources') void hub.refreshResource()
+                if (id === 'memory') {
+                  // 点导航进记忆分区：页面状态切到 memory（重新取一次视图）；已经在这一分区时只重取。
+                  if (view === 'memory') void hub.refreshMemory()
+                  else hub.requestMemory()
+                } else if (view === 'memory') {
+                  // 离开记忆分区：页面状态退回普通设置页，之后再有跳转请求时才能重新选中记忆分区。
+                  hub.setView('settings')
+                }
+              }}
+              memory={(
+                <BlockBoundary label="关于你的记忆">
+                  <MemoryPage
+                    page={state.memoryPage}
+                    error={state.memoryError}
+                    onRetry={() => void hub.refreshMemory()}
+                    focusMemoryId={state.memoryFocusId}
+                    onFocusDone={() => hub.clearMemoryFocus()}
+                    commands={{
+                      correct: (memoryId, text) => runMemoryCommand('correctMemory', { memoryId, text }),
+                      remove: memoryId => runMemoryCommand('deleteMemory', { memoryId }),
+                      undoDelete: memoryId => runMemoryCommand('undoDeleteMemory', { memoryId }),
+                      // 项目背景、项目页决策：点「去项目页」打开对应项目页（与左栏点项目行同一条路径）。
+                      openProject: projectId => { hub.requestProject(projectId); void hub.refreshProject() },
+                    }}
+                  />
+                </BlockBoundary>
+              )}
               resources={(
                 <ResourcePage
                   resource={state.resource}
@@ -660,12 +800,11 @@ export function HubPage(props: {
             <ThreadPane
               key={selectedThread}
               threadId={selectedThread}
-              intro={overview?.bots.length === 0 && selectedThread === 'team'
-                ? <FirstTeammate onNewBot={() => setWizardOpen(true)} /> : undefined}
               thread={state.threads[selectedThread] ?? null}
               loading={state.threads[selectedThread] === undefined}
               header={header}
-              inputPlaceholderName={state.threads[selectedThread]?.title ?? '队友'}
+              inputPlaceholderName={state.threads[selectedThread]?.title ?? '员工'}
+              chiefEntry={topicInfo === null && selectedBot !== null && isChiefEntry(selectedBot)}
               banner={notice}
               onBannerDismiss={() => { setNotice(null); setNoticeAutoClearBot(null) }}
               onLoadEarlier={() => {
@@ -677,15 +816,17 @@ export function HubPage(props: {
               busyInboxId={busyInboxId}
               onRetry={() => void hub.refreshThread(selectedThread)}
               error={threadError}
-              onTeach={() => setTeachOpen(true)}
               onOpenSession={openSession}
               onTogglePause={togglePause}
               onInterrupt={interrupt}
               rightCollapsed={view === 'main' && !rightOpen && selectedBot !== null}
               onExpandRight={() => setRightOpen(true)}
+              onEditStaff={() => { if (selectedBot !== null) openEditStaff(selectedBot.id) }}
+              focusAgreementId={inboxReturnThread === selectedThread ? focusAgreementId : null}
               fromInbox={inboxReturnThread === selectedThread}
               onBackToInbox={() => openInbox()}
               topic={topicInfo}
+              onDismissAway={() => dismissAway(selectedThread)}
             />
           </BlockBoundary>
         )}
@@ -694,16 +835,47 @@ export function HubPage(props: {
           <div className="ah-right-scrim" aria-hidden="true" onClick={() => setRightOpen(false)} />
         ) : null}
         {view === 'main' && rightOpen && selectedBot && overview ? (
-          <BlockBoundary label="队友侧边栏">
+          <BlockBoundary label="员工侧边栏">
             <RightPanel
               key={selectedBot?.id ?? 'none'}
               card={selectedBot}
               detail={state.bots[selectedBot.id] ?? null}
+              // P75j：技能库一栏的视图随员工详情一起取，取失败只记在这一栏里，点「重试」重新取。
+              skillLibrary={state.skillLibraries[selectedBot.id] ?? null}
+              skillLibraryError={state.skillLibraryErrors[selectedBot.id] ?? null}
+              onRetrySkillLibrary={() => { void hub.refreshSkillLibrary(selectedBot.id) }}
               light={overview.quota.light}
               costs={overview.costs}
               sessions={selectedSessions}
               onOpenSession={openWorkSession}
+              // P76j：「在办的事」读 core 的视图（旧宿主没有这条路由时保持 null，右栏退回工作会话列表）。
+              activeJobs={state.activeJobs[selectedBot.id] ?? null}
+              onOpenJob={(topicId: string) => hub.selectThread(topicId)}
+              // 本窗口额度只在总管有；旧宿主与旧样例没有 quota.window，整栏不画。
+              quotaWindow={selectedBot.role === 'chief' ? overview.quota.window ?? null : null}
+              onOpenActivity={() => handlePaletteNavigate('activity')}
               onCollapse={() => setRightOpen(false)}
+              // P74i-m3（第 2 节）：从右栏（窄屏时是抽屉）点「编辑员工」，先收起抽屉再打开弹窗。
+              // 抽屉开着时会把 .ah-body 里除自己和遮罩外的全部子节点设为不可操作，而编辑弹窗的遮罩
+              // 也是 .ah-body 的子节点，会被一起设成不可操作，弹窗出现却点不动；关掉弹窗后不重新打开抽屉。
+              onEdit={() => { openEditStaff(selectedBot.id); setRightOpen(false) }}
+              // P73f：「模型与额度」一行写档位（标准档、轻档）；档位对应哪个模型由模型目录和默认模型算出（modelTiers，与组队卡同一份规则）。
+              // 设置还没读到时不传，一行里改写模型显示名，不猜档位。
+              tiers={state.settings === null ? null : modelTiers(
+                state.settings.modelOptions.flatMap(option => option.value === null ? [] : [{ provider: option.value.provider, model: option.value.model, label: option.label }]),
+                state.settings.settings.defaultModel ?? null,
+              )}
+            />
+          </BlockBoundary>
+        ) : null}
+        {/* P78：「编辑员工」弹窗只此一份，右侧栏底部按钮和对话页「更多」里的入口都把 editStaffId 置位；
+            不依赖右侧栏是否展开。editStaffId 记的是员工 id，切到别的员工时自然不再匹配，不会把弹窗带过去。 */}
+        {view === 'main' && selectedBot && overview ? (
+          <BlockBoundary label="编辑员工">
+            <TeammateEditHost
+              key={selectedBot.id}
+              open={editStaffId === selectedBot.id}
+              detail={state.bots[selectedBot.id] ?? null}
               roster={overview.bots}
               modelOptions={state.settings?.modelOptions ?? []}
               modelOptionsError={state.settings ? null : state.settingsError}
@@ -712,6 +884,7 @@ export function HubPage(props: {
               dshSkillOptions={state.settings?.dshSkillOptions ?? []}
               run={(name, input) => hub.command(name, input)}
               onRefresh={() => { void hub.refreshBot(selectedBot.id); void hub.refreshOverview() }}
+              onClose={() => setEditStaffId(null)}
             />
           </BlockBoundary>
         ) : null}

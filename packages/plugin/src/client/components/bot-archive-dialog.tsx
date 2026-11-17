@@ -3,7 +3,9 @@
  *
  * 为什么单独成文件：左栏在宿主侧栏与页面内降级列两处渲染，弹窗必须跟着左栏走，
  * 不能各写一套；归档前的拦截提示还要列出受影响的项目和「去处理」入口。
- * 三种动作的文案统一在这里写清楚后果：归档可恢复、恢复只回名单、删除不可撤销但保留历史。
+ * P73f：已归档区只剩「删除」，「恢复」去掉了（归档后不能恢复为在岗）；归档的二次确认改在编辑员工弹窗里做，
+ * 这里的「archive」「blocked」两种弹窗暂时没有入口，保留是因为无障碍契约测试按这个文件登记弹窗挂载点。
+ * 删除的后果：不可撤销但保留历史。
  */
 import type { ReactNode } from 'react'
 import { ConfirmDialog } from './confirm-dialog.js'
@@ -30,7 +32,6 @@ export interface ArchiveCheckInfo {
 export type ArchiveDialogRequest =
   | { kind: 'archive'; botId: string; botName: string }
   | { kind: 'blocked'; botName: string; info: ArchiveCheckInfo }
-  | { kind: 'restore'; botId: string; botName: string }
   | { kind: 'delete'; botId: string; botName: string }
 
 export function BotArchiveDialog(props: {
@@ -50,22 +51,8 @@ export function BotArchiveDialog(props: {
     return (
       <ConfirmDialog
         title={`归档「${request.botName}」`}
-        text="归档后它从左栏名单移入「已归档」，不再显示；唤醒账本、工作会话、任务和产物都会保留，随时可以恢复。"
+        text="归档后它从左栏名单移入「已归档」，不再接活，腾出 1 个名额；记录保留可查。归档后不能恢复为在岗。"
         confirmText="归档"
-        busy={props.busy}
-        error={props.error}
-        tone="primary"
-        onCancel={props.onCancel}
-        onConfirm={props.onConfirm}
-      />
-    )
-  }
-  if (request.kind === 'restore') {
-    return (
-      <ConfirmDialog
-        title={`恢复「${request.botName}」`}
-        text="恢复后它回到退役名单，唤醒账本、工作会话、任务和产物原样保留。"
-        confirmText="恢复"
         busy={props.busy}
         error={props.error}
         tone="primary"
@@ -77,7 +64,7 @@ export function BotArchiveDialog(props: {
   return (
     <ConfirmDialog
       title={`删除「${request.botName}」`}
-      text="只删除它的配置与档案；唤醒账本、工作会话、任务和产物都会保留，相关历史显示「已删除的队友」。此操作不可撤销。"
+      text="只删除它的配置与档案；唤醒账本、工作会话、任务和产物都会保留，相关历史显示「已删除的员工」。此操作不可撤销。"
       confirmText="删除"
       busy={props.busy}
       error={props.error}
@@ -104,7 +91,7 @@ function BlockedDialog(props: {
           <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onCancel}>关闭</button>
         </header>
         <div className="ah-prj-form">
-          <p>{props.info.reason ?? '请先交接该队友负责的项目与任务，再归档。'}</p>
+          <p>{props.info.reason ?? '请先交接该员工负责的项目与任务，再归档。'}</p>
           {props.info.projects.length > 0 ? (
             <ul className="ah-archive-blockers">
               {props.info.projects.map(project => (

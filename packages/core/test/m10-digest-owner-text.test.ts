@@ -6,21 +6,29 @@ import { requestApproval } from '../src/gate/approvals.js';
 import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { QUOTA_LIGHT_LABELS, type QuotaLight } from '../src/model/enums.js';
 import { buildDigest } from '../src/outreach/digest.js';
-import { requestPush } from '../src/outreach/push.js';
+import { pushHistory, requestPush } from '../src/outreach/push.js';
+import { writeOutreachAudit } from '../src/outreach/audit.js';
 import { getQuotaState } from '../src/quota/window.js';
 import { parseLocalDateTime } from '../src/util/time.js';
 import { botFixture } from './model-fixtures.js';
 
 const local = (value: string) => parseLocalDateTime(value, 'Asia/Shanghai');
 
-/** 两条普通通知占满单机器人预算，第三条真实审批产生待汇总记录。 */
+/**
+ * 一条真实审批产生待汇总记录。
+ * P76c：每日推送条数上限已取消，推送不会再因「超出预算」被拦；原来靠两条普通通知占满预算让审批推送变成 over_budget。
+ * 现在把这条真实审批的推送入参原样复制成一条旧格式的 over_budget 审计记录（旧存档里确实有这种记录，buildDigest 仍要能读），
+ * 日报里「未单独推送」那一段的文字规则（审批只列动作、不带原始参数）因此仍被同样的数据覆盖。
+ */
 async function deferredContext() {
   const ctx = createTestContext({ settings: resolveSettings({ rootDir: '/hub' }) });
   ctx.store.table('bots').put(botFixture);
   ctx.clock.set(local('2026-11-05 09:00'));
-  for (const subjectKey of ['first', 'second']) await requestPush(ctx, {
-    botId: botFixture.id, level: 'P1', subjectKey, title: '前置事项', body: '无需进入日报的正文' });
   await requestApproval(ctx, botFixture.id, 'bash', { cmd: 'say 早盘已更新', memo: '此处原始参数不得进入日报' }, 'C', '确认后播报');
+  const approvalPush = pushHistory(ctx).at(-1)!;
+  expect(approvalPush.result).toBe('sent');
+  const { result: _sent, at: _at, ...pushInput } = approvalPush;
+  writeOutreachAudit(ctx, 'push', { ...pushInput, result: 'over_budget' }, 'hub');
   ctx.clock.set(local('2026-11-05 23:30'));
   await requestPush(ctx, { botId: botFixture.id, level: 'P2', subjectKey: 'night', title: '机器人汇报', body: '夜间检查发现备份失败。第二句详细排查过程留在线程。' });
   ctx.clock.set(local('2026-11-06 08:30'));
@@ -34,7 +42,7 @@ describe('M10 日报主人文字', () => {
     ctx.store.table('quota').put(quota);
     const digest = buildDigest(ctx, ctx.clock.now());
     const label = overview(ctx).quota.lightLabel;
-    expect(digest.split('\n').find(row => row.startsWith('额度用量：'))).toBe(`额度用量：0/8 回合，0 token，${label}`);
+    expect(digest.split('\n').find(row => row.startsWith('额度用量：'))).toBe(`额度用量：0/40 回合，0 token，${label}`);
     expect(digest).not.toMatch(/\b(green|yellow|orange|red)\b/);
   });
 

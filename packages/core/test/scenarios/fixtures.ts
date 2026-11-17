@@ -3,6 +3,7 @@ import { expect } from 'vitest';
 import type { Bot, QueueEntry, Watch } from '../../src/model/index.js';
 import type { Brain, BrainInput } from '../../src/sim/sim-host.js';
 import type { SimWorld } from '../../src/sim/runner.js';
+import { createRuntime, type HubContext } from '../../src/engine/context.js';
 import { commitArgs } from '../c03-turn-fixtures.js';
 import { watchFixture, goalFixture } from '../model-fixtures.js';
 
@@ -64,6 +65,15 @@ export async function complete(input: BrainInput, patch: Parameters<typeof commi
   return { finalText: '本轮结束' };
 }
 export const progressBrain: Brain = input => complete(input, { outcome: 'progress', summary: '已核对本次变化' });
+
+/**
+ * P74b：把仿真世界当作一个中心上下文用（世界里的存储、时钟、随机数、文件都是同一份）。
+ * 用在世界输入上——例如造一条旧式交接：hub_handoff 已移出工具清单，旧数据与过期处理还要用，所以场景直接调用交接函数。
+ * 运行时状态单独新建（只影响日志去重），界面事件不需要。
+ */
+export function worldContext(world: SimWorld): HubContext {
+  return { ...world, runtime: createRuntime(world.clock.now()), emit: () => undefined };
+}
 
 /** 理由须能审计且没有固定闹钟来源，不能只检查有一个 truthy 对象。 */
 export function assertReasons(world: SimWorld) {

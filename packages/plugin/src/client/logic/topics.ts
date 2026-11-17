@@ -50,9 +50,14 @@ export interface TopicThreadModel {
  * 还有更早的消息没加载时，手里的第一条并不是主题原文，不能当卡片，
  * 数字也只是最近这一段，所以文案要说清楚。
  */
-export function buildTopicThread(messages: readonly ThreadMessageView[], hasMore: boolean): TopicThreadModel {
+export function buildTopicThread(
+  messages: readonly ThreadMessageView[],
+  hasMore: boolean,
+  /** P72：主题有约定时，第一层是约定面板，不再把第一条消息当主题卡片，所有消息都是楼层。 */
+  options?: { hasAgreement?: boolean },
+): TopicThreadModel {
   const first = messages[0]
-  const opening = !hasMore && first !== undefined && first.from === 'owner' ? first : null
+  const opening = options?.hasAgreement !== true && !hasMore && first !== undefined && first.from === 'owner' ? first : null
   const floors = opening === null ? [...messages] : messages.slice(1)
   const replyCount = floors.filter(message => message.from !== 'hub').length
   return {

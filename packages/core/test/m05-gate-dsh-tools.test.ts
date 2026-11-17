@@ -149,11 +149,14 @@ describe('M05 图片、展示与原有文件工具边界', () => {
         const runtime = setup();
         expect(classifyToolCall(tool, args, ctx)).toMatchObject({ cls: 'A', subclass: 'work' });
         expect(await guardToolCall(runtime, sessionId, tool, args)).toEqual({ allow: true });
-        for (const path of ['playbooks/a.md', '.agents/skills/a.md', '/hub/shared/a.md']) {
-            const action = classifyToolCall(tool, { ...args, file_path: path }, ctx);
-            expect(action.cls).toBe('A');
-            expect(decide(action, 'L0', 'active')).toBe('deny');
-            expect(decide(action, 'L1', 'active')).toBe('allow');
+        const shared = classifyToolCall(tool, { ...args, file_path: '/hub/shared/a.md' }, ctx);
+        expect(shared).toMatchObject({ cls: 'A', subclass: 'internal_write' });
+        // P75f 补回（P75e 改写时被去掉的）共享目录的两条决定断言：L0 拒绝、L1 允许（共享目录行为没有变）。
+        expect(decide(shared, 'L0', 'active')).toBe('deny');
+        expect(decide(shared, 'L1', 'active')).toBe('allow');
+        // P75e：技能库三处改为只读（拒绝、不计越界），不再按家目录可撤销写入处理。
+        for (const path of ['playbooks/a.md', '.agents/skills/a.md']) {
+            expect(classifyToolCall(tool, { ...args, file_path: path }, ctx)).toMatchObject({ cls: 'protected', subclass: 'skill_dir_readonly' });
         }
         expect(classifyToolCall(tool, { ...args, file_path: '/outside/x.txt' }, ctx).cls).toBe('C');
         expect(runtime.store.table('approvals').count()).toBe(0);

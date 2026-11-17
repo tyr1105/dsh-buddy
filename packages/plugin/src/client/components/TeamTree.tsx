@@ -4,10 +4,11 @@
  * 为什么要这层组件：队友一多，只按名单顺序平铺会看不出「谁在哪个项目里」；
  * 这里把每位队友当成母节点，把它是成员的项目缩进挂在下面，点项目直接去项目页。
  * 排序、分组、归档沉底都在 logic/team-tree.ts 里算好，组件不自己决定顺序。
- * 办公室入口仍由 BotList 的「团队全景」行承担，本组件只画队友分组。
+ * 本组件只画队友分组（P71 起「团队全景」行已删掉；办公室入口在左栏办公室组）。
  */
 import type { ReactNode } from 'react'
 import type { BotCard, ProjectViewRow } from '../../shared/views.js'
+import { AGR_TEXT, isChiefEntry, roleLineOf } from '../logic/agreement.js'
 import { buildTeamTree, type TeamTreeBotInput, type TeamTreeProjectInput } from '../logic/team-tree.js'
 import { Avatar, UnreadBadge } from './Ui.js'
 
@@ -16,7 +17,7 @@ export function TeamTree(props: {
   bots: readonly BotCard[]
   /** 项目视图还没加载时为 null：只画队友、不画项目行，不假装没有项目。 */
   projects: readonly ProjectViewRow[] | null
-  /** 当前打开的队友（对话线程）；团队全景与别的页面不传。 */
+  /** 当前打开的队友（对话线程）；别的页面不传。 */
   selectedBotId: string | null
   onSelectBot: (botId: string) => void
   /** 点项目子行时打开项目页；不传则项目行只读展示。 */
@@ -45,13 +46,15 @@ export function TeamTree(props: {
               <Avatar color={node.color} initials={node.initials} />
               <span className="ah-bot-row-main">
                 <span className="ah-bot-row-name">
-                  {node.name}
+                  {/* P72g B1：名字单独包一层，和侧栏列表一致，标签放不下时换行而不是把名字挤没。 */}
+                  <span className="ah-bot-row-name-text">{node.name}</span>
                   {node.waitingOwner ? <span className="ah-tag ah-tag-wait">待确认</span> : null}
-                  {node.lifecycle === 'retired' ? <span className="ah-tag">已退役</span> : null}
+                  {node.archived ? <span className="ah-tag">已归档</span> : null}
+                  {bot !== undefined && isChiefEntry(bot) ? <span className="ah-tag ah-tag-entry">{AGR_TEXT.chiefTag}</span> : null}
                 </span>
-                {/* 角色与活动句沿用原列表口径；团队树不复制这两段文案，查原卡片。 */}
+                {/* 角色与活动句沿用原列表口径；团队树不复制这两段文案，查原卡片。总管的角色行写「有事先找我」（P72）。 */}
                 <span className="ah-bot-row-role">
-                  {bot?.roleLabel ?? ''}
+                  {bot === undefined ? '' : roleLineOf(bot)}
                   {bot?.activity === 'thinking' && !(bot.activityText ?? '').includes('正在处理') ? ' · 正在处理' : ''}
                 </span>
                 <span className="ah-bot-row-activity" title={bot?.activityText}>{bot?.activityText ?? ''}</span>
@@ -93,10 +96,12 @@ function toBotInput(bot: BotCard): TeamTreeBotInput {
     color: bot.color,
     initials: bot.initials,
     lifecycle: bot.lifecycle,
+    staffStatus: bot.staffStatus,
     activity: bot.activity,
     unread: bot.unread,
     waitingOwner: bot.waitingOwner,
     lastActiveAt: bot.lastActiveAt ?? null,
+    role: bot.role,
   }
 }
 

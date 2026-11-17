@@ -4,7 +4,8 @@
  * 为什么单独成文件：这三块都是「把现成数据翻译成一句人话」，写成纯函数才能逐条测，
  * 组件只管画。数据全部来自总览里的队友卡、成本视图和项目视图，这里不发请求、不存状态。
  */
-import type { Activity, BotCard, CostView, Lifecycle } from '../../shared/views.js'
+import type { Activity, BotCard, CostView, ModelChoice, StaffStatus } from '../../shared/views.js'
+import { formatTokenCount } from '../../shared/token-format.js'
 import { groupSessionsByProject, type WorkSession, type WorkSessionGroup } from './work-session.js'
 
 /** 忙碌状态的大类：决定圆点颜色。off 表示它现在不上班（暂停、停用、退役、还没上岗）。 */
@@ -23,14 +24,13 @@ export interface TeammateBusy {
 interface BusyRule { tone: BusyTone; label: string; fallback: string }
 
 /**
- * 这几种生命周期下，活动字段已经不代表「在忙什么」（暂停后可能还留着旧状态），
- * 所以先按生命周期说话；在岗和试岗不在表里，走下面的活动状态。
+ * P73f：员工状态只有在岗、停用、归档三种（读 core 给的 staffStatus，不再读 lifecycle）。
+ * 停用和归档时，活动字段已经不代表「在忙什么」（停用后可能还留着旧状态），所以先按状态说话；
+ * 在岗不在表里，走下面的活动状态。
  */
-const BUSY_BY_LIFECYCLE: Readonly<Partial<Record<Lifecycle, BusyRule>>> = {
-  paused: { tone: 'off', label: '已暂停', fallback: '恢复之前不会自己行动。' },
-  quarantined: { tone: 'off', label: '已停用', fallback: '解除停用之前不会自己行动。' },
-  retired: { tone: 'off', label: '已退役', fallback: '不再接活，数据还保留着。' },
-  draft: { tone: 'off', label: '还没上岗', fallback: '上岗之后才会开始工作。' },
+const BUSY_BY_STATUS: Readonly<Partial<Record<StaffStatus, BusyRule>>> = {
+  suspended: { tone: 'off', label: '停用', fallback: '恢复在岗之前不会自己行动。' },
+  archived: { tone: 'off', label: '归档', fallback: '不再接活，记录保留可查。' },
 }
 
 /** 在岗队友按活动状态说话。core 的九种活动状态逐项对应，新增时类型检查会报出来。 */
@@ -40,8 +40,8 @@ const BUSY_BY_ACTIVITY: Readonly<Record<Activity, BusyRule>> = {
   catching_up: { tone: 'busy', label: '正在补看', fallback: '正在补看错过的变化。' },
   queued: { tone: 'busy', label: '排队中', fallback: '排着队，轮到就开始。' },
   waiting_owner: { tone: 'waiting', label: '在等你', fallback: '有事等你回复。' },
-  waiting_peer: { tone: 'waiting', label: '在等队友', fallback: '在等别的队友回话。' },
-  blocked: { tone: 'waiting', label: '卡住了', fallback: '手上的事卡住了，需要有人帮一把。' },
+  waiting_peer: { tone: 'waiting', label: '在等员工', fallback: '在等别的员工回话。' },
+  blocked: { tone: 'waiting', label: '无法继续', fallback: '手上的事无法继续，需要有人协助。' },
   watching: { tone: 'idle', label: '空闲', fallback: '现在没事，有变化时会自己醒。' },
   resting: { tone: 'idle', label: '空闲', fallback: '正在休息，到点再看。' },
 }
@@ -54,22 +54,93 @@ const WAITING_OWNER_HINT = '有事等你回复，去「待你处理」看看。'
 
 /**
  * 算出忙碌状态。
- * 优先级：不上班 > 模型正在跑 > 有事等主人 > 其他活动状态。
+ * 优先级：不上班（停用、归档）> 模型正在跑 > 有事等主人 > 其他活动状态。
  * 活动句是 core 写好的人话，能用就原样用；只在它缺失或答非所问时才用兜底说法。
  */
-export function teammateBusy(card: Pick<BotCard, 'lifecycle' | 'activity' | 'activityText' | 'waitingOwner'>): TeammateBusy {
-  const lifecycleRule = BUSY_BY_LIFECYCLE[card.lifecycle]
+export function teammateBusy(card: Pick<BotCard, 'staffStatus' | 'staffStatusReason' | 'activity' | 'activityText' | 'waitingOwner'>): TeammateBusy {
+  const statusRule = BUSY_BY_STATUS[card.staffStatus]
+  // 停用、归档：不看残留的活动句，原因（core 给的 staffStatusReason）就是细节。
+  if (statusRule !== undefined) return { tone: statusRule.tone, label: statusRule.label, detail: card.staffStatusReason ?? statusRule.fallback }
   // 活动句此时可能在说「在盯着 3 项」，回答不了「等你什么」，所以不用它。
-  if (lifecycleRule === undefined && card.waitingOwner
-    && card.activity !== 'waiting_owner' && !WORKING_ACTIVITIES.has(card.activity)) {
+  if (card.waitingOwner && card.activity !== 'waiting_owner' && !WORKING_ACTIVITIES.has(card.activity)) {
     return { tone: 'waiting', label: BUSY_BY_ACTIVITY.waiting_owner.label, detail: WAITING_OWNER_HINT }
   }
   // 将来 core 新增的活动状态在老插件上查不到规则，退回「空闲」，好过整块报错。
-  const rule = lifecycleRule ?? BUSY_BY_ACTIVITY[card.activity] ?? BUSY_BY_ACTIVITY.watching
+  const rule = BUSY_BY_ACTIVITY[card.activity] ?? BUSY_BY_ACTIVITY.watching
   const text = card.activityText.trim()
-  // 活动句开头已经是结论（「已暂停（你暂停的）」「已退役」）：直接当结论，不再多写一行。
+  // 活动句开头已经是结论：直接当结论，不再多写一行。
   if (text.startsWith(rule.label)) return { tone: rule.tone, label: text, detail: null }
   return { tone: rule.tone, label: rule.label, detail: text === '' ? rule.fallback : text }
+}
+
+/** 右侧边栏「状态」一栏的内容：一行主句，加可选的一行细节。 */
+export interface TeammateStatusLine {
+  tone: BusyTone
+  /** 主句：在岗写「在岗　{忙碌结论}」，停用写「停用：{原因}」，归档写「归档」。 */
+  text: string
+  detail: string | null
+}
+
+/**
+ * 「状态」一行（设计稿场景 D）：在岗时在后面接现有的忙碌文字（正在忙、空闲、在等你……），
+ * 细节（它正在处理什么）放下一行；停用旁边写原因；归档只写「归档」。
+ */
+export function teammateStatusLine(card: Pick<BotCard, 'staffStatus' | 'staffStatusLabel' | 'staffStatusReason' | 'activity' | 'activityText' | 'waitingOwner'>): TeammateStatusLine {
+  const busy = teammateBusy(card)
+  if (card.staffStatus === 'on_duty') return { tone: busy.tone, text: `${card.staffStatusLabel}　${busy.label}`, detail: busy.detail }
+  if (card.staffStatus === 'suspended') return { tone: 'off', text: `${card.staffStatusLabel}：${card.staffStatusReason ?? '你停用的'}`, detail: null }
+  return { tone: 'off', text: card.staffStatusLabel, detail: busy.detail }
+}
+
+/** 模型档位信息（与 core 的 ModelTiers 同形，只取这里要比较的两项；没有档位信息时不传）。 */
+export interface ModelTierInfo { standard: ModelChoice; light: ModelChoice; lightAvailable: boolean }
+
+/** 两个模型选择是否同一个（null 表示跟随默认模型，只和 null 相等）。 */
+function sameModel(a: ModelChoice, b: ModelChoice): boolean {
+  if (a === null || b === null) return a === b
+  return a.provider === b.provider && a.model === b.model
+}
+
+/**
+ * 「模型与额度」里的档位或模型名：模型选择为「跟随默认」或等于标准档的模型时写「标准档」，
+ * 等于轻档的模型时写「轻档」，其余写模型显示名（modelText）。
+ * tiers 没有（模型目录还没读到）时写模型显示名，不猜档位。
+ */
+export function modelTierText(model: ModelChoice, modelText: string, tiers: ModelTierInfo | null | undefined): string {
+  if (tiers === null || tiers === undefined) return modelText
+  if (model === null || sameModel(model, tiers.standard)) return '标准档'
+  if (tiers.lightAvailable && sameModel(model, tiers.light)) return '轻档'
+  return modelText
+}
+
+/**
+ * 「模型与额度」一行（设计稿场景 D）：「标准档。今天约 41K token。」
+ * 额度只写 token，不写回合数（主人在 P64 定的）；token 优先成本视图，读不到退回队友卡（同 teammateQuota 的口径）。
+ * token 数量按 P80 的规则换算成 K、M、B、T 单位（原来写「约 4.1 万」，「不足 1 万」一档随之取消，小于 1000 原样写）；
+ * 两边都读不到写「今天还没有用量记录」，不编数字。
+ */
+export function modelQuotaLine(input: {
+  tierText: string
+  costs: CostView | undefined
+  botId: string
+  cardTokens: number | null | undefined
+}): string {
+  const tokens = quotaTokens(input)
+  const head = `${input.tierText}。今天`
+  if (tokens === null) return `${head}还没有用量记录。`
+  return `${head}约 ${formatTokenCount(tokens)} token。`
+}
+
+/**
+ * 这位队友今天用了多少 token（原始数字）：成本视图优先，读不到退回队友卡，都读不到为 null。
+ * 抽出来是因为界面要拿它做鼠标悬停的完整数字，与 modelQuotaLine、teammateQuota 取同一个来源。
+ */
+export function quotaTokens(input: {
+  costs: CostView | undefined
+  botId: string
+  cardTokens: number | null | undefined
+}): number | null {
+  return tokensToday(input.costs, input.botId) ?? input.cardTokens ?? null
 }
 
 /**
@@ -77,7 +148,7 @@ export function teammateBusy(card: Pick<BotCard, 'lifecycle' | 'activity' | 'act
  * token 有两个来源，按可信度排：
  * 1. 成本视图里这位队友今天的记账 token（含主人发起的回合）；
  * 2. 总览队友卡的 todayTokens（只含它自己醒来的回合，旧宿主没有成本视图时的退路）。
- * 两边都读不到才说没有记录，不编数字。不足 1 万不给假精度。
+ * 两边都读不到才说没有记录，不编数字。token 数量按 P80 的规则换算单位（K、M、B、T）。
  */
 export function teammateQuota(input: {
   /** 成本视图；旧宿主没有时为 undefined。 */
@@ -86,10 +157,9 @@ export function teammateQuota(input: {
   /** 总览队友卡的 todayTokens；读不到时为 null 或 undefined。 */
   cardTokens: number | null | undefined
 }): string {
-  const tokens = tokensToday(input.costs, input.botId) ?? input.cardTokens ?? null
+  const tokens = quotaTokens(input)
   if (tokens === null) return '今天还没有用量记录'
-  if (tokens < 10000) return '今天用了不到 1 万 token'
-  return `今天用了约 ${(tokens / 10000).toFixed(1)} 万 token`
+  return `今天用了约 ${formatTokenCount(tokens)} token`
 }
 
 /** 从成本视图取这位队友今天的 token（记账值，含主人发起）；读不到为 null。第一天就是今天（core 按日倒序给）。 */

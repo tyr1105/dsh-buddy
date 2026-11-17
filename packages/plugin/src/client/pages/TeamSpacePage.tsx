@@ -26,7 +26,7 @@ export function TeamSpacePage(props: {
       <header className="ah-team-space-head">
         <div className="ah-team-space-title">
           <h1>团队空间</h1>
-          <p>队友与对话为两个独立空间；此处仅显示队友侧。</p>
+          <p>员工与对话为两个独立空间；此处仅显示员工侧。</p>
         </div>
         <div className="ah-team-space-actions">
           <SpaceSwitch mode={props.mode} onChange={props.onModeChange} compact={props.compact} />
@@ -37,8 +37,8 @@ export function TeamSpacePage(props: {
         {props.mode === 'team' ? (
           props.children ?? (
             <div className="ah-team-space-empty">
-              <h2>队友页即将展开</h2>
-              <p>左侧切换到「队友」后显示队友、项目与工作会话。</p>
+              <h2>员工页即将展开</h2>
+              <p>左侧切换到「员工」后显示员工、项目与工作会话。</p>
             </div>
           )
         ) : (

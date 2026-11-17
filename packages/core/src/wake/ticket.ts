@@ -5,9 +5,8 @@ import { parseInput } from '../engine/validation.js';
 import { QueueEntrySchema, type QueueEntry, type WakeTicket } from '../model/wake.js';
 import { nonempty } from '../model/primitives.js';
 import { newId } from '../util/ids.js';
-import { hasApprovalDecision } from '../util/approval-candidate.js';
-import { buildCandidate } from '../appraisal/think.js';
-import { enqueue } from '../scheduler/queue.js';
+import { countJobTurn } from '../job/turns.js';
+import { countSkillTurn } from '../skill/run.js';
 /** 先保存可追踪的投递中唤醒单，成功投递时间由宿主编排另行确认。 */
 export function createTicket(ctx: HubContext, input: QueueEntry, sessionId: string | null): WakeTicket {
     const entry = parseInput(QueueEntrySchema, input, '唤醒候选');
@@ -16,25 +15,27 @@ export function createTicket(ctx: HubContext, input: QueueEntry, sessionId: stri
     if (!bot)
         throw new Error('唤醒候选 botId 对应的机器人不存在');
     const now = ctx.clock.now();
-    const forceReflection = bot.consecutiveNoCommit >= ctx.settings.noCommitReflectionCount;
-    const approval = hasApprovalDecision(ctx, entry);
-    // 连续未交账仍须复盘，但不能把审批执行指令塞进只读回合；先留下独立复盘再处理审批。
-    if (forceReflection && approval && !ctx.store.table('queue').count(row => row.botId === bot.id && row.variant === 'reflection')) {
-        enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'reflection', variant: 'reflection',
-            score: ctx.settings.c02.nextThinkScore, summary: '连续两次未交账，复盘收口方式',
-            ownerSummary: '连续两次没交账，做一次复盘', subjectKey: `reflection:no_commit:${bot.lastThinkAt}`,
-            evidence: ctx.store.table('wakes').list(w => w.botId === bot.id && w.status === 'no_commit')
-                .slice(-ctx.settings.noCommitReflectionCount).map(w => w.id), now }));
-    }
+    // P75f：连续未交账不再强制转成复盘回合（旧复盘触发已全部下线），唤醒单保持候选本来的变体。
     const ticket: WakeTicket = { id: newId('w', ctx.rng), botId: bot.id, sessionId,
-        // P63：主题回合要把话回到主题里，不能改成只读的复盘回合，否则主人等到的是一片空白。
-        variant: forceReflection && !approval && !entry.topicId ? 'reflection' : entry.variant,
+        variant: entry.variant,
         ...(entry.topicId ? { topicId: entry.topicId } : {}),
+        // P74：执行链的唤醒带着是哪件事，交账时据此把回复落到这件事的主题。
+        ...(entry.jobId ? { jobId: entry.jobId } : {}),
+        // P76b：总管为主人派出的活；候选上为真才写，不为真就不写这个键（旧数据的形状不变）。
+        ...(entry.chiefDispatch === true ? { chiefDispatch: true } : {}),
+        // P76r1：主人亲手作出决定之后的接续回合；同样只在为真时才写这个键。
+        ...(entry.ownerDecided === true ? { ownerDecided: true } : {}),
+        // P76r1 小修：重试的原回合是不是自己发起；true 和 false 都带（没有就不写键）。
+        ...(entry.retryOfSelfWork !== undefined ? { retryOfSelfWork: entry.retryOfSelfWork } : {}),
         reason: entry.reason, subjectKey: entry.subjectKey, ownerInitiated: entry.ownerInitiated,
         dispatchedAt: null, packetBytes: 0, status: 'delivering', startedAt: now, lastEventAt: now,
         endedAt: null, steps: 0, tokens: 0, tokensKnown: false, steeredAt: null, awaitingApprovalAt: null,
         commitId: null, error: null };
     ctx.store.table('wakes').put(ticket);
+    // P74c：执行链的回合在这里计数（一处写入、一处函数，见 job/turns.ts）。
+    countJobTurn(ctx, ticket);
+    // P75g：技能类回合（复盘、核对、整理）在这里计数——所属记录 turnsUsed 加一、参与者改 running。
+    countSkillTurn(ctx, ticket);
     ctx.emit(HUB_EVENT_SCOPES.bot, bot.id);
     ctx.emit(HUB_EVENT_SCOPES.activity, bot.id);
     return ticket;

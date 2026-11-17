@@ -207,10 +207,12 @@ describe('C04 预制大脑与世界推进', () => {
     expect(world.host.turns.at(-1)?.status).toBe('error');
   });
 
-  it('指标把日报通知与真正单推分开，失败投递不冒充思考回合', async () => {
+  // P76c：原用例的第一句证明「日报通知（digests 1、notifications 1）与真正单推（pushes 0）在指标里是分开的」。日报不再推送，
+  // 同样的推进之后三项都是 0（没有日报，也没有别的通知）；第二半（失败投递不冒充思考回合）原样保留。
+  it('日报不再产生通知与指标；失败投递不冒充思考回合', async () => {
     const world = await createSimWorld({ bots: [{ id: botId }] });
     await advance(world, 60000);
-    expect(metrics(world)).toMatchObject({ digests: 1, pushes: { daytime: 0 }, notifications: { daytime: 1 } });
+    expect(metrics(world)).toMatchObject({ digests: 0, pushes: { daytime: 0 }, notifications: { daytime: 0 } });
     world.host.failNextDeliveries(botId, 1);
     await world.hub.api.sendMessage(botId, '这条消息会遇到一次投递故障');
     await world.host.settle();

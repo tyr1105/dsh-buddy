@@ -12,6 +12,7 @@
  * 放在这里可以用固定输入把每条路钉死。
  */
 import type { BotCard, ProjectView } from '../../shared/views.js'
+import { isArchivedBot } from './lifecycle.js'
 
 /** 项目标签的认领名：用来认出输入框里的标签是不是这里放的。 */
 export const PROJECT_CLAIM_NAME = 'dsh-buddy-project-topic'
@@ -100,7 +101,7 @@ export function projectMentionRows(project: ProjectChoice, bots: readonly BotCar
   const byId = new Map(bots.map(bot => [bot.id, bot]))
   const rows = project.members.flatMap(member => {
     const bot = byId.get(member.botId)
-    if (bot === undefined || bot.archived === true || bot.lifecycle === 'retired') return []
+    if (bot === undefined || isArchivedBot(bot)) return []
     if (q !== '' && !`${member.name} ${member.roleLabel}`.toLowerCase().includes(q)) return []
     const owner = member.isOwner ? '负责人' : ''
     return [{ bot, isOwner: member.isOwner, description: [owner, member.roleLabel].filter(part => part !== '').join(' · ') }]

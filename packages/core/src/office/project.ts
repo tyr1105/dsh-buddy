@@ -12,9 +12,13 @@
  * - 每个承载状态的节点都带 ref（座位、灯、桌子、门口），界面据此下钻。
  */
 import type { Bot } from '../model/bot.js';
+import { staffStatus } from '../model/bot.js';
+import type { BotOrigin } from '../model/bot-origin.js';
+import { localDateKey } from '../util/time.js';
+import { templateById } from '../team/templates.js';
 import type { InboxItem } from '../model/outreach.js';
 import type { WakeLedgerEntry } from '../model/wake-ledger.js';
-import type { Activity, Lifecycle, OfficeLight, QuotaLight, Role } from '../model/enums.js';
+import type { Activity, Lifecycle, OfficeLight, QuotaLight, Role, StaffStatus } from '../model/enums.js';
 import {
   ACTIVITY_LABELS, LIFECYCLE_LABELS, OFFICE_LIGHT_LABELS, QUOTA_LIGHT_LABELS, ON_TEAM_LIFECYCLES, ROLE_LABELS,
 } from '../model/enums.js';
@@ -25,10 +29,25 @@ export interface OfficeOccupantView {
   name: string;
   role: Role;
   roleLabel: string;
+  /**
+   * P75r7（B13）：员工所用模板的显示标签（如评审员的「评审」），与总览、左栏、右侧栏同一口径；
+   * 没有来历、来历没有模板或模板没有显示标签时为 null，界面退回 roleLabel。
+   * 为什么加在办公室投影里：座位卡原来只画 roleLabel，评审员在列表里写成「建议」，
+   * 与左栏、组队卡、右侧栏的「评审」不一致。
+   * 用途：办公室列表用这份模板显示标签，角色本身仍是「建议」（role 与 roleLabel 不变）。
+   */
+  templateLabel: string | null;
   color: string;
   initials: string;
   lifecycle: Lifecycle;
   lifecycleLabel: string;
+  /**
+   * P73a：员工状态（在岗、停用、归档）及停用原因；core 总是会填。
+   * P73f：插件的示例数据已补上这三个字段，类型改回必填。
+   */
+  staffStatus: StaffStatus;
+  staffStatusLabel: string;
+  staffStatusReason: string | null;
   /** 原始状态值；数据非法时为 null（灯会显示 unknown）。 */
   activity: Activity | null;
   activityLabel: string | null;
@@ -76,6 +95,13 @@ export interface SeatView {
   warnings: string[];
   /** 座位节点引用：bot:<id>。 */
   ref: string;
+  /**
+   * P73c：入职时间（来历里的 joinedAt）；没有来历记录的旧员工、来历为 legacy 的为 null。
+   * P73f：与 staffStatus 同时改回必填（插件的示例数据已补上）。
+   */
+  joinedAt: number | null;
+  /** P73c：今天入职（按设置里的时区判断），界面据此画「报到」；旧员工一律 false，避免升级当天所有人都报到。 */
+  joinedToday: boolean;
 }
 
 /** 房间门口的总信箱：团队级收件箱（botId=null）只放这里，不塞进某个座位。 */
@@ -132,6 +158,10 @@ export interface ProjectOfficeInput {
   openAlerts: number;
   sandboxOk: boolean;
   truncated: boolean;
+  /** P73c：员工来历（只读）；不传表示没有来历记录，所有座位 joinedAt 为 null。 */
+  origins?: BotOrigin[];
+  /** P73c：判断「今天入职」用的时区；不传按 UTC。 */
+  timezone?: string;
 }
 
 /** 当前状态到灯的映射表（3.5 节）；表里没有的值一律 unknown，不猜。 */
@@ -209,11 +239,15 @@ function buildInboxIndex(items: InboxItem[]): Map<string, InboxItem[]> {
   return index;
 }
 
-function occupantOf(bot: Bot): OfficeOccupantView {
+function occupantOf(bot: Bot, origin: BotOrigin | null): OfficeOccupantView {
+  const staff = staffStatus(bot);
+  // P75r7（B13）：模板的显示标签与总览的 BotCard.templateLabel 同一来源（来历里的模板编号）。
+  const templateLabel = origin === null || origin.templateId === null ? null : (templateById(origin.templateId)?.dutyLabel ?? null);
   return {
-    botId: bot.id, name: bot.name, role: bot.role, roleLabel: ROLE_LABELS[bot.role], color: bot.color,
+    botId: bot.id, name: bot.name, role: bot.role, roleLabel: ROLE_LABELS[bot.role], templateLabel, color: bot.color,
     initials: Array.from(bot.name).slice(0, 2).join(''),
     lifecycle: bot.lifecycle, lifecycleLabel: LIFECYCLE_LABELS[bot.lifecycle],
+    staffStatus: staff.status, staffStatusLabel: staff.label, staffStatusReason: staff.reason,
     activity: ACTIVITY_LABELS[bot.activity] === undefined ? null : bot.activity,
     activityLabel: ACTIVITY_LABELS[bot.activity] ?? null,
     activityText: bot.activityText, updatedAt: bot.updatedAt,
@@ -226,8 +260,15 @@ function buildSeat(input: {
   deskIndex: Map<string, WakeLedgerEntry>;
   artifactIndex: Map<string, OfficeArtifactInput>;
   inboxIndex: Map<string, InboxItem[]>;
+  origin: BotOrigin | null;
+  now: number;
+  timezone: string;
 }): SeatView {
   const bot = input.bot;
+  // P73c：来历存在且不是 legacy 才算入职时间；今天与否按设置里的时区判断。
+  // P73r4：自动创建的总管（auto_chief）不是你招的员工，不算入职，也就不显示「报到」。
+  const joinedAt = input.origin !== null && input.origin.source !== 'legacy' && input.origin.source !== 'auto_chief' ? input.origin.joinedAt : null;
+  const joinedToday = joinedAt !== null && localDateKey(joinedAt, input.timezone) === localDateKey(input.now, input.timezone);
   const light = officeLightFor(bot);
   // 桌面优先级（3.5 节）：最近产物 > 最近一条有产出的已封存账本 > 如实空着。
   const artifactEntry = input.artifactIndex.get(bot.id) ?? null;
@@ -253,7 +294,7 @@ function buildSeat(input: {
   return {
     botId: bot.id,
     title: `${bot.name}的座位`,
-    occupant: occupantOf(bot),
+    occupant: occupantOf(bot, input.origin),
     light,
     lightLabel: OFFICE_LIGHT_LABELS[light],
     lightRef: { botId: bot.id, activity: String(bot.activity), updatedAt: bot.updatedAt, ref: `bot:${bot.id}` },
@@ -268,6 +309,7 @@ function buildSeat(input: {
     },
     warnings: [],
     ref: `bot:${bot.id}`,
+    joinedAt, joinedToday,
   };
 }
 
@@ -291,6 +333,7 @@ export function projectOffice(input: ProjectOfficeInput): OfficeView {
   const deskIndex = buildDeskIndex(input.ledgers);
   const artifactIndex = buildArtifactIndex(input.artifacts);
   const inboxIndex = buildInboxIndex(input.inboxItems);
+  const originIndex = new Map((input.origins ?? []).map(origin => [origin.botId, origin] as const));
   const health: OfficeHealthView = {
     quotaLight: input.quotaLight,
     quotaLightLabel: QUOTA_LIGHT_LABELS[input.quotaLight],
@@ -301,7 +344,8 @@ export function projectOffice(input: ProjectOfficeInput): OfficeView {
   const seats = input.bots
     .filter(isOnTeam)
     .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
-    .map(bot => buildSeat({ bot, deskIndex, artifactIndex, inboxIndex }));
+    .map(bot => buildSeat({ bot, deskIndex, artifactIndex, inboxIndex, origin: originIndex.get(bot.id) ?? null,
+      now: input.now, timezone: input.timezone ?? 'UTC' }));
   return {
     asOf: input.now, seats, doorway: buildDoorway(input.inboxItems), health, truncated: input.truncated,
   };

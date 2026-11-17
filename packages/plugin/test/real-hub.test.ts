@@ -46,6 +46,25 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     rejectProjectContextProposal: record('rejectProjectContextProposal') as any,
     // P38 知识库连通性自检（core 已有命令，插件门面对应接线由该卡负责），先满足形状。
     testKnowledgeConnection: record('testKnowledgeConnection') as any,
+    // P75c：记忆的四个命令（core 已有，宿主路由由 P75k 接），先满足 UiApi 形状。
+    undoMemory: record('undoMemory') as any,
+    correctMemory: record('correctMemory') as any,
+    deleteMemory: record('deleteMemory') as any,
+    undoDeleteMemory: record('undoDeleteMemory') as any,
+    undoCorrectMemory: record('undoCorrectMemory') as any,
+    memoryPage: record('memoryPage') as any,
+    // P75e：技能库的两个视图与两个命令，同样只满足形状。
+    skillLibrary: record('skillLibrary') as any,
+    skillDetail: record('skillDetail') as any,
+    rollbackSkill: record('rollbackSkill') as any,
+    restoreSkill: record('restoreSkill') as any,
+    // P75i：学习选会话（教它技能），宿主路由由 P75k 接，这里只满足形状。
+    chooseLearnSession: record('chooseLearnSession') as any,
+    // P76i：在办的事、用量表、离开期间摘要的四个方法，宿主路由由 P76j、P76k 接，这里只满足形状。
+    activeJobs: record('activeJobs') as any,
+    weeklyUsage: record('weeklyUsage') as any,
+    ownerSeen: record('ownerSeen') as any,
+    dismissAwaySummary: record('dismissAwaySummary') as any,
     saveTask: record('saveTask') as any,
     assignTask: record('assignTask') as any,
     // V2-PH4-03 五模式派活：整对象透传由 core zod 校验。
@@ -71,6 +90,18 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     setLifecycle: record('setLifecycle') as any,
     sendMessage: record('sendMessage') as any,
     answerInbox: record('answerInbox') as any,
+    // P72c：core 新增的约定确认命令；插件门面接线在 P72e，这里先满足 UiApi 形状。
+    confirmAgreement: record('confirmAgreement') as any,
+    acceptJob: record('acceptJob') as any, // P74f：core 新增的界面命令，类型同步（界面接线留给 P74i）
+    readJobEvidence: record('readJobEvidence') as any, // P74g：core 新增的两个只读命令，类型同步
+    jobPreviewTarget: record('jobPreviewTarget') as any,
+    chooseJobOption: record('chooseJobOption') as any, // P74f-2：同上
+    answerJobCap: record('answerJobCap') as any,
+    answerJobStall: record('answerJobStall') as any,
+    // P73c：core 新增的三条组队命令；插件接线在 P73e，这里只满足 UiApi 的形状。
+    answerTeamQuestion: record('answerTeamQuestion') as any,
+    editTeamCandidate: record('editTeamCandidate') as any,
+    confirmTeamProposal: record('confirmTeamProposal') as any,
     decideApproval: record('decideApproval') as any,
     upsertAspiration: record('upsertAspiration') as any,
     upsertGoal: record('upsertGoal') as any,
@@ -80,8 +111,6 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     upsertWatch: record('upsertWatch') as any,
     decideWatchProposal: record('decideWatchProposal') as any,
     upsertRule: record('upsertRule') as any,
-    editRoutine: record('editRoutine') as any,
-    teach: record('teach') as any,
     pokeBot: record('pokeBot') as any,
     updateSettings: record('updateSettings') as any,
     markThreadRead: record('markThreadRead') as any,
@@ -114,18 +143,25 @@ describe('dispatchCommand：命令表与边界校验', () => {
     const result = await dispatchCommand(fakeApi(), 'nope', {})
     expect(result).toEqual({ ok: false, error: expect.stringContaining('未知命令') })
   })
-  it('双参命令正确展开（sendMessage / decideApproval / teach / pokeBot）', async () => {
+  it('双参命令正确展开（sendMessage / decideApproval / pokeBot）', async () => {
     const api = fakeApi()
     await dispatchCommand(api, 'sendMessage', { threadId: 'team', text: '早' })
     await dispatchCommand(api, 'decideApproval', { id: 'i1', approve: true, note: '可以' })
-    await dispatchCommand(api, 'teach', { botId: 'b', sessionId: 's', note: 'n' })
     await dispatchCommand(api, 'pokeBot', { botId: 'b' })
     expect(api.calls).toEqual([
       { name: 'sendMessage', args: ['team', '早'] },
       { name: 'decideApproval', args: ['i1', true, '可以'] },
-      { name: 'teach', args: ['b', 's', 'n'] },
       { name: 'pokeBot', args: ['b', undefined] },
     ])
+  })
+  // P75f：teach 与 editRoutine 两个入口已停用，固定说明、不再调 UiApi。
+  it('teach 与 editRoutine 返回停用说明且不调 UiApi', async () => {
+    const api = fakeApi()
+    expect(await dispatchCommand(api, 'teach', { botId: 'b', sessionId: 's', note: 'n' }))
+      .toEqual({ ok: false, error: '这个入口已停用：要员工学某段会话的做法，请对总管说。' })
+    expect(await dispatchCommand(api, 'editRoutine', { id: 'r', patch: { steps: ['a'] } }))
+      .toEqual({ ok: false, error: '这个入口已停用：套路已并入技能库，请在技能库里查看。' })
+    expect(api.calls).toHaveLength(0)
   })
   it('单对象命令透传 input（createBot / upsertRule / updateSettings）', async () => {
     const api = fakeApi()
@@ -152,12 +188,10 @@ describe('dispatchCommand：命令表与边界校验', () => {
       { name: 'interruptBot', args: [{ botId: 'b' }] },
     ])
   })
-  it('updateBot / editRoutine 取 patch 子对象', async () => {
+  it('updateBot 取 patch 子对象', async () => {
     const api = fakeApi()
     await dispatchCommand(api, 'updateBot', { botId: 'b', patch: { persona: 'x' } })
-    await dispatchCommand(api, 'editRoutine', { id: 'r', patch: { steps: ['a'] } })
     expect(api.calls[0]!.args).toEqual(['b', { persona: 'x' }])
-    expect(api.calls[1]!.args).toEqual(['r', { steps: ['a'] }])
   })
   it('缺必填项 / 类型不对给中文错误且不调 UiApi', async () => {
     const api = fakeApi()

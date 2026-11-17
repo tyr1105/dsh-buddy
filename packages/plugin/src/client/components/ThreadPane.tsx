@@ -1,7 +1,7 @@
 /**
  * 中栏线程视图（像发短信）：
- * - 头部：名字、角色、状态句（activityText 完整形）、下次自查文案，右侧「教它技能」
- *   「打开工作会话」「暂停/恢复」按钮（任务卡问题第 4 条）；正在处理（thinking）时
+ * - 头部：名字、角色、状态句（activityText 完整形）、下次自查文案，右侧「更多」菜单里有
+ *   「打开工作会话」「暂停/恢复」按钮（任务卡问题第 4 条；P75k 起没有教学入口，要员工学某段会话的做法改为对总管说）；正在处理（thinking）时
  *   显示「打断」按钮，二次确认后回调（D04 3b）。
  * - 顶部提示条（试跑提示等）放在头部下方、不遮挡输入框（D04 3c-3）。
  * - 气泡：主人靠右主色淡底；机器人靠左中性底带头像名字（连续同一发送者合并头像）；
@@ -10,32 +10,100 @@
  * - 项目主题（P63）复用这个页面：头部换成主题名和项目名，楼层换成 TopicThreadBody 的群聊样式，
  *   输入框可以 @ 项目成员，不显示右侧边栏，「更多」里只留主题用得上的。
  */
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import type { ThreadMessageView, ThreadView } from '../../shared/views.js'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import type { StaffStatus, ThreadMessageView, ThreadView } from '../../shared/views.js'
 import { Avatar, EmptyHint, Skeleton } from './Ui.js'
 import { InboxCard, type CardActions } from './Cards.js'
+import { AgreementCard } from './AgreementCard.js'
+import { TeamCard } from './TeamCard.js'
+import { TeamQuestionCard } from './TeamQuestionCard.js'
+import { JobCard } from './JobCard.js'
+import { isDrawableJobCard } from '../../shared/job-card-kinds.js'
+import { TEAM_TEXT, questionInProgress } from '../logic/team-card.js'
+import { AGR_TEXT, chiefPendingStatusOf, composerPlaceholder, hasPendingAgreement, hasPendingTeamCard } from '../logic/agreement.js'
 import { groupMessages, isCenterMessage, isSendEnter, threadScrollTop } from '../logic/thread.js'
-import { pauseResumeAction } from '../logic/lifecycle.js'
+import { headerStatusAction, headerStatusLabel } from '../logic/lifecycle.js'
 import { insertMention } from '../logic/mentions.js'
 import { buildTopicThread, type TopicPaneInfo } from '../logic/topics.js'
 import { TopicThreadBody } from './TopicThreadBody.js'
+import { MemoryNotes } from './MemoryNoteRow.js'
 
-/** 头部信息由上层从 BotCard 组装（团队线程没有这些，就不显示）。 */
+/** 头部信息由上层从 BotCard 或主题组装；P71 团队全景下线后，摆出来的对话总有头部，null 只作兜底。 */
 export interface ThreadHeaderInfo {
   name: string
   roleLabel: string | null
   activityText: string | null
   nextThinkText: string | null
-  lifecycle: 'paused' | 'active' | 'probation' | 'quarantined' | 'retired' | 'draft' | null
+  /** P73f：员工状态（在岗、停用、归档）；null 表示不是员工对话（主题等），不显示状态相关的菜单项。 */
+  staffStatus: StaffStatus | null
   /** 是否正在处理（activity=thinking）：线程头部显示「打断」按钮（D04 3b）。 */
   thinking: boolean
 }
 
-function Message(props: { m: ThreadMessageView; showHeader: boolean; actions: CardActions; busyInboxId: string | null }): ReactNode {
-  const { m, showHeader } = props
+/** 一条消息。写成普通函数而不是子组件（与约定卡同一取舍）：测试能直接检查每种消息的画法。 */
+function messageNode(m: ThreadMessageView, showHeader: boolean, actions: CardActions, busyInboxId: string | null): ReactNode {
   // 中心消息（system/digest）：居中、小字、无气泡。
   if (isCenterMessage(m)) {
     return <div className="ah-msg ah-msg-center"><span className="ah-msg-time">{m.timeText}</span><div className="ah-msg-bubble-center">{m.text}</div></div>
+  }
+  // P74h：工作往来只在主题里画（折叠组）；私聊里一般不会出现，兜底按普通中心提示画，
+  // 不让一条员工之间的消息在私聊里冒充总管对主人说的话。
+  if (m.kind === 'work') {
+    return <div className="ah-msg ah-msg-center"><span className="ah-msg-time">{m.timeText}</span><div className="ah-msg-bubble-center">{m.text}</div></div>
+  }
+  // P72：约定卡（kind 为 agreement 且找到了对应版本）整张渲染；找不到时 agreement 为 null，
+  // 退回下面的普通气泡显示 text，主人至少看得到「约定「X」第 N 版」这句话。
+  if (m.agreement) {
+    return (
+      <div className="ah-msg">
+        {showHeader ? <Avatar color={m.fromColor} initials={m.fromName.slice(0, 1)} size={28} /> : null}
+        <div className="ah-msg-body ah-msg-body-wide">
+          {showHeader ? <span className="ah-msg-meta">{m.fromName} · {m.timeText}</span> : null}
+          <AgreementCard card={m.agreement} onConfirm={actions.onConfirmAgreement} onOpenMemory={actions.onOpenMemory} />
+        </div>
+      </div>
+    )
+  }
+  // P73e：三问卡。问题正文照普通消息气泡画，选项按钮在气泡下面；没有接线（actions 里没有回答函数）时只显示气泡。
+  if (m.teamQuestion && actions.onAnswerTeamQuestion !== undefined) {
+    return (
+      <div className="ah-msg">
+        {showHeader ? <Avatar color={m.fromColor} initials={m.fromName.slice(0, 1)} size={28} /> : null}
+        <div className="ah-msg-body ah-msg-body-wide">
+          {showHeader ? <span className="ah-msg-meta">{m.fromName} · {m.timeText}</span> : null}
+          <div className="ah-msg-bubble">{m.text}</div>
+          <TeamQuestionCard question={m.teamQuestion} onAnswer={actions.onAnswerTeamQuestion} pickFolder={actions.pickFolder} />
+        </div>
+      </div>
+    )
+  }
+  // P73e：组队卡整张渲染；找不到对应卡（teamCard 为 null）或没有接线时退回普通气泡显示 text。
+  if (m.teamCard && actions.onEditTeamCandidate !== undefined && actions.onConfirmTeam !== undefined) {
+    return (
+      <div className="ah-msg">
+        {showHeader ? <Avatar color={m.fromColor} initials={m.fromName.slice(0, 1)} size={28} /> : null}
+        <div className="ah-msg-body ah-msg-body-wide">
+          {showHeader ? <span className="ah-msg-meta">{m.fromName} · {m.timeText}</span> : null}
+          <TeamCard card={m.teamCard} onEdit={actions.onEditTeamCandidate} onConfirm={actions.onConfirmTeam} />
+        </div>
+      </div>
+    )
+  }
+  // P74h：交回卡、核对卡（job_card）整张渲染；找不到对应记录（jobCard 为 null）时
+  // 退回普通气泡显示 text，主人至少看得到「活动报名页　第 1 轮」这样的标题。
+  // P74i-m1（走查 G-5）：回执是主题里独立的一张事实卡片，不显示头像、名字和时间。
+  // 复盘卡、技能核对卡由 P75k 画，在那之前不显示：不在白名单内的种类不走这里，退回后面的普通气泡。
+  if (m.jobCard && isDrawableJobCard(m.jobCard)) {
+    const receipt = m.jobCard.kind === 'receipt'
+    return (
+      <div className="ah-msg">
+        {!receipt && showHeader ? <Avatar color={m.fromColor} initials={m.fromName.slice(0, 1)} size={28} /> : null}
+        <div className="ah-msg-body ah-msg-body-wide">
+          {!receipt && showHeader ? <span className="ah-msg-meta">{m.fromName} · {m.timeText}</span> : null}
+          <JobCard card={m.jobCard} />
+        </div>
+      </div>
+    )
   }
   // 带卡片的消息只渲染卡片（D07 第 17 条）：卡片自带标题与正文，再画一个内容
   // 相同的气泡只会重复一遍。
@@ -46,7 +114,7 @@ function Message(props: { m: ThreadMessageView; showHeader: boolean; actions: Ca
         <div className="ah-msg-body">
           {m.from === 'owner' || !showHeader ? null : <span className="ah-msg-meta">{m.fromName} · {m.timeText}</span>}
           {m.from === 'owner' && showHeader ? <span className="ah-msg-meta">{m.timeText}</span> : null}
-          <InboxCard card={m.card} actions={props.actions} busy={props.busyInboxId === m.card.inboxId} />
+          <InboxCard card={m.card} actions={actions} busy={busyInboxId === m.card.inboxId} />
         </div>
       </div>
     )
@@ -83,12 +151,19 @@ function saveDraft(threadId: string, text: string): void {
 export function ThreadPane(props: {
   /** 异步加载之前也有明确的线程身份，草稿不会落到空键里。 */
   threadId: string
-  /** 无队友时解释第一步；只替代默认空提示，旧团队消息与输入仍然保留。 */
+  /** 需要额外解释第一步时传；只替代默认空提示，消息与输入仍然保留。 */
   intro?: ReactNode
   thread: ThreadView | null
   loading: boolean
   header: ThreadHeaderInfo | null
   inputPlaceholderName: string
+  /** P72：当前是总管私聊（全队入口）时输入框占位换成「交代一件事……」；其他员工和主题不传。 */
+  chiefEntry?: boolean
+  /**
+   * P72g B2：从待你处理的约定条目点「查看对话」进来时，要滚到的那份约定。
+   * 线程加载出那张卡后滚一次，卡顶对齐可视区顶部；找不到就保持原来的滚动位置（贴底）。
+   */
+  focusAgreementId?: string | null
   /** 线程顶部提示条（如「正在试跑」）：不遮挡输入框（D04 3c-3）。 */
   banner: string | null
   onBannerDismiss: () => void
@@ -98,7 +173,6 @@ export function ThreadPane(props: {
   busyInboxId: string | null
   onRetry: () => void
   error: string | null
-  onTeach: () => void
   onOpenSession: () => void
   onTogglePause: () => void
   /** 打断当前回合（二次确认在组件内做；D04 3b）。 */
@@ -106,21 +180,31 @@ export function ThreadPane(props: {
   /** 右侧边栏收起时（默认就是收起，P64），线程头部显示「查看状态」按钮把它展开。 */
   rightCollapsed?: boolean
   onExpandRight?: () => void
+  /** P78：「更多」菜单里「编辑员工」的回调，打开页面层的编辑弹窗（与右侧栏底部按钮是同一个弹窗）；主题页不传。 */
+  onEditStaff?: () => void
   /** 从「待处理」跳转而来：头部显示回程钮，处理完能一键回到原处。 */
   fromInbox?: boolean
   onBackToInbox?: () => void
   /**
-   * 当前线程是项目主题时传（P63），私聊和团队线程不传。
+   * 当前线程是项目主题时传（P63），私聊不传。
    * @ 入口也只在这里出现：私聊里 @ 一个不在场的人没有意义。
    */
   topic?: TopicPaneInfo | null
   /** 挂载时把光标放进输入框（P60 草稿主题：点了「新开会话」就该直接打字）。 */
   autoFocus?: boolean
+  /**
+   * P76k：点「知道了，收起」时调用（由页面发 dismissAwaySummary 并刷新线程）。
+   * 不传时摘要只读显示按钮，不发命令。
+   */
+  onDismissAway?: () => Promise<void>
 }): ReactNode {
   const [draft, setDraft] = useState(() => readDraft(props.threadId))
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [confirmInterrupt, setConfirmInterrupt] = useState(false)
+  /** P76k：收起离开期间摘要的进行中与失败原因（失败留在块里，不吞掉）。 */
+  const [dismissingAway, setDismissingAway] = useState(false)
+  const [dismissAwayError, setDismissAwayError] = useState<string | null>(null)
   /** 「更多」菜单的开合：把 6 个等权按钮收起来，头部只留一个主操作。 */
   const [menuOpen, setMenuOpen] = useState(false)
   /** @ 菜单的开合：只在项目主题里有入口（P37、P63）。 */
@@ -217,6 +301,25 @@ export function ThreadPane(props: {
     prevTopRef.current = list.scrollTop
   }, [lastId, messageCount])
 
+  // P72g B2：约定条目的「查看对话」要落在那张约定卡上。同一份约定在线程里可能有几个版本，
+  // 取最后一张（最新版）；每次挂载只滚一次，之后新消息照常贴底，不再把你拽回来。
+  const focusedOnceRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    try {
+      const id = props.focusAgreementId
+      const list = listRef.current
+      if (id === null || id === undefined || list === null || focusedOnceRef.current === id) return
+      const cards = list.querySelectorAll<HTMLElement>(`[data-agreement-id="${id}"]`)
+      const target = cards.item(cards.length - 1)
+      if (target === null) return
+      focusedOnceRef.current = id
+      // 用列表自己的滚动位置算，而不是 scrollIntoView：后者可能连外层页面一起滚。
+      const top = target.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop - 8
+      list.scrollTop = Math.max(0, top)
+      prevTopRef.current = list.scrollTop
+    } catch { /* 定位失败只是停在原位置，不影响对话。 */ }
+  }, [props.focusAgreementId, lastId, messageCount])
+
   /**
    * 选中一位项目成员：把「@名字」插到光标处（有选中文字就替换），
    * 然后把焦点与光标交还输入框——主人可以接着把话打完，不用再点一次。
@@ -256,13 +359,37 @@ export function ThreadPane(props: {
   }
 
   const h = props.header
+  /**
+   * P76k：离开期间摘要（总管私聊视图的 awaySummary）。它不是消息、不计未读，
+   * 画在消息列表最上方；首行加粗，其余每项一行。收起成功后刷新线程，字段消失，这块自然不再画。
+   */
+  const away = props.thread?.awaySummary ?? null
+  const dismissAway = async (): Promise<void> => {
+    if (props.onDismissAway === undefined || dismissingAway) return
+    setDismissingAway(true)
+    setDismissAwayError(null)
+    try {
+      await props.onDismissAway()
+    } catch (error) {
+      setDismissAwayError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDismissingAway(false)
+    }
+  }
+  // P72g B5：总管私聊（不是主题）才有「全队入口」标签；有待确认约定卡时状态行换句。
+  const chiefHeader = props.chiefEntry === true && (props.topic === null || props.topic === undefined)
+  const chiefPending = chiefHeader && props.thread !== null && hasPendingAgreement(props.thread.messages)
+  // P73f：有待确认的组队卡时同理换成「等你确认组队卡。确认前没有员工入职。」；两种卡不会同时待确认，约定卡优先只是兜底。
+  const chiefPendingTeam = chiefHeader && !chiefPending && props.thread !== null && hasPendingTeamCard(props.thread.messages)
   // 菜单里是否有可做的事：没有就不显示「更多」，避免点开一个空菜单。
-  const hasMenuItems = (props.thread?.hasMore ?? false) || (h?.thinking ?? false) || (h !== null && h.lifecycle !== null)
+  // P78：员工私聊（staffStatus 非空）始终有「编辑员工」，已归档的员工不能再改档案，不显示这一项。
+  const canEditStaff = h !== null && h.staffStatus !== null && h.staffStatus !== 'archived'
+  const hasMenuItems = (props.thread?.hasMore ?? false) || (h?.thinking ?? false) || (h !== null && h.staffStatus !== null)
   if (props.error) {
     return <div className="ah-thread"><div className="ah-retry" role="alert"><span>{props.error}</span><button type="button" className="ah-btn" onClick={props.onRetry}>重试</button></div></div>
   }
   if (!props.thread) {
-    return <div className="ah-thread">{props.loading ? <Skeleton rows={5} /> : <EmptyHint text="从左边选一位队友。它的汇报和提问，都会留在这条会话里。" />}</div>
+    return <div className="ah-thread">{props.loading ? <Skeleton rows={5} /> : <EmptyHint text="从左边选一位员工。它的汇报和提问，都会留在这条会话里。" />}</div>
   }
   return (
     <section className="ah-thread" aria-label={`与 ${h?.name ?? props.thread.title} 的对话`}>
@@ -272,13 +399,17 @@ export function ThreadPane(props: {
           {props.fromInbox && props.onBackToInbox ? (
             <button type="button" className="ah-back-link" onClick={props.onBackToInbox}>← 返回待你处理</button>
           ) : null}
-          <h2>{h?.name ?? '团队全景'}{h?.roleLabel ? <span className="ah-bot-row-role">{h.roleLabel}</span> : null}</h2>
+          {/* P72g B5：总管私聊顶部，名字旁写「全队入口」标签（代替角色字「总管」，名字已经是总管）。 */}
+          <h2>{h?.name ?? props.thread.title}{chiefHeader ? <span className="ah-tag ah-tag-entry">{AGR_TEXT.chiefTag}</span> : h?.roleLabel ? <span className="ah-bot-row-role">{h.roleLabel}</span> : null}</h2>
           {props.topic?.projectName ? <p className="ah-thread-status">{props.topic.projectName}</p> : null}
-          {!h ? <p className="ah-thread-status">汇报、提问与团队消息，都留在这条会话里。</p> : null}
-          {h?.activityText ? <p className="ah-thread-status" title={h.activityText}>{h.activityText}</p> : null}
+          {/* P72g B5：有待确认的约定时，状态行换成「等你确认约定。…」，不再显示别的活动句。
+              P74h-m1 第 6 处：待确认卡带两栏（有正在做的事）时用「确认前，暂停的部分不会做。」那句。 */}
+          {chiefPending ? <p className="ah-thread-status" data-testid="ah-chief-pending-status">{chiefPendingStatusOf(props.thread!.messages)}</p> : null}
+          {chiefPendingTeam ? <p className="ah-thread-status" data-testid="ah-chief-pending-status">{AGR_TEXT.chiefPendingTeamStatus}</p> : null}
+          {!chiefPending && !chiefPendingTeam && h?.activityText ? <p className="ah-thread-status" title={h.activityText}>{h.activityText}</p> : null}
           {/* 活动句（core 原文用「下次自查」）里已经带过这句时不再单独重复一行；
               界面标签按 audit 术语表写「下次叫醒」。 */}
-          {h?.nextThinkText && !h.activityText?.includes('下次自查') ? <p className="ah-thread-next">下次叫醒：{h.nextThinkText}</p> : null}
+          {!chiefPending && !chiefPendingTeam && h?.nextThinkText && !h.activityText?.includes('下次自查') ? <p className="ah-thread-next">下次叫醒：{h.nextThinkText}</p> : null}
         </div>
         <div className="ah-thread-header-actions">
           {/* 主操作唯一：头部只留「查看状态」，其余动作都收进「更多」。
@@ -300,6 +431,11 @@ export function ThreadPane(props: {
               {/* 受控面板常驻 DOM、用原生 hidden 收展：收起态下「更多」按钮的 aria-controls
                   仍能解析到本面板（WCAG 4.1.2），展开状态由按钮的 aria-expanded 表达。 */}
               <div className="ah-thread-menu" id="ah-thread-more" aria-label="更多操作" hidden={!menuOpen}>
+                  {/* P78：放在第一项，打开后焦点先进入它。点它之前先把焦点交还「更多」再关菜单：
+                      弹窗按「打开时的焦点所在」还焦，菜单收起后那一项已不可见，必须让它记住「更多」。 */}
+                  {canEditStaff ? (
+                    <button type="button" className="ah-btn ah-btn-ghost" onClick={() => { try { menuTriggerRef.current?.focus() } catch { /* 还焦失败不影响打开弹窗。 */ } setMenuOpen(false); props.onEditStaff?.() }}>编辑员工</button>
+                  ) : null}
                   {props.thread.hasMore ? (
                     <button type="button" className="ah-btn ah-btn-ghost" onClick={() => { setMenuOpen(false); props.onLoadEarlier() }}>加载更早</button>
                   ) : null}
@@ -313,15 +449,14 @@ export function ThreadPane(props: {
                       <button type="button" className="ah-btn ah-btn-danger" onClick={() => setConfirmInterrupt(true)}>打断</button>
                     )
                   ) : null}
-                  {(props.thread.hasMore || (h?.thinking ?? false)) && h !== null && h.lifecycle !== null ? <span className="ah-menu-sep" role="separator" /> : null}
-                  {h && h.lifecycle !== null ? (
+                  {(props.thread.hasMore || (h?.thinking ?? false)) && h !== null && h.staffStatus !== null ? <span className="ah-menu-sep" role="separator" /> : null}
+                  {h && h.staffStatus !== null ? (
                     <>
-                      <button type="button" className="ah-btn ah-btn-ghost" onClick={() => { setMenuOpen(false); props.onTeach() }}>教它技能</button>
                       <button type="button" className="ah-btn ah-btn-ghost" onClick={() => { setMenuOpen(false); props.onOpenSession() }}>打开工作会话</button>
                       {/* 按当前状态只显示合法按钮（D06 第 3 条 / D07 第 24 条）：判断集中在
                           logic/lifecycle.ts 的纯函数（与右栏共用一份规则）。 */}
-                      {pauseResumeAction(h.lifecycle) !== null ? (
-                        <button type="button" className="ah-btn ah-btn-ghost" onClick={() => { setMenuOpen(false); props.onTogglePause() }}>{pauseResumeAction(h.lifecycle) === 'pause' ? '暂停' : '恢复'}</button>
+                      {headerStatusAction(h.staffStatus) !== null ? (
+                        <button type="button" className="ah-btn ah-btn-ghost" onClick={() => { setMenuOpen(false); props.onTogglePause() }}>{headerStatusLabel(headerStatusAction(h.staffStatus)!)}</button>
                       ) : null}
                     </>
                   ) : null}
@@ -336,15 +471,38 @@ export function ThreadPane(props: {
           <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onBannerDismiss}>关闭</button>
         </div>
       ) : null}
+      {/* P76n：离开摘要的 live 区域常驻在 DOM 里（空态也在），摘要插入时才播报。
+          不要改成条件挂载或 display:none，读屏会吞掉首次播报。视觉摘要仍在下面的消息列表里。 */}
+      <div className="ah-away-live" role="status" aria-live="polite" aria-atomic="false">
+        {away !== null && away.lines.length > 0 ? away.lines.join('；') : ''}
+      </div>
       <div className="ah-thread-messages" ref={listRef} onScroll={() => { if (listRef.current) prevTopRef.current = listRef.current.scrollTop }}>
-        {props.intro ?? ((props.topic === null || props.topic === undefined) && props.thread.messages.length === 0 ? <div className="ah-thread-welcome"><span className="ah-brand-mark" aria-hidden="true">B</span><h3>{h ? `跟 ${h.name} 说下一步做什么。` : '从左边选一位队友。'}</h3><p>{h ? '说清目标，给点线索，或者教它一个技能。它做完会在这儿汇报。' : '它的汇报和提问，都会留在这条会话里。'}</p></div> : null)}
+        {/* P76k：离开期间摘要放在第一条消息之前；首行加粗，其余一行一项，底部一个文字按钮。 */}
+        {away !== null && away.lines.length > 0 ? (
+          <section className="ah-away" aria-label="你离开的这段时间">
+            {away.lines.map((line, index) => index === 0
+              ? <p key={index} className="ah-away-head"><strong>{line}</strong></p>
+              : <p key={index} className="ah-away-line">{line}</p>)}
+            <button type="button" className="ah-btn ah-btn-ghost ah-away-dismiss" disabled={dismissingAway}
+              onClick={() => void dismissAway()}>知道了，收起</button>
+            {dismissAwayError !== null ? <p className="ah-settings-error" role="alert">没收起：{dismissAwayError}</p> : null}
+          </section>
+        ) : null}
+        {props.intro ?? ((props.topic === null || props.topic === undefined) && props.thread.messages.length === 0 ? <div className="ah-thread-welcome"><span className="ah-brand-mark" aria-hidden="true">B</span><h3>{h ? `跟 ${h.name} 说下一步做什么。` : '从左边选一位员工。'}</h3><p>{h ? '说明目标和已知的线索。完成后会在这里汇报。' : '它的汇报和提问，都会留在这条会话里。'}</p></div> : null)}
         {/* 还没有楼层的主题只可能是草稿（P60）：不画「0 条回复」，由 intro 说明怎么开始。 */}
         {props.topic !== null && props.topic !== undefined && props.thread.messages.length > 0 ? (
-          <TopicThreadBody model={buildTopicThread(props.thread.messages, props.thread.hasMore)}
-            replying={props.topic.replying} actions={props.actions} busyInboxId={props.busyInboxId} />
+          <TopicThreadBody model={buildTopicThread(props.thread.messages, props.thread.hasMore, { hasAgreement: Boolean(props.thread.agreement) })}
+            replying={props.topic.replying} actions={props.actions} busyInboxId={props.busyInboxId}
+            agreement={props.thread.agreement ?? null}
+            progress={props.thread.progress ?? null}
+            floors={props.thread.floors}
+            onLoadEarlier={props.thread.hasMore ? props.onLoadEarlier : undefined} />
         ) : groupMessages(props.thread.messages).map(slot => (
-          <Message key={slot.message.id} m={slot.message} showHeader={slot.showHeader}
-            actions={props.actions} busyInboxId={props.busyInboxId} />
+          <Fragment key={slot.message.id}>
+            {messageNode(slot.message, slot.showHeader, props.actions, props.busyInboxId)}
+            {/* P75k：这条消息下面挂着的「已记住」「已删除」「已更正」行（core 的 memoryNotes），缩进与消息正文对齐。 */}
+            <MemoryNotes notes={slot.message.memoryNotes} onUndo={props.actions.onUndoMemory} />
+          </Fragment>
         ))}
       </div>
       {/* 项目不在进行中时主题只能看：引擎也会拒收，这里直接说清楚，不让主人打完字才知道。 */}
@@ -358,7 +516,10 @@ export function ThreadPane(props: {
           rows={3}
           autoFocus={props.autoFocus}
           value={draft}
-          placeholder={props.topic?.placeholder ?? `向 ${props.inputPlaceholderName} 发送消息…`}
+          placeholder={props.topic?.placeholder ?? (questionInProgress(props.thread.messages)
+            // P73e：三问进行中，输入框占位换成「点选上面的选项，或写下你的回答」；三问结束后恢复第一块的占位文字。
+            ? TEAM_TEXT.questionPlaceholder
+            : composerPlaceholder({ chief: props.chiefEntry === true, name: props.inputPlaceholderName }))}
           disabled={sending}
           onChange={(e) => { setDraft(e.target.value); saveDraft(props.threadId, e.target.value) }}
           onKeyDown={(e) => { if (isSendEnter(e.nativeEvent)) { e.preventDefault(); void send() } }}
@@ -375,7 +536,7 @@ export function ThreadPane(props: {
                 aria-haspopup="listbox"
                 title={`@ ${props.topic.projectName} 的成员`}
                 onClick={() => setMentionOpen(open => !open)}
-              >@ 队友</button>
+              >@ 员工</button>
               {mentionOpen ? (
                 <div className="ah-mention-menu" role="listbox" aria-label={`@ ${props.topic.projectName} 的成员`}>
                   <span className="ah-mention-title">@ 项目成员 · {props.topic.projectName}</span>

@@ -42,6 +42,8 @@ export const OFFICE_BUBBLE_TONES: Record<OfficeBubbleTone, string> = {
   resting: '#dfe5f4',
   offline: '#e6e6e6',
   unknown: '#f0ebf8',
+  // P73f：「报到」气泡用浅紫（接近品牌色），和「工作」的绿、「待确认」的黄区分开。
+  arrival: '#dcd6ff',
 }
 
 /** 一帧里坐进工位的人；seatIndex 对应 OFFICE_SEATS 的下标。 */
@@ -50,6 +52,10 @@ export interface OfficePixelOccupant {
   botId: string
   name: string
   light: OfficeLight
+  /** P73f：今天入职（座位视图的 joinedToday）；空闲类的灯据此显示「报到」气泡。 */
+  joinedToday?: boolean
+  /** P73f：正在播放「从门口走到工位」：静态帧先不画这个人，由动画层把他走过来。 */
+  arriving?: boolean
 }
 
 export interface OfficePixelInput {
@@ -66,6 +72,8 @@ export interface OfficePixelFigure {
   name: string
   appearance: OfficeAppearance
   bubble: OfficeBubble
+  /** P73f：正在走位入座，动画层不要画他坐在工位上的小动作。 */
+  arriving: boolean
   /** 人的水平中心和气泡基准线（与布局同一套逻辑坐标），页面用它放点击热区与气泡浮层。 */
   x: number
   y: number
@@ -121,11 +129,11 @@ export function officePixelFrame(input: OfficePixelInput): OfficePixelFrame {
   for (const occupant of input.occupants) {
     const seat = officeSeatAt(occupant.seatIndex)
     if (seat === null) {
-      warnings.push(`队友「${occupant.name}」的座位序号 ${occupant.seatIndex} 超出办公室范围，已跳过`)
+      warnings.push(`员工「${occupant.name}」的座位序号 ${occupant.seatIndex} 超出办公室范围，已跳过`)
       continue
     }
     if (bySeat.has(seat.index)) {
-      warnings.push(`座位 ${seat.index + 1} 被多个队友占用，只保留「${bySeat.get(seat.index)?.name ?? ''}」`)
+      warnings.push(`座位 ${seat.index + 1} 被多个员工占用，只保留「${bySeat.get(seat.index)?.name ?? ''}」`)
       continue
     }
     bySeat.set(seat.index, occupant)
@@ -136,7 +144,8 @@ export function officePixelFrame(input: OfficePixelInput): OfficePixelFrame {
     const occupant = bySeat.get(seat.index)
     drawPartition(rects, seat, palette)
     drawChairBack(rects, seat, palette)
-    if (occupant !== undefined) drawFigure(rects, seat, officeAppearance(occupant.botId), occupant.light, palette)
+    // 正在走位入座的人先不画：他还在路上，坐在椅子上的样子要等走到了才出现。
+    if (occupant !== undefined && occupant.arriving !== true) drawFigure(rects, seat, officeAppearance(occupant.botId), occupant.light, palette)
     // 有人且在线才亮屏；屏幕亮灭不代表在不在干活，具体内容由 ambient.ts 按状态画。
     drawDesk(rects, seat, occupant !== undefined && occupant.light !== 'offline', palette)
   }
@@ -146,7 +155,7 @@ export function officePixelFrame(input: OfficePixelInput): OfficePixelFrame {
     const occupant = bySeat.get(seat.index)
     if (occupant === undefined) continue
     const look = officeAppearance(occupant.botId)
-    const bubble = officeBubble(occupant.light)
+    const bubble = officeBubble(occupant.light, { joinedToday: occupant.joinedToday })
     drawBubble(rects, seat, bubble, tones, palette.bubbleBorder)
     figures.push({
       seatIndex: seat.index,
@@ -154,6 +163,7 @@ export function officePixelFrame(input: OfficePixelInput): OfficePixelFrame {
       name: occupant.name,
       appearance: look,
       bubble,
+      arriving: occupant.arriving === true,
       x: seat.seatX,
       y: seat.standY,
     })

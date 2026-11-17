@@ -62,6 +62,15 @@ export const RHYTHM_OPTIONS: readonly RhythmOption[] = [
   { value: 'drive', label: '全力推进', desc: '自己找事往前推', autonomy: 'L2', pace: 'active', onDemand: false },
 ]
 
+/**
+ * 自主节奏是否固定为「听吩咐」（P73f，方案 5.4）：执行类员工（角色不是总管、不是盯守，即调研、执行、建议）
+ * 只在总管安排或你点名时工作，界面不再给节奏选项，也不提交节奏相关字段；总管和盯守类照旧可选。
+ * 角色还没选（新建表单刚打开）时不算固定，等选了角色再定。与 core 的 isExecutionRole 同一口径。
+ */
+export function isFixedRhythmRole(role: Role | ''): boolean {
+  return role !== '' && role !== 'chief' && role !== 'sentinel'
+}
+
 /** 建议风格只提意见，不能选会动手的两档；core 也有同样的校验。 */
 export function rhythmAllowed(role: Role | '', rhythm: Rhythm): boolean {
   return role !== 'advisor' || rhythm === 'on_demand' || rhythm === 'advise'
@@ -183,7 +192,7 @@ export function validateName(name: string, existingNames: readonly string[]): st
   const trimmed = name.trim()
   if (trimmed === '') return '名字：不能为空'
   if ([...trimmed].length > 20) return '名字：不能超过 20 字'
-  if (existingNames.some(n => n === trimmed)) return `名字：已经有叫「${trimmed}」的队友了，换一个吧`
+  if (existingNames.some(n => n === trimmed)) return `名字：已经有叫「${trimmed}」的员工了，换一个吧`
   return null
 }
 
@@ -236,13 +245,12 @@ export function buildCreateBotInput(draft: BotConfigDraft): Record<string, unkno
     speechStyle: draft.speechStyle === '' ? null : draft.speechStyle,
     // MBTI 可跳过：未设置显式提交 null，让 core 保持「未设置」而不是补默认型。
     mbti: draft.mbti === '' ? null : draft.mbti,
-    autonomy: rhythm.autonomy,
-    pace: rhythm.pace,
-    onDemand: rhythm.onDemand,
     brief: draft.brief.trim(),
     // 「跟随 DSH 默认」显式提交 null：省略会继承中心设置里的默认模型，并不跟随 DSH。
     model: modelValue(draft.model),
   }
+  // P73f：执行类员工的节奏固定为听吩咐，由 core 按角色定，界面不提交节奏相关字段；总管和盯守类照选的档提交。
+  if (!isFixedRhythmRole(draft.role)) Object.assign(input, { autonomy: rhythm.autonomy, pace: rhythm.pace, onDemand: rhythm.onDemand })
   if (draft.presetSkillIds.length > 0) input.presetSkillIds = [...draft.presetSkillIds]
   if (draft.dshSkillNames.length > 0) input.dshSkillNames = [...draft.dshSkillNames]
   return input
@@ -287,7 +295,8 @@ export function buildProfilePatch(draft: BotConfigDraft, initial: BotConfigDraft
   if (speechChanged) patch.speechStyle = draft.speechStyle === '' ? null : draft.speechStyle
   if (draft.brief !== initial.brief || temperamentChanged || speechChanged) patch.brief = draft.brief.trim()
   if (draft.mbti !== initial.mbti) patch.mbti = draft.mbti === '' ? null : draft.mbti
-  if (draft.rhythm !== initial.rhythm) {
+  // 执行类员工没有节奏选项，不提交节奏相关字段（P73f）；core 对执行类也会忽略这三项。
+  if (draft.rhythm !== initial.rhythm && !isFixedRhythmRole(draft.role)) {
     const rhythm = rhythmOption(draft.rhythm)
     Object.assign(patch, { autonomy: rhythm.autonomy, pace: rhythm.pace, onDemand: rhythm.onDemand })
   }

@@ -50,8 +50,8 @@ export interface ResourceFormSubmit {
 
 /** 「谁能读」两个选项各自的一句话说明。 */
 const ACCESS_HINTS: Readonly<Record<ResourceSensitivity, string>> = {
-  normal: '所有在岗和试岗的队友都能读',
-  restricted: '只有下面勾选的队友能读',
+  normal: '所有在岗的员工都能读',
+  restricted: '只有下面勾选的员工能读',
 }
 
 /** 资料新建 / 编辑对话框。 */
@@ -155,7 +155,7 @@ export function ResourceFormDialog(props: {
         ))}
         {access === 'restricted' ? (
           props.bots.length > 0 ? (
-            <div className="ah-res-bots" role="group" aria-label="选择能读的队友">
+            <div className="ah-res-bots" role="group" aria-label="选择能读的员工">
               {props.bots.map(bot => (
                 <label key={bot.id}>
                   <input type="checkbox" checked={botIds.includes(bot.id)} disabled={props.busy} onChange={e => toggleBot(bot.id, e.target.checked)} />
@@ -163,7 +163,7 @@ export function ResourceFormDialog(props: {
                 </label>
               ))}
             </div>
-          ) : <p className="ah-empty">暂无队友。请先在主视图新建队友。</p>
+          ) : <p className="ah-empty">暂无员工。请先在主视图新建员工。</p>
         ) : null}
         {fieldError?.field === 'access' && fieldErrorText ? <p className="ah-settings-error" role="alert">{fieldErrorText}</p> : null}
       </fieldset>

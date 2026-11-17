@@ -172,7 +172,7 @@ export function OfficeTrailPanel(props: OfficeTrailPanelProps): ReactNode {
             <p className="ah-trail-note" role="status">正在读取动线……</p>
           ) : segments.length === 0 ? (
             <p className="ah-trail-note">
-              {dayWindow?.day.isToday === true ? '今天暂无活动记录。队友开工后在此显示。' : '该日暂无活动记录。可切换其他日期查看。'}
+              {dayWindow?.day.isToday === true ? '今天暂无活动记录。员工开工后在此显示。' : '该日暂无活动记录。可切换其他日期查看。'}
             </p>
           ) : (
             <ol className="ah-trail-list">

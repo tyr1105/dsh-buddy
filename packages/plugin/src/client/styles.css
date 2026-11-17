@@ -295,11 +295,12 @@
 .ah-bot-row:hover { background: var(--dsw-alias-fill-hover, var(--dsw-alias-bg-inset)); }
 .ah-bot-row.ah-selected { background: var(--dsw-alias-fill-selected, var(--dsw-alias-bg-inset)); }
 .ah-bot-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.ah-bot-row-name { font-weight: 500; display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* P72g B1：标签放不下时换到名字下一行（flex-wrap），名字自己不再被挤到 0 宽（总管同时有「待确认」「全队入口」两个标签时出过这个问题）。 */
+.ah-bot-row-name { font-weight: 500; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
 /* 名字文本单独防断：CJK 裸文本作为匿名 flex item 时 min-content 只有一个字宽，
    侧栏变窄被徽标/标签挤压就会逐字竖排（U01 r46）。包一层后宁可省略也不逐字断行；
    overflow:hidden 同时把 flex 自动最小尺寸压到 0，省略号才能真正生效。 */
-.ah-bot-row-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ah-bot-row-name-text { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 标签整体不缩、不内部断字：空间不够时整枚标签换到名字下一行，而不是标签自己竖排。 */
 .ah-bot-row-name .ah-tag { flex: none; white-space: nowrap; }
 .ah-bot-row-role { font-size: 12px; color: var(--dsw-alias-text-secondary); min-width: 0; }
@@ -394,24 +395,34 @@
 .ah-card-body { margin: 0; font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
 .ah-card-expire { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
 .ah-card-answer { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
+/* P74r20：已作废的审批卡在状态词下一行写作废的原因（核心写在答复栏里的那句话），字号与状态词一致、稍淡。 */
+.ah-card-answer-why { margin: 2px 0 0; font-size: 12px; color: var(--dsw-alias-text-secondary); opacity: 0.85; overflow-wrap: anywhere; }
 .ah-card-error { margin: 4px 0 0; font-size: 12px; color: var(--dsw-alias-text-danger, var(--dsw-alias-text-secondary)); }
-.ah-card-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.ah-card-options { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
+/* P76n：420 宽时选项按钮的 min-content 宽度会撑破消息区；允许按钮收窄并换行。 */
+.ah-card-options > .ah-btn { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
 /* ---------- 收件箱 ---------- */
-.ah-inbox { flex: 1; overflow-y: auto; padding: 16px 20px; display: grid; gap: 12px; align-content: start; }
+/* P74i-m3（第四次走查 N-3）：单列网格显式写成 minmax(0, 1fr)。隐式的 auto 轨道会按内容的最小宽度撑宽，
+   窄宽度下面板内容比面板宽、出现横向滚动、句子被截掉；改后轨道先服从面板宽度，条目内容在轨道内换行。 */
+.ah-inbox { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
 .ah-inbox-row {
   padding: 12px 14px; border: 1px solid var(--dsw-alias-separator);
   border-radius: var(--dsw-radius-lg, 10px);
   background: var(--dsw-alias-bg-elevated, var(--dsw-alias-bg-base));
-  display: grid; gap: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0;
+  overflow-wrap: anywhere;
 }
 .ah-inbox-row .ah-inbox-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ah-inbox-row p { margin: 0; font-size: 13px; }
 .ah-inbox-time { font-size: 12px; color: var(--dsw-alias-text-secondary); margin-left: auto; }
 .ah-inbox-p0 { border-color: var(--dsw-alias-danger); }
 .ah-inbox-p1 { border-color: var(--dsw-alias-warning, var(--dsw-alias-separator-strong, var(--dsw-alias-separator))); }
-/* 处理成功提示：一条轻量的状态行，带一个「看它接着做」的回程入口，6 秒后自动消失。 */
+/* 处理成功提示：一条轻量的状态行，带一个「看它接着做」的回程入口，6 秒后自动消失。
+   P74i-m5（走查 N-3）：提示吸附在列表可见区域的顶部（position: sticky），主人从列表靠下的条目操作之后，
+   提示仍在窗口里；条目处理完会从列表消失，提示不能跟着条目走，所以不选「放在条目旁边」的做法。 */
 .ah-inbox-done {
+  position: sticky; top: 0; z-index: 2;
   margin: 0; padding: 8px 12px; border-radius: var(--dsw-radius-lg, 10px);
   font-size: 12px; color: var(--dsw-alias-success, var(--dsw-alias-text-primary));
   background: var(--dsw-alias-bg-elevated, var(--dsw-alias-bg-base));
@@ -474,8 +485,12 @@
 .ah-thread-next { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); }
 .ah-thread-header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 /* 窄屏或用户按 WCAG 1.4.12 放大行高/段距时，头部状态句会换成多行；允许它在纵向空间
-   不足时收缩并在自身内滚动，消息区与输入区始终留在屏内，内容和发送功能都不丢。 */
-.ah-thread-header { min-height: 0; overflow-y: auto; }
+   不足时收缩并在自身内滚动，消息区与输入区始终留在屏内，内容和发送功能都不丢。
+   P78：滚动只放在文字区（header-main）上，不能放在整个头部上——「更多」菜单是头部里的绝对定位子元素，
+   头部一旦 overflow 非 visible，菜单就被头部的边界裁切，头部还会为了装下菜单出现滚动条。
+   文字区限高 40vh：超出才在文字区内部滚动，菜单不受影响。 */
+.ah-thread-header { min-height: 0; overflow: visible; }
+.ah-thread-header-main { max-height: 40vh; overflow-y: auto; }
 
 /* 从收件箱来的回程入口：放在标题上方，不占动作区，也不参与主操作竞争。 */
 .ah-back-link {
@@ -491,6 +506,8 @@
 .ah-thread-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
   min-width: 168px; padding: 6px; display: grid; gap: 2px;
+  /* 窗口矮、放不下时菜单自己滚动，不撑高也不带动头部滚动。 */
+  max-height: calc(100vh - 140px); overflow-y: auto;
   border: 1px solid var(--dsw-alias-separator-strong);
   border-radius: var(--dsw-radius-lg, 10px);
   background: var(--dsw-alias-bg-elevated);
@@ -555,6 +572,21 @@
 }
 .ah-card-note { width: 100%; }
 
+/* P79：「待你处理」条目上的「要修改」「有不符」「都不合适」输入区：输入框占满条目宽度，
+   发送、取消两个按钮在下一行（窄宽度也不溢出）；发送后多出的一行说明用次要文字色。 */
+.ah-inbox-objection { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+.ah-inbox-objection-input {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 6px 10px; font: inherit; color: inherit;
+  border-radius: var(--dsw-radius-md, 8px);
+  border: 1px solid var(--dsw-alias-control-border);
+  background: var(--dsw-alias-bg-inset);
+}
+.ah-inbox-objection-input:focus-visible { outline: 2px solid var(--dsw-alias-focus-ring, currentColor); outline-offset: 1px; }
+.ah-inbox-objection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ah-inbox-row .ah-inbox-objection-sent { color: var(--dsw-alias-text-secondary); font-size: 12px; }
+/* P74i-m5（第 5 节）：输入框下面的字数提示（接近或到达字数上限时才出现）。 */
+.ah-inbox-row .ah-inbox-objection-count, .ah-inbox-row .ah-card-note-count { color: var(--dsw-alias-text-secondary); font-size: 12px; margin: 0; }
+
 /* 收件箱列表（一列平铺） */
 .ah-inbox-bot { font-weight: 500; }
 /* P65：来自项目主题的事项，名字后面跟一句「来自主题：主题名」；主题名长时一行内省略，悬停看全名。 */
@@ -617,7 +649,14 @@
 }
 .ah-wizard-role span { color: var(--dsw-alias-text-secondary); }
 .ah-wizard-role-picked { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-accent-muted); }
-.ah-wizard-role-disabled { opacity: 0.5; cursor: not-allowed; }
+.ah-wizard-role-disabled {
+  /* U07（P76o 复验）：原来整卡 opacity .5，说明文字掉到约 2:1；卡片仍可点开看设定，
+     不属于纯不可用组件，所以保留可读文字，用虚线边框和浅底表示不能选。 */
+  border-style: dashed;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-text-secondary);
+  cursor: not-allowed;
+}
 .ah-wizard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .ah-wizard-label { font-size: 13px; color: var(--dsw-alias-text-secondary); }
 
@@ -1066,3 +1105,20 @@ fieldset.ah-prj-members { display: grid; }
 .ah-skill-purpose {
   font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere;
 }
+
+/* ---------- 审批卡正文块（P69）：一句话 / 原因 / 风险 / 收起的原始命令 ---------- */
+.ah-approval { display: grid; gap: 4px; }
+.ah-approval p { margin: 0; overflow-wrap: anywhere; }
+.ah-approval-action { font-size: 14px; font-weight: 600; }
+.ah-approval-reason { font-size: 13px; color: var(--dsw-alias-text-secondary); }
+/* U07（P76o 复验）：danger 原色在审批卡浅底上约 4.44:1，混 12% 主文字色压到 4.5:1 以上。 */
+.ah-approval-risk { font-size: 13px; color: color-mix(in srgb, var(--dsw-alias-text-danger, var(--dsw-alias-text-secondary)) 88%, var(--dsw-alias-label-primary)); }
+.ah-approval-toggle { justify-self: start; display: inline-flex; align-items: center; min-height: 24px; padding: 2px 0; border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--dsw-alias-accent-text, var(--dsw-alias-text-secondary)); text-decoration: underline; cursor: pointer; }
+.ah-approval-raw { margin: 0; padding: 8px; max-height: 240px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--dsw-alias-separator); border-radius: 6px; }
+.ah-approval-toggle:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+/* P74g/P74i：属于一件事的审批的「由{员工}执行」一行与三行说明（费用、能否撤回、批准之后）。 */
+.ah-approval-onbehalf { font-size: 12px; color: var(--dsw-alias-text-secondary); }
+.ah-approval-notes { display: grid; gap: 2px; margin: 2px 0 0; }
+.ah-approval-note { display: flex; gap: 8px; }
+.ah-approval-note dt { font-size: 12px; color: var(--dsw-alias-text-secondary); white-space: nowrap; }
+.ah-approval-note dd { margin: 0; font-size: 12px; overflow-wrap: anywhere; }

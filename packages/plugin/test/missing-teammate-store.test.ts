@@ -2,11 +2,13 @@
  * 选中的队友已不存在时，界面仓库的行为（看板 P58）。
  * 用真实的 createHubStore 和假后端跑，断言落在两件事上：选中有没有被清、
  * 有没有再用这个 id 发请求。事件顺序和真实 core 的 deleteArchivedBot 一致。
+ * P71：团队全景下线，「退回」的落点从团队线程改成「没有选中 + 办公室」；下面的 NO_THREAD 就是空串。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHubStore, type HubStore } from '../src/client/hub-state.js'
 import { DisabledHub } from '../src/host/real-hub.js'
 import { fakeRosterBackend, settle } from './helpers/fake-roster-backend.js'
+import { NO_THREAD } from '../src/client/logic/missing-teammate.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -35,12 +37,13 @@ function emitDeleted(hub: HubStore, botId: string): void {
 }
 
 describe('本地记住了已不存在的队友', () => {
-  it('名册到手后退回团队全景，不算连接问题', async () => {
+  it('名册到手后退回办公室（P71 前是团队全景），不算连接问题', async () => {
     fakeRosterBackend(['b_1'])
     const hub = restoredHub('b_gone')
     await hub.refreshOverview()
     const state = hub.getSnapshot()
-    expect(state.selectedThread).toBe('team')
+    expect(state.selectedThread).toBe(NO_THREAD)
+    expect(state.view).toBe('office')
     expect(state.connectionDown).toBe(false)
     expect(state.selectionExitSeq).toBe(1)
   })
@@ -59,7 +62,7 @@ describe('本地记住了已不存在的队友', () => {
     backend.pauseOverview = false
     backend.releaseOverviews()
     await settle()
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
     expect(backend.byId('bot', 'b_gone')).toEqual([])
     expect(backend.byId('thread', 'b_gone')).toEqual([])
   })
@@ -88,7 +91,7 @@ describe('本地记住了已不存在的队友', () => {
     fakeRosterBackend(['b_1'])
     const hub = restoredHub('b_gone', 'project')
     await hub.refreshOverview()
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
     expect(hub.getSnapshot().view).toBe('project')
   })
 })
@@ -105,7 +108,7 @@ describe('对话开着时队友被删除', () => {
     await settle()
 
     expect(backend.byId('bot', 'b_1')).toEqual([])
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
     expect(downFlashes).toEqual([])
   })
 
@@ -137,7 +140,7 @@ describe('对话开着时队友被删除', () => {
 })
 
 describe('断线重连', () => {
-  it('断线期间数据被清空：重连后不再按旧 id 补拉，退回团队全景', async () => {
+  it('断线期间数据被清空：重连后不再按旧 id 补拉，退回办公室', async () => {
     const backend = fakeRosterBackend(['b_1'])
     const hub = await hubViewing(backend, 'b_1')
     backend.roster = []
@@ -145,7 +148,7 @@ describe('断线重连', () => {
     await settle()
     expect(backend.byId('bot', 'b_1')).toEqual([])
     expect(backend.byId('thread', 'b_1')).toEqual([])
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
   })
 
   it('反例：队友还在，重连后照常补拉它的详情和对话', async () => {
@@ -166,7 +169,7 @@ describe('按 id 的请求失败时，用名册核实', () => {
     const hub = await hubViewing(backend, 'b_1')
     backend.roster = []
     await hub.refreshBot('b_1')
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
     expect(hub.getSnapshot().connectionDown).toBe(false)
   })
 
@@ -271,14 +274,39 @@ describe('反例：还在名册里的、不是队友的', () => {
     expect(backend.byId('thread', 'b_old')).toHaveLength(1)
   })
 
-  it('选中团队线程：名册空着也不受影响，团队对话照常请求', async () => {
+  it('P71：没有选中任何对话时名册空着也不受影响；团队线程已下线，不再请求它', async () => {
     const backend = fakeRosterBackend([])
     const hub = createHubStore()
     await hub.refreshOverview()
     await hub.refreshThread('team')
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    await hub.refreshThread(NO_THREAD)
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
+    expect(hub.getSnapshot().view).toBe('office')
     expect(hub.getSnapshot().selectionExitSeq).toBe(0)
-    expect(backend.byId('thread', 'team')).toHaveLength(1)
+    expect(backend.byId('thread', 'team')).toEqual([])
+    expect(backend.calls.filter(path => path.startsWith('thread'))).toEqual([])
+  })
+
+  it('P71：旧入口要选团队线程时不进对话，落到办公室，也不发标已读', async () => {
+    const backend = fakeRosterBackend(['b_1'])
+    const hub = await hubViewing(backend, 'b_1')
+    hub.selectThread('team')
+    await settle()
+    expect(hub.getSnapshot()).toMatchObject({ view: 'office', selectedThread: NO_THREAD })
+    expect(backend.calls.filter(path => path.startsWith('command'))).toEqual([])
+    expect(backend.byId('thread', 'team')).toEqual([])
+  })
+
+  it('P71：没有选中时切回主视图（对话），落到办公室；选着队友时照常进对话', async () => {
+    fakeRosterBackend(['b_1'])
+    const hub = createHubStore()
+    await hub.refreshOverview()
+    hub.setView('main')
+    expect(hub.getSnapshot().view).toBe('office')
+    hub.selectThread('b_1')
+    hub.setView('settings')
+    hub.setView('main')
+    expect(hub.getSnapshot()).toMatchObject({ view: 'main', selectedThread: 'b_1' })
   })
 })
 
@@ -315,7 +343,7 @@ describe('名册和选中的先后', () => {
     backend.pauseOverview = false
     backend.releaseOverviews()
     await inFlight
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
   })
 
   it('晚到的旧名册不覆盖更新的名册，被删的队友不会闪回来', async () => {
@@ -343,7 +371,7 @@ describe('名册和选中的先后', () => {
     await settle()
     expect(backend.calls.filter(path => path.startsWith('overview'))).toHaveLength(1)
     expect(backend.calls.filter(path => path.startsWith('command'))).toEqual([])
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
   })
 
   it('反例：点名册里有的队友，只有标已读后那一次刷新，不额外核对名册', async () => {
@@ -377,12 +405,12 @@ describe('项目主题（P63）', () => {
     expect(backend.byId('bot', 'ptp_1')).toEqual([])
   })
 
-  it('恢复的主题已不存在：项目视图到手后退回团队全景，不算连接问题', async () => {
+  it('恢复的主题已不存在：项目视图到手后退回办公室，不算连接问题', async () => {
     const backend = fakeRosterBackend(['b_1'])
     backend.projectOverride = projectWith('ptp_other')
     const hub = restoredHub('ptp_gone')
     await hub.refreshProject()
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
     expect(hub.getSnapshot().connectionDown).toBe(false)
     expect(hub.getSnapshot().selectionExitSeq).toBe(1)
   })
@@ -411,7 +439,7 @@ describe('项目主题（P63）', () => {
     hub.selectThread('ptp_gone')
     await settle()
     expect(backend.calls.filter(path => path.startsWith('project'))).toHaveLength(1)
-    expect(hub.getSnapshot().selectedThread).toBe('team')
+    expect(hub.getSnapshot().selectedThread).toBe(NO_THREAD)
   })
 
   it('反例：刚建好的主题，发请求时还没有它的旧视图晚到，不把它判没了', async () => {

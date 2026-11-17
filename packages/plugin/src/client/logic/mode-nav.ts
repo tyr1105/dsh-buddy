@@ -7,10 +7,13 @@
  * 避免切换器与页面各记一份状态。
  *
  * 失败口径：隐私模式、配额不足、存储被禁用或旧值损坏时一律退回默认
- * （对话模式、主视图、团队线程），只影响下次打开时的记忆，不影响本次切换。
+ * （对话模式、办公室、没有选中对话），只影响下次打开时的记忆，不影响本次切换。
+ * P71 前默认是「主视图 + 团队线程」；团队全景下线后，旧记录里的 'team' 读出来按「没有选中」处理，
+ * 停在主视图的旧记录落到办公室（规则在 missing-teammate 的 landingSurface）。
  */
 import type { PageView } from '../hub-state.js'
 import type { SpaceMode } from './space-capability.js'
+import { landingSurface, NO_THREAD } from './missing-teammate.js'
 
 /** 独立存储键：不与激活页等其他界面记忆键混用，升级时互不牵连。 */
 export const spaceModeStorageKey = 'dsh-buddy:space-mode:v1'
@@ -41,16 +44,20 @@ export function targetPanel(mode: SpaceMode): 'agent-hub' | null {
   return mode === 'team' ? 'agent-hub' : null
 }
 
-/** 中栏的「表面」：哪个视图、选中了哪个线程；只存恢复页面所需的最小信息。 */
+/** 中栏的「表面」：哪个视图、选中了哪个线程（空串 = 没有选中，P71）；只存恢复页面所需的最小信息。 */
 export interface SpaceSurface {
   view: PageView
   threadId: string
 }
 
 /** 视图白名单：存储里的值必须完全命中，避免旧版本或手改数据把页面弄成空白。 */
-const PAGE_VIEWS: readonly PageView[] = ['main', 'office', 'resource', 'project', 'inbox', 'activity', 'settings']
+const PAGE_VIEWS: readonly PageView[] = ['main', 'office', 'resource', 'project', 'inbox', 'activity', 'settings', 'memory']
 
-/** 读取上次表面；格式不对、视图不认识或线程为空都返回 null（按默认表面处理）。 */
+/**
+ * 读取上次表面；格式不对、视图不认识、线程只有空白都返回 null（按默认表面处理）。
+ * 线程是空串表示当时没有选中对话（P71）：停在设置、项目等页面时照常恢复那一页；
+ * 停在主视图又没有选中，等于默认表面，也返回 null。读出的旧 'team' 经 landingSurface 改成没有选中。
+ */
 export function readSurface(storage: StorageAccess): SpaceSurface | null {
   try {
     const raw = storage()?.getItem(spaceSurfaceStorageKey)
@@ -59,8 +66,9 @@ export function readSurface(storage: StorageAccess): SpaceSurface | null {
     if (typeof parsed !== 'object' || parsed === null) return null
     const { view, threadId } = parsed as { view?: unknown; threadId?: unknown }
     if (typeof view !== 'string' || !PAGE_VIEWS.includes(view as PageView)) return null
-    if (typeof threadId !== 'string' || threadId.trim() === '') return null
-    return { view: view as PageView, threadId }
+    if (typeof threadId !== 'string' || (threadId !== NO_THREAD && threadId.trim() === '')) return null
+    if (threadId === NO_THREAD && view === 'main') return null
+    return landingSurface(view as PageView, threadId)
   } catch {
     return null
   }

@@ -26,6 +26,8 @@ export function NewBotWizard(props: {
   dshSkillOptions: readonly DshSkillOption[]
   /** 模型目录读取失败的原因：下拉旁显示。 */
   modelOptionsError?: string | null
+  /** P73e：轻档是否可用，模板卡片底部据此写「轻档」或「标准档」；不传按可用处理。 */
+  lightAvailable?: boolean
   /** 执行 createBot；失败时把中文原因带回表单。 */
   onCreate: (input: Record<string, unknown>) => Promise<{ botId: string; warning?: string } | { error: string }>
   /** P52：从模板库批量添加；每位的失败原因都放在结果里，不靠抛错。 */
@@ -114,24 +116,24 @@ export function NewBotWizard(props: {
   }
 
   return (
-    <div className="ah-dialog-mask" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="新建队友">
+    <div className="ah-dialog-mask" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="新建员工">
       {/* 模板库和表单用同一个固定高度，切换时弹窗不跳。 */}
       <div className="ah-dialog ah-dialog-wide ah-wizard ah-wizard-picking">
         {showTemplates ? (
-          <BotTemplatePicker existingBots={props.existingBots} presetSkillOptions={props.presetSkillOptions}
+          <BotTemplatePicker existingBots={props.existingBots} presetSkillOptions={props.presetSkillOptions} lightAvailable={props.lightAvailable}
             submitting={submitting} error={error} onClose={props.onClose}
             onCustom={() => { setError(null); setMode('custom') }}
             onAdd={templates => void addFromTemplates(templates)} />
         ) : <>
           {/* 弹窗是独立表面（背景已 inert 剪枝），标题从 h2 起，大纲不跳级（WCAG 1.3.1）。 */}
           <header className="ah-wizard-head">
-            <h2>新建队友</h2>
+            <h2>新建员工</h2>
             <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onClose} disabled={submitting}>关闭</button>
           </header>
 
           <div className="ah-wizard-body">
             {full ? (
-              <p className="ah-settings-error" role="alert">已达 {MAX_TEAM_SIZE} 位在册队友上限。请先退役一位，再新建。</p>
+              <p className="ah-settings-error" role="alert">已达 {MAX_TEAM_SIZE} 位在册员工上限。请先归档一位，再新建。</p>
             ) : (
               <BotConfigFields draft={draft} onChange={set} modelOptions={props.modelOptions} modelOptionsError={props.modelOptionsError}
                 presetSkillOptions={props.presetSkillOptions} dshSkillOptions={props.dshSkillOptions}
@@ -143,11 +145,10 @@ export function NewBotWizard(props: {
           <div className="ah-template-foot">
             {/* 字段错误已经就地显示，这里只放提交失败这类通用错误，避免读屏念两遍。 */}
             {error ? <p className="ah-settings-error" role="alert">{error}</p> : null}
-            <p className="ah-wizard-note">加入后先试跑一次，消耗模型额度。</p>
             <footer className="ah-dialog-actions ah-template-actions">
               <button type="button" className="ah-btn" onClick={backToTemplates} disabled={full || submitting}>返回模板</button>
               <button type="button" className="ah-btn ah-btn-primary" onClick={() => void submit()} disabled={submitting || full}>
-                {submitting ? '创建中…' : '创建队友'}
+                {submitting ? '创建中…' : '创建员工'}
               </button>
             </footer>
           </div>

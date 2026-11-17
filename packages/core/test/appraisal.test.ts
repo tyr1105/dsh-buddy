@@ -7,6 +7,7 @@ import { createTestContext } from '../src/io/testing/create-test-context.js';
 import { resolveSettings } from '../src/config/defaults.js';
 import { AgendaItemSchema, PerceptSchema, InboxItemSchema, WakeTicketSchema } from '../src/model/index.js';
 import { botFixture, modelFixtures, id } from './model-fixtures.js';
+import { addSelfTurns, addWake } from './p76c-fixtures.js';
 
 const zero = { relevance: 0, novelty: 0, magnitude: 0, importance: 0, urgency: 0, anomaly: false };
 function setup() { const ctx = createTestContext(); ctx.store.table('bots').put(botFixture); return ctx; }
@@ -67,9 +68,13 @@ describe('候选与门槛', () => {
   });
   it('疲劳按自主回合预算，主人发起不计，零预算为满疲劳', () => {
     const ctx = setup(); const now = ctx.clock.now();
-    const wake = { ...WakeTicketSchema.parse(modelFixtures.WakeTicket.valid), ownerInitiated: true }; ctx.store.table('wakes').put(wake);
-    for (let i = 0; i < 3; i++) ctx.store.log('ledger').append({ id: `le_${i}`, who: botFixture.id, wakeId: null, tokens: 10, kind: 'turn', at: now });
-    ctx.store.log('ledger').append({ id: 'le_owner', who: botFixture.id, wakeId: wake.id, tokens: 10, kind: 'turn', at: now });
+    // 设为 6 只为让「3 个自己发起的回合」恰好得到 0.5（P76b 加的显式设置；默认值现在是 2，这条测的是比例，与默认值无关）。
+    ctx.settings.botDailyTurnBudget = 6;
+    // P76c：疲劳改数「员工自己发起的回合」（唤醒单口径），原来数账本行：3 个自己发起的计入，主人发起的 1 个不计（同前）；
+    // 新增：一件事里的 10 个回合也不计（原口径会计入，这正是 P76c 要改的）。
+    addSelfTurns(ctx, 3);
+    addWake(ctx, { ownerInitiated: true });
+    for (let i = 0; i < 10; i++) addWake(ctx, { jobId: 'job_0000000001' });
     expect(fatigueFor(ctx, botFixture.id, now)).toBe(0.5);
     expect(buildCandidate(ctx, { botId: botFixture.id, kind: 'percept', score: 0.8, summary: '变化' }).reason.threshold).toBeCloseTo(0.75);
     ctx.settings.botDailyTurnBudget = 0; expect(fatigueFor(ctx, botFixture.id, now)).toBe(1);

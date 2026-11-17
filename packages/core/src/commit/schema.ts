@@ -16,13 +16,23 @@ export const CommitNextThinkSchema = NextThinkSchema.extend({ at: FlexibleTimeSc
         }
     }
 });
-export const CommitInputSchema = CommitSchema.omit({ id: true, wakeId: true, botId: true, createdAt: true })
-    .extend({ nextThink: CommitNextThinkSchema }).superRefine((value, ctx) => {
+/**
+ * 交账输入的构造函数。
+ * P72j J1：总管名下有待确认约定时，约定卡就是给主人的提问，needs_owner 不再要求 ownerQuestion；
+ * 所以「needs_owner 必须带 ownerQuestion」这一条做成开关，其余校验两种完全一致。
+ * P72j J3：reply、report、blocker、ownerQuestion 允许为 null 的字段，模型省略时等同于 null
+ * （真模型常省略它们，旧写法会报「report：必须是文字」）；传了错误类型仍然报错。
+ */
+function buildCommitInputSchema(needsOwnerRequiresQuestion: boolean) {
+    return CommitSchema.omit({ id: true, wakeId: true, botId: true, createdAt: true })
+    .extend({ nextThink: CommitNextThinkSchema,
+        blocker: CommitSchema.shape.blocker.default(null), ownerQuestion: CommitSchema.shape.ownerQuestion.default(null),
+        reply: CommitSchema.shape.reply.default(null), report: CommitSchema.shape.report.default(null) }).superRefine((value, ctx) => {
     if (!value.summary.trim())
         ctx.addIssue({ code: 'custom', path: ['summary'], message: '交账摘要不能为空白' });
     if (value.outcome === 'blocked' && !value.blocker?.trim())
         ctx.addIssue({ code: 'custom', path: ['blocker'], message: 'blocked 必须说明阻碍' });
-    if (value.outcome === 'needs_owner' && !value.ownerQuestion)
+    if (needsOwnerRequiresQuestion && value.outcome === 'needs_owner' && !value.ownerQuestion)
         ctx.addIssue({ code: 'custom', path: ['ownerQuestion'], message: 'needs_owner 必须填写给主人提问' });
     const q = value.ownerQuestion;
     if (q) {
@@ -37,4 +47,9 @@ export const CommitInputSchema = CommitSchema.omit({ id: true, wakeId: true, bot
                 ctx.addIssue({ code: 'custom', path: ['ownerQuestion', key], message: '提问及理由不能为空白' });
     }
 });
+}
+/** 默认交账输入：needs_owner 必须带 ownerQuestion。 */
+export const CommitInputSchema = buildCommitInputSchema(true);
+/** 宽松版（hub_commit 工具入口与「总管有待确认约定」的交账用）：needs_owner 可以不带 ownerQuestion，是否放行由 processCommit 按总管的约定状态裁定。 */
+export const CommitToolSchema = buildCommitInputSchema(false);
 export type CommitInput = z.infer<typeof CommitInputSchema>;

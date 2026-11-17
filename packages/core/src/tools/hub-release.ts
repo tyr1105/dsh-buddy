@@ -1,4 +1,7 @@
-/** 释放工具只能解除自己的资源认领，已到期的锁按已经释放处理。 */
+/**
+ * 释放工具只能解除自己的资源认领，已到期的锁按已经释放处理。
+ * P74b 起不再注册为工具（与 hub_claim 一起移除）；文件保留，认领表与过期处理仍在用。
+ */
 import { z } from 'zod';
 import { release } from '../peer/claims.js';
 import { defineTool, requiredText } from './common.js';

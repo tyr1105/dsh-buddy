@@ -1,18 +1,24 @@
-/** 日报只拼装现有事实，不唤醒模型；按本地日统计并将安静时段或预算拦下的内容补给主人。 */
+/**
+ * P76c：日报不再推送（见文件末尾说明）；本文件只留拼装正文的 buildDigest 与读旧记录的 storedDigests，P76 起不再被调用。
+ * 日报只拼装现有事实，不唤醒模型；按本地日统计并将安静时段或预算拦下的内容补给主人。
+ * P71（主人决定砍掉团队全景）：日报不再写进任何对话线程，正文记在审计日志（digest_generated），
+ * 主人通过系统通知收到；旧版写在团队线程里、还没推送的日报照样补推，保证升级时不丢一天。
+ */
 import type { HubContext } from '../engine/context.js';
 import { parseInput } from '../engine/validation.js';
 import { timestamp } from '../model/primitives.js';
 import { OUTCOME_LABELS, QUOTA_LIGHT_LABELS, WAKE_KIND_LABELS } from '../model/enums.js';
-import { formatDuration, isInQuietHours, localDateKey, localParts, startOfLocalDay } from '../util/time.js';
+import { formatDuration, localDateKey, localParts, startOfLocalDay } from '../util/time.js';
 import { isExpectationCheckDay } from '../util/expectation-calendar.js';
 import { expectationEffectiveAt, isExpectationStartedOnDay } from '../util/expectation-effective.js';
 import { formatExpectation } from '../util/expectation-text.js';
 import { approvalActionText } from '../util/action-text.js';
 import { quotaProtectionText } from '../quota/window.js';
-import { readAuditDetail, writeOutreachAudit } from './audit.js';
-import { postThread } from './thread.js';
+import { readAuditDetail } from './audit.js';
 import { pushHistory, type PushAudit } from './push.js';
 import { optionalMessageText } from '../util/text.js';
+// P74r16c 第 7 节：日报里的 token 数（本日已用、上限）用换算后的写法（例如 1.64M/5M），回合数不换算。
+import { formatTokenCount } from '../util/token-format.js';
 import { proposalAnswer } from './inbox-options.js';
 /** 计数按输入事实聚合，零条也显示，主人可以区分“没有变化”和日报丢失。 */
 function counts(values: string[]): string {
@@ -35,7 +41,7 @@ function deferredPushText(ctx: HubContext, row: PushAudit): string {
     const firstSentence = row.body.trim().match(/^.*?(?:[。！？!?]|\.(?=\s|$)|[\r\n]|$)/u)?.[0].trim() ?? '';
     const summary = Array.from(firstSentence).slice(0, ctx.settings.c03.deferredReportMaxChars).join('');
     const name = row.botId ? ctx.store.table('bots').get(row.botId)?.name : null;
-    return `- ${name ?? '队友'}的汇报：${summary}（${reason}）`;
+    return `- ${name ?? '员工'}的汇报：${summary}（${reason}）`;
 }
 /** 从昨日回合、等待事项和通知审计拼装日报，完整保留没有变化和仍未解决的事实。 */
 export function buildDigest(ctx: HubContext, now: number): string {
@@ -117,7 +123,7 @@ export function buildDigest(ctx: HubContext, now: number): string {
     const downtime = ctx.store.table('downtime').list(row => row.to >= yesterday && row.from <= now)
         .reduce((total, row) => total + Math.max(0, Math.min(row.to, now) - Math.max(row.from, yesterday)), 0);
     lines.push(`停机时长：${formatDuration(downtime)}`);
-    lines.push(`额度用量：${quota ? `${quota.botTurns}/${quota.turnLimit} 回合，${quota.botTokens}${quota.tokenLimit === null ? '' : `/${quota.tokenLimit}`} token，${QUOTA_LIGHT_LABELS[quota.light]}` : '尚未使用'}`);
+    lines.push(`额度用量：${quota ? `${quota.botTurns}/${quota.turnLimit} 回合，${formatTokenCount(quota.botTokens)}${quota.tokenLimit === null ? '' : `/${formatTokenCount(quota.tokenLimit)}`} token，${QUOTA_LIGHT_LABELS[quota.light]}` : '尚未使用'}`);
     const deferred = pushHistory(ctx).filter(row => row.at >= yesterday && row.at <= now && ['deferred_quiet', 'over_budget'].includes(row.result))
         // 曾被推迟的旧空汇报也不能从审计正文重新进入日报，其他通知保留原语义。
         .filter(row => row.title !== '机器人汇报' || optionalMessageText(row.body) !== null);
@@ -134,48 +140,37 @@ export function buildDigest(ctx: HubContext, now: number): string {
     }
     return lines.join('\n');
 }
-const digestLocks = new WeakMap<HubContext, Promise<unknown>>();
-// 成功日报是不可撤销的事实；当日后续 tick 不必反复扫描全部审计正文。
-const sentDays = new WeakMap<HubContext, string>();
-/** 每天最多一条线程日报与一次成功通知；通知失败时复用已写线程而不重新生成内容。 */
-export async function maybeSendDigest(ctx: HubContext, now: number): Promise<string | null> {
-    now = parseInput(timestamp, now, '日报时间');
-    const today = localDateKey(now, ctx.settings.timezone);
-    if (sentDays.get(ctx) === today) return null;
-    const previous = digestLocks.get(ctx) ?? Promise.resolve();
-    const operation = previous.catch(() => undefined).then(async () => {
-        const p = localParts(now, ctx.settings.timezone);
-        const [hour, minute] = ctx.settings.digestAt.split(':').map(Number) as [
-            number,
-            number
-        ];
-        const day = localDateKey(now, ctx.settings.timezone);
-        const due = p.hour * 60 + p.minute >= hour * 60 + minute;
-        const sent = new Set(ctx.store.log('audit').all().filter(row => row.action === 'digest_sent')
-            .map(row => readAuditDetail<{ day: string }>(row.detail)?.day));
-        // 到点就把事实写进线程；跨午夜只推迟通知，不推迟或丢掉日报本身。
-        let current = ctx.store.log('thread').all().find(row => row.kind === 'digest' && row.refId === `digest:${day}`);
-        if (due && !current && !sent.has(day))
-            current = postThread(ctx, { thread: 'team', from: 'hub', kind: 'digest', text: buildDigest(ctx, now), refId: `digest:${day}` });
-        if (isInQuietHours(now, ctx.settings.quietHours, ctx.settings.timezone)) return null;
-        const pending = ctx.store.log('thread').all().filter(row => row.kind === 'digest' && row.refId?.startsWith('digest:')
-            && !sent.has(row.refId.slice('digest:'.length))).sort((a, b) => a.createdAt - b.createdAt)[0];
-        if (!pending) {
-            if (sent.has(day)) sentDays.set(ctx, day);
-            return null;
-        }
-        const digestDay = pending.refId!.slice('digest:'.length);
-        const digest = pending.text;
-        // 日报直接调用宿主，免打扰已检查且不计入单推预算。
-        await ctx.host.notify({ title: `团队日报 ${digestDay}`, body: digest, level: 'P2', botId: null });
-        writeOutreachAudit(ctx, 'digest_sent', { day: digestDay }, 'hub', now);
-        if (digestDay === day) sentDays.set(ctx, day);
-        for (const item of ctx.store.table('inbox').list(row => row.type === 'question' && row.status === 'open' && now - row.createdAt >= ctx.settings.questionReminderMs)) {
-            if (!reminded(ctx, item.id))
-                writeOutreachAudit(ctx, 'question_digest_reminded', { id: item.id }, 'hub', now);
-        }
-        return digest;
-    });
-    digestLocks.set(ctx, operation);
-    return operation;
+/** 一份已生成的日报：哪一天的、正文、什么时候生成的。 */
+export interface StoredDigest {
+    day: string;
+    text: string;
+    at: number;
 }
+/**
+ * 读出所有已生成的日报，按生成时间从早到晚排列。
+ * 两个来源：P71 起记在审计里的 digest_generated；P71 之前写在团队线程里的日报消息（旧数据只读不删）。
+ * 同一天两边都有时以先生成的为准，避免升级当天重复推送。只读存储，所以只要 store（仿真世界也能直接传）。
+ */
+export function storedDigests(ctx: Pick<HubContext, 'store'>): StoredDigest[] {
+    const byDay = new Map<string, StoredDigest>();
+    const add = (row: StoredDigest) => {
+        const existing = byDay.get(row.day);
+        if (!existing || row.at < existing.at) byDay.set(row.day, row);
+    };
+    // 旧数据：团队线程里的日报消息，refId 形如 digest:2026-11-05。
+    for (const row of ctx.store.log('thread').all()) {
+        if (row.kind === 'digest' && row.refId?.startsWith('digest:'))
+            add({ day: row.refId.slice('digest:'.length), text: row.text, at: row.createdAt });
+    }
+    // 新数据：审计里的 digest_generated，正文和日期都在 detail 里；读不出来的旧行直接跳过。
+    for (const row of ctx.store.log('audit').all()) {
+        if (row.action !== 'digest_generated') continue;
+        const detail = readAuditDetail<{ day?: unknown; text?: unknown }>(row.detail);
+        if (typeof detail?.day === 'string' && typeof detail.text === 'string')
+            add({ day: detail.day, text: detail.text, at: row.at });
+    }
+    return [...byDay.values()].sort((a, b) => a.at - b.at);
+}
+// P76c：原来这里「每天到 digestAt 生成日报并推送通知」的函数已删除：tick 里的「日报」一项取消，日报不再推送，
+// 旧的审计记录（digest_generated、digest_sent）保留在日志里，storedDigests 仍可读出它们。
+// buildDigest、storedDigests 在 core 里保留、仅供读旧数据和测试，P76 起不再被调用（packages/plugin 没有引用它们）。

@@ -43,6 +43,8 @@ async function engineWithBot() {
   })
   if (!created.ok || created.data === undefined) throw new Error(created.ok ? '没有返回机器人数据' : created.error)
   const botId = created.data.id
+  // P72h H3：新建员工不再自动试跑；由主人发一句话叫醒它，得到一个正在 running 的回合和会话。
+  await parts.hub.api.pokeBot(botId)
   const bot = await parts.hub.api.bot(botId)
   return { ...parts, botId, sessionId: bot.profile.sessionId! }
 }
@@ -81,7 +83,7 @@ describe('D06 2/3：interruptBot 与 lifecycleAction 经路由命令走 core', (
   it('interruptBot 交给 core：取消在跑回合、写系统线程消息（core 做，插件不再自己写）', async () => {
     const engine = await engineWithBot()
     const facade = new RealHubFacade(engine.hub)
-    // 新建机器人的试跑唤醒正在 running（FakeHost 不回报合事件，正好保持在跑）。
+    // 主人发话叫醒的回合正在 running（FakeHost 不回报合事件，正好保持在跑）。
     const result = await facade.command('interruptBot', { botId: engine.botId })
     expect(result.ok).toBe(true)
     expect((result as { data?: { canceledBy?: string } }).data?.canceledBy).toBe('owner')
@@ -114,10 +116,10 @@ describe('D06 2/3：interruptBot 与 lifecycleAction 经路由命令走 core', (
     expect(paused.ok).toBe(true)
     expect(((paused as { data?: { lifecycle?: string } }).data)?.lifecycle).toBe('paused')
     const resumed = await facade.command('lifecycleAction', { botId: engine.botId, action: 'resume' })
-    expect(((resumed as { data?: { lifecycle?: string } }).data)?.lifecycle).toBe('probation')
+    expect(((resumed as { data?: { lifecycle?: string } }).data)?.lifecycle).toBe('active')
     const promoted = await facade.command('lifecycleAction', { botId: engine.botId, action: 'promote' })
-    // 刚建的机器人试岗不满 3 天：core 拒绝并说明还差几天（以 core 的错误为准）。
+    // P73a：没有试岗这一步，core 拒绝并说明（以 core 的错误为准）。
     expect(promoted.ok).toBe(false)
-    expect((promoted as { error: string }).error).toContain('天')
+    expect((promoted as { error: string }).error).toContain('已没有试岗这一步')
   })
 })

@@ -1,19 +1,21 @@
 /** 唤醒包把本轮理由和边界带入工作会话；外部摘要在所有出现位置都包进不可信围栏。 */
 import type { HubContext } from '../engine/context.js';
+import type { ThreadMessage } from '../model/outreach.js';
 import { parseInput } from '../engine/validation.js';
 import { BotSchema, QueueEntrySchema, WakeTicketSchema, type Bot, type QueueEntry, type WakeTicket, type Percept } from '../model/index.js';
-import { MBTI_DEFAULTS, V2_DEFAULTS, turnLimitsFor } from '../config/defaults.js';
+import { JOB_DEFAULTS, MBTI_DEFAULTS, V2_DEFAULTS, turnLimitsFor } from '../config/defaults.js';
 import { mbtiPrompt } from '../model/mbti.js';
 import { formatAgo, formatDuration, formatShort, isInQuietHours, localDateKey, localParts, weekdayLabel } from '../util/time.js';
 import { byteLength, truncateBytes } from '../util/text.js';
-import { readMemorySummary } from '../memory/index.js';
 import { readableResources } from '../org/access.js';
 import { RESOURCE_KIND_LABELS } from '../model/resource.js';
-import { routineIndex } from '../routines/index.js';
 import { teamSummary } from '../peer/index.js';
-import { pushesLeft } from '../outreach/push.js';
 import { effectiveAutonomy } from '../tools/common.js';
 import { fitSections, type PacketSection } from './sections.js';
+import { AGREEMENTS_KEY, AGREEMENTS_TITLE, CHIEF_RULES_KEY, CHIEF_RULES_TEXT, CHIEF_RULES_TITLE, buildAgreementsBody, chiefRulesAdjust, wantsChiefSections } from './chief-packet.js';
+import { TEAM_SECTION_KEY, TEAM_SECTION_TITLE, buildTeamBody } from './team-section.js';
+import { JOB_SECTION_KEY, JOB_SECTION_TITLE, buildJobBody } from './job-section.js';
+import { SKILL_SECTION_KEY, buildSkillSections } from './skill-section.js';
 import { knowledgePacketSection } from '../knowledge/index.js';
 import { buildProjectTasksSection } from './project-tasks.js';
 import { buildProjectContextSection } from './project-context.js';
@@ -23,11 +25,19 @@ import { approvalModelSummary } from '../util/owner-text.js';
 import { hasApprovalDecision } from '../util/approval-candidate.js';
 import { botMbti } from '../personality/profile.js';
 import { personalityBehavior, personalityInstruction } from '../personality/behavior.js';
+import { pendingConfirmation } from '../memory/owner-turn.js';
+import { questionsWithdrawnBy, withdrawnQuestionNote } from '../outreach/stale-questions.js';
 const variants = { regular: '常规', light_check: '轻复查', reflection: '复盘', catch_up: '补课', trial: '试跑', teach: '教学' };
-const rules = `1. 只选一件最重要的事做：主人要求 > 对人承诺到期 > 资产异常 > 推进目标 > 机会 > 维护。先做不依赖主人的部分。
-2. 别人看得见、碰真实数据、不可逆、花钱的动作交 hub_outbox_submit 或审批闸门，不得绕过。
+/**
+ * 给队友的规矩。A-4（S12）："直接做，不用申请"改成沙箱开没开都成立的说法（中心让等主人确认时就等，不换写法重试）；
+ * L0 用不了 hub_project_put，给它的规矩里不提这个工具，只说产出放进项目文件夹。
+ */
+const baseRulesFor = (bot: Bot): string => `1. 只选一件最重要的事做：主人要求 > 对人承诺到期 > 资产异常 > 推进目标 > 机会 > 维护。先做不依赖主人的部分。
+2. 在自己文件夹里跑命令、写文件、自测，一般直接做，不用申请。中心让你等主人确认时就等，不要换写法重试。${effectiveAutonomy(bot) === 'L0' ? '要交给项目的产出，放进项目文件夹。' : '要交给项目的产出，用 hub_project_put 放进项目文件夹，不用批准。'}读同伴或项目里的文件，直接读路径。往工作区外写、联网发数据、推代码、动系统设置这类对外动作，别人看得见、碰真实数据、不可逆、花钱的，交 hub_outbox_submit 或审批闸门，会请主人确认，申请时写清为什么，不得绕过。
 3. 不能提问后等回复；需要决定的写进 ownerQuestion，一次最多一个。
 4. 最后一步必须 hub_commit：outcome、summary、worldChanges、evidence、verification、nextThink（写理由，只约下一次）；主人发来消息时 reply 必填。只交计划没有交付物记 no_change。`;
+/** 总管的规矩里有两条要改写（P72d）：对齐中的事确认前不开工、需要主人定的事放进约定；其他员工原文不动。 */
+const rulesFor = (bot: Bot): string => bot.role === 'chief' ? chiefRulesAdjust(baseRulesFor(bot)) : baseRulesFor(bot);
 /** 提醒使用与工具相同的实际等级，避免试岗机器人把等待主人接受的提议说成已生效。 */
 function autonomyRule(bot: Bot): string {
     const autonomy = effectiveAutonomy(bot);
@@ -36,6 +46,28 @@ function autonomyRule(bot: Bot): string {
     if (autonomy === 'L0')
         return '你现在是 L0：只观察，不能新建目标与关注，不要把尚未生效的安排汇报为『已设好』。';
     return `你现在是 ${autonomy}：已有志向下的新目标与权限内的新关注可以直接生效，是否生效以工具返回为准；未获主人同意的提议仍未生效，汇报时区分『已提议』和『已设好』。`;
+}
+/** P76p：把主人或总管的一句话压成一行并截到 max 个字（唤醒包里不重复整段）。 */
+function clipOneLine(text: string, max: number): string {
+    return [...text.replace(/\s*\r?\n\s*/g, ' ').trim()].slice(0, max).join('');
+}
+/** P76p：总管上一轮回复的最后一句问话（只写这一句，不整段重复）。 */
+function askTail(text: string): string {
+    const last = text.split(/[。；;！!？?\n]+/u).map(item => item.trim()).filter(item => item !== '').at(-1) ?? text;
+    return clipOneLine(last, 80);
+}
+/**
+ * P76p：这一回合主人消息里最新的一条（中心判断「是不是在回答上一问」用）。
+ * 主人原话有两个来源：证据里直接是线程消息编号的（directOwner），以及感知指向线程消息的（owner）。
+ */
+function latestOwnerMessage(messages: readonly ThreadMessage[], directOwner: readonly ThreadMessage[], owner: readonly Percept[]): ThreadMessage | null {
+    const rows = new Map<string, ThreadMessage>();
+    for (const row of directOwner) rows.set(row.id, row);
+    for (const percept of owner) {
+        const found = messages.find(m => (m.id === percept.location || (percept.kind === 'inbox_reply' && m.refId === percept.location)) && m.from === 'owner');
+        if (found !== undefined) rows.set(found.id, found);
+    }
+    return [...rows.values()].sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
 }
 /**
  * 性格段描述表达与普通自主行为；未设置时整节省略，不让空字段占唤醒包字节。
@@ -87,7 +119,7 @@ export async function buildWakePacket(ctx: HubContext, rawBot: Bot, rawEntry: Qu
     };
     const newSession = !bot.sessionId || !ticket.sessionId || ticket.sessionId !== bot.sessionId
         || (bot.sessionStartedAt !== null && now - bot.sessionStartedAt >= ctx.settings.sessionMaxAgeMs);
-    add('header', '', `${newSession ? '这是你的新工作会话。你的身份与规矩在 AGENTS.md，目标、议程、关注在 mind/，长期记忆在 memory/MEMORY.md。\n\n' : ''}【中心通知】这不是主人发的消息，是 Agent 中心按规则叫醒你。唤醒单 ${ticket.id}（${variants[ticket.variant]}）\n现在：${beijingTime(now)}（北京时间）`);
+    add('header', '', `${newSession ? '这是你的新工作会话。你的身份与规矩在 AGENTS.md，目标、议程、关注在 mind/，技能在 .agents/skills/。\n\n' : ''}【中心通知】这不是主人发的消息，是 Agent 中心按规则叫醒你。唤醒单 ${ticket.id}（${variants[ticket.variant]}）\n现在：${beijingTime(now)}（北京时间）`);
     const percepts = entry.reason.evidence.map(id => ctx.store.table('percepts').get(id)).filter((p): p is Percept => p !== null && p.botId === bot.id);
     const evidence = entry.reason.evidence.map(id => ({ id, ...packetEvidence(ctx, bot.id, id, now) }));
     // 兼容旧候选把外部摘要直接复制为理由的情况：中心解释与原始引文拆开，不能把来源文本升级为指令。
@@ -123,17 +155,67 @@ export async function buildWakePacket(ctx: HubContext, rawBot: Bot, rawEntry: Qu
         const directOwner = ctx.store.log('thread').all().filter(m => m.from === 'owner' && entry.reason.evidence.includes(m.id) && (m.thread === bot.id || m.thread === 'team' || (entry.topicId != null && m.thread === entry.topicId)));
         if (owner.length || directOwner.length) {
             const messages = ctx.store.log('thread').all();
-            add('owner', '## 主人对你说（这是主人亲手写的，可以当作主人的要求）', [...new Set([...directOwner.map(m => m.text), ...owner.map(p => messages.find(m => (m.id === p.location || (p.kind === 'inbox_reply' && m.refId === p.location)) && m.from === 'owner')?.text ?? p.summary)])].join('\n'));
+            const lines = [...new Set([...directOwner.map(m => m.text), ...owner.map(p => messages.find(m => (m.id === p.location || (p.kind === 'inbox_reply' && m.refId === p.location)) && m.from === 'owner')?.text ?? p.summary)])];
+            // P76p：总管这一回合的主人是简短确认（是、对、好、可以），并且上一轮是待确认问句时，把中心的判断写进唤醒包。
+            // 为什么要有这一行：唤醒包里只有主人这一句「是。」，总管看不到自己上一句追问，P76l 实测里它要求主人再说一遍。
+            const mainOwner = bot.role === 'chief' ? latestOwnerMessage(messages, directOwner, owner) : null;
+            const confirmation = mainOwner === null ? null : pendingConfirmation(ctx, ticket, mainOwner, bot.id);
+            if (mainOwner !== null && confirmation !== null) {
+                lines.push(`中心判断：主人这句「${clipOneLine(mainOwner.text, 40)}」是在回答你上一条回复最后那一问「${askTail(confirmation.ask.text)}」，不是在结束对话。要确认的是你问之前主人说的「${clipOneLine(confirmation.earlier.text, 120)}」；这一回合按这句话记下来。`);
+            }
+            // P85：这一回合的主人原话撤回了这位员工更早的提问时，写明是哪一条，让员工知道以主人这句话为准、不再等那个问题的答案。
+            // 主人原话的两个来源（证据直接是线程消息编号的，和感知指向线程消息的）都要看；只看这位员工自己的私聊里最新的一条。
+            const ownerMessages = [...directOwner, ...owner.map(p => messages.find(m => m.id === p.location && m.from === 'owner'))]
+                .filter((m): m is ThreadMessage => m !== undefined && m.thread === bot.id);
+            const privateOwner = ownerMessages.sort((a, b) => b.createdAt - a.createdAt)[0];
+            if (privateOwner)
+                for (const item of questionsWithdrawnBy(ctx, bot.id, privateOwner))
+                    lines.push(withdrawnQuestionNote(item.title));
+            add('owner', '## 主人对你说（这是主人亲手写的，可以当作主人的要求）', lines.join('\n'));
         }
         add('goals', '## 你的志向与目标', [
             ...ctx.store.table('aspirations').list(a => a.botId === bot.id && a.status === 'active').map(a => `志向：${a.text}`),
             ...ctx.store.table('goals').list(g => g.botId === bot.id && g.status === 'active').map(g => `${g.title}；完成标准：${g.doneWhen}；周期剩余：${g.periodEndsAt === null ? '不限' : formatDuration(Math.max(0, g.periodEndsAt - now))}；距上次进展 ${formatDuration(Math.max(0, now - g.lastProgressAt))}`),
         ].join('\n') || '暂无');
         add('agenda', '## 你的议程（未完成，按优先级）', agenda.map(a => `[${a.id}] ${a.title}（${a.kind}，${a.dueAt === null ? '等事件' : formatShort(a.dueAt, now, tz)}，放弃条件：${a.abandonWhen}）`.replace(/\r?\n/g, ' / ')).join('\n') || '暂无', agenda.some(a => a.source === 'peer'));
-        add('memory', '## 记忆摘要', await readMemorySummary(ctx, bot));
-        add('routines', '## 你会的套路', routineIndex(ctx, bot.id));
-        add('owner-now', '## 主人现在', `最近活动：${ctx.runtime.ownerActiveAt === null ? '未知' : formatAgo(ctx.runtime.ownerActiveAt, now)}；${isInQuietHours(now, ctx.settings.quietHours, ctx.settings.timezone) ? '免打扰中' : '非免打扰'}；今天还能单推 ${pushesLeft(ctx, bot.id, now)} 条。`);
-        add('rules', '## 规矩', `${rules}\n5. ${autonomyRule(bot)}`);
+        // P75f：「记忆摘要」「你会的套路」两段删除：长期记忆拆入记忆与技能库，各自有去处。
+        add('owner-now', '## 主人现在', `最近活动：${ctx.runtime.ownerActiveAt === null ? '未知' : formatAgo(ctx.runtime.ownerActiveAt, now)}；${isInQuietHours(now, ctx.settings.quietHours, ctx.settings.timezone) ? '免打扰中' : '非免打扰'}；找主人的事只有四类会推送通知：要他确认的约定改动；花钱、对外发布、不可撤销的动作；三轮核对不过或做不下去；长时间没有进展。`);
+        add('rules', '## 规矩', `${rulesFor(bot)}\n5. ${autonomyRule(bot)}`);
+        // P72d：总管守则和约定段紧跟规矩；轻复查、复盘不带。守则不可截断，两段的字节数另计、不占常规预算。
+        if (wantsChiefSections(bot, ticket.variant)) {
+            add(CHIEF_RULES_KEY, CHIEF_RULES_TITLE, CHIEF_RULES_TEXT);
+            add(AGREEMENTS_KEY, AGREEMENTS_TITLE, buildAgreementsBody(ctx, bot, entry, now));
+            // P73d：「组队」段紧跟约定段，同样不计入原有预算（自身上限 1.5 KB，可截断）；总管守则不受它影响。
+            const teamBody = buildTeamBody(ctx, bot, entry);
+            if (teamBody !== '')
+                add(TEAM_SECTION_KEY, TEAM_SECTION_TITLE, teamBody);
+        }
+        // P74c：「你手上的事」段（所有员工都可能有；复盘不带）。自带 4 KB 上限、可截断、不计入原有预算，总管守则和约定段不受它影响。
+        // 组装出错只记日志、整段省略，不能让一件事的问题挡住这位员工的整个唤醒。
+        // P75g：技能类回合（复盘等）的「本轮复盘」段：出处、技能与「怎样提交」说明。自带 12 KB 上限、
+        // 自行逐级压缩、不计入原有预算（同「你手上的事」段的做法）。组装出错只记日志、整段省略。
+        // 复盘回合不带「你手上的事」段、不带项目任务段（沿用 reflection 变体原有的取舍）。
+        // P75i：学习唤醒（变体 teach）带「学习」段，整理唤醒（变体 reflection）带「每周整理」段；
+        // 段对象整个放进去（学习段、学习核对段带不可信围栏的会话摘要，在 quote 与 suffix 里）。
+        if (ticket.variant === 'reflection' || ticket.variant === 'teach') {
+            try {
+                // P75h：核对唤醒有核对段，评审员的合并唤醒是核对段加复盘段，改写唤醒是改写段（见 skill-section.ts）。
+                sections.push(...buildSkillSections(ctx, bot, entry.subjectKey ?? null, ticket.startedAt));
+            }
+            catch (error) {
+                ctx.logger.error('唤醒包的「本轮复盘」段组装失败，本次省略', error);
+            }
+        }
+        if (ticket.variant !== 'reflection') {
+            try {
+                const jobBody = await buildJobBody(ctx, bot, entry, ticket);
+                if (jobBody !== '')
+                    add(JOB_SECTION_KEY, JOB_SECTION_TITLE, jobBody);
+            }
+            catch (error) {
+                ctx.logger.error('唤醒包的「你手上的事」组装失败，本次省略', error);
+            }
+        }
         addPersonality(ctx, bot, add);
         // 完整包与轻复查保持同一资料口径，避免队友在两种回合看到不同的可读范围。
         addResources(ctx, bot, add);
@@ -169,10 +251,20 @@ export async function buildWakePacket(ctx: HubContext, rawBot: Bot, rawEntry: Qu
         if (bot.role === 'chief')
             add('team', '## 团队现在', teamSummary(ctx), true);
     }
-    add('limits', '## 本次上限', `最多 ${limits.steps} 步、${limits.durationMs / 60000} 分钟、约 ${limits.tokens} token；到线会被要求收口。`);
+    // P74r11：一件事里的回合（唤醒单带 jobId）不限步数、不发收口提醒，只有 60 分钟的总时长保护。
+    add('limits', '## 本次上限', ticket.jobId
+        ? `本回合不限步数，做完这一步就交账；超过 ${JOB_DEFAULTS.CHAIN_TURN_HARD_MS / 60000} 分钟中心会结束本回合。`
+        : `最多 ${limits.steps} 步、${limits.durationMs / 60000} 分钟、约 ${limits.tokens} token；到线会被要求收口。`);
     // P63：主题回合里主人的原话不占预算，长消息也一字不截；其余内容仍按上限压缩。
     const ownerWords = entry.topicId ? sections.find(s => s.key === 'owner') : undefined;
-    const packetLimit = ctx.settings.wakePacketMaxBytes + (ownerWords ? byteLength(ownerWords.body) : 0);
+    // P72d：总管守则与约定段同样不占预算（守则是固定文字不能被挤掉，约定段自带 3 KB 上限）；
+    // 额外算上标题和段间空行的字节，保证它们加进来之后其他内容可用的空间不变。
+    // P74c：「你手上的事」段同样不占预算（自带 4 KB 上限）。
+    // P75i：技能段可能带围栏的会话摘要（quote）和围栏之后的文字（suffix），一并计入额外的字节（围栏标记按 40 字节算）。
+    const chiefExtra = sections.filter(s => s.key === CHIEF_RULES_KEY || s.key === AGREEMENTS_KEY || s.key === TEAM_SECTION_KEY || s.key === JOB_SECTION_KEY || s.key === SKILL_SECTION_KEY)
+        .reduce((sum, s) => sum + byteLength(s.title) + 1 + byteLength(s.body) + 2
+            + (s.quote === undefined ? 0 : byteLength(s.quote) + 40 + byteLength(s.suffix ?? '')), 0);
+    const packetLimit = ctx.settings.wakePacketMaxBytes + (ownerWords ? byteLength(ownerWords.body) : 0) + chiefExtra;
     const packet = fitSections(sections, packetLimit, ctx.settings.c03.packetAgendaKeep, ctx.settings.c03.packetEvidenceKeep);
     if (ctx.store.table('wakes').get(ticket.id))
         ctx.store.table('wakes').patch(ticket.id, { packetBytes: byteLength(packet) });
@@ -180,36 +272,15 @@ export async function buildWakePacket(ctx: HubContext, rawBot: Bot, rawEntry: Qu
 }
 /** 各变体仅追加本轮必要信息，教学记录属于外部会话内容，不拥有主人指令的权限。 */
 function appendVariant(ctx: HubContext, bot: Bot, entry: QueueEntry, ticket: WakeTicket, now: number, add: (key: string, title: string, body: string, untrusted?: boolean) => void): void {
-    if (ticket.variant === 'reflection') {
-        add('variant', '## 本轮复盘', '复盘不改中心状态与对外资源；可按普通规则写 work/、memory/MEMORY.md 与 playbooks/；最后调用 hub_reflect_commit。核对教训、关注变更、套路与节奏建议。');
-        add('history', '## 最近 7 天交账', ctx.store.table('commits').list(c => c.botId === bot.id && c.createdAt >= now - ctx.settings.c03.reflectionHistoryMs && c.createdAt <= now).map(c => {
-            const wake = ctx.store.table('wakes').get(c.wakeId);
-            return `${formatShort(c.createdAt, now, 'Asia/Shanghai')} | ${wake?.reason.kind ?? '未知'} | ${c.outcome} | ${wake ? formatDuration(Math.max(0, (wake.endedAt ?? c.createdAt) - wake.startedAt)) : '未知'} | ${wake?.tokens ?? 0} token | ${c.summary}`;
-        }).join('\n') || '暂无交账', true);
-    }
+    // P75f：复盘变体的「本轮复盘」「最近 7 天交账」两段删除（新的复盘唤醒包由 P75g 写）。
     if (ticket.variant === 'catch_up') {
         const downtime = entry.reason.evidence.map(id => ctx.store.table('downtime').get(id)).filter(d => d !== null);
         add('variant', '## 停机补课', `DSH 停了 ${formatDuration(downtime.reduce((sum, d) => sum + d.to - d.from, 0))}；停机期间合并的感知见变化摘要。先对账再选一件事。`);
     }
     if (ticket.variant === 'trial')
         add('variant', '## 第一次试跑', '先读自己的 AGENTS.md，用 hub_watch_propose / hub_agenda_upsert / hub_goal_upsert 提交起步的关注与目标、安排议程，是否生效以工具返回为准。在 reply 里用三句以内向主人介绍：我是谁、打算怎么盯、什么时候找你。');
-    if (ticket.variant === 'teach') {
-        add('variant', '## 主人教你一招', '读取下列记录，用 hub_routine_save 写成套路，并在 reply 里复述步骤请主人纠正。');
-        const audit = ctx.store.log('audit').all().find(a => a.action === 'teach_context' && a.actor === bot.id && entry.reason.evidence.includes(a.id));
-        let digest = '未找到教学记录';
-        if (audit) {
-            try {
-                const data = JSON.parse(audit.detail) as {
-                    note: string;
-                    digest: string;
-                };
-                digest = `${data.note}\n${data.digest}`;
-            }
-            catch { /* 坏记录保留为缺失提示。 */
-            }
-        }
-        add('teach', '## 教学会话记录', truncateBytes(digest, ctx.settings.c03.teachDigestMaxBytes), true);
-    }
+    // P75i：教学（变体 teach）的唤醒包段由 skill-learn-section.ts 生成（在 buildWakePacket 里与其他技能段一起放进去），
+    // 数据读 skillRuns 的 learn；旧的读教学审计、输出「教学会话记录」的做法已删除。
     // 主人消息可成为合并后的主理由，但真实审批证据仍须带回完整执行指令。
     if (ticket.variant !== 'reflection' && hasApprovalDecision(ctx, entry)) {
         const ids = new Set(entry.reason.evidence);
@@ -237,7 +308,8 @@ function appendVariant(ctx: HubContext, bot: Bot, entry: QueueEntry, ticket: Wak
                 : a.status === 'pending' ? '仍在等待主人决定，不要执行。'
                 : a.tool === 'hub_outbox_execute' ? executed
                     ? `中心已执行，结果是：${outbox.status === 'done' ? '成功' : '失败'}，详细结果见出站执行结果。不要再次提交。`
-                    : outbox?.status === 'failed' ? '中心执行前复查未通过，动作未执行，不要再次提交。'
+                    // P82：把中心确认的失败原因（宿主原文）带进这句话，模型转述给主人时不会只剩「没通过复查」。
+                    : outbox?.status === 'failed' ? `中心执行前复查未通过，动作未执行${outbox.ownerFailureReason ? `（原因：${outbox.ownerFailureReason}）` : ''}，不要再次提交。`
                     : a.status === 'used' ? '批准票已使用，不要再次提交；执行结果尚未记录。' : '主人已批准，中心会代为执行，不要再次提交。'
                 : a.status === 'approved' ? '主人已批准，用完全相同的参数再调用一次。'
                 : a.status === 'used' ? '已执行过，不要重复执行。' : '仍在等待主人决定，不要执行。';

@@ -15,10 +15,14 @@ function call(pathWithQuery: string, init?: RequestInit): Promise<Response> {
 }
 
 describe('路由注册（假 ctx 记录 fetch.register 调用）', () => {
-  it('注册了 13 条路由', () => {
+  it('注册了 17 条路由', () => {
     const { ctx, fetchRoutes } = createFakeCtx()
     registerRoutes(ctx as never, hub)
-    expect(fetchRoutes).toHaveLength(13)
+    // 原 13 条；P75j 加 skill-library、skill-detail；P75k 加 memory-page；P76j 加 active-jobs；
+    // P76k 加 weekly-usage；P75r7 删去 recent-sessions。
+    expect(fetchRoutes).toHaveLength(17)
+    expect(fetchRoutes.map(route => route.path)).toContain('/api/agent-hub/memory-page')
+    expect(fetchRoutes.map(route => route.path)).not.toContain('/api/agent-hub/recent-sessions')
   })
   it('读路由全部是 GET + requestBody buffered；写路由是 POST', () => {
     for (const route of buildRoutes(hub)) {
@@ -135,20 +139,18 @@ describe('其余 GET 路由', () => {
     const res = await call('/api/agent-hub/bot?id=bot-none')
     expect(res.status).toBe(500)
   })
-  it('inbox 返回 3 项且形状正确', async () => {
+  it('inbox 返回 7 项且形状正确', async () => {
     const data = await (await call('/api/agent-hub/inbox')).json() as { items: unknown[] }
-    expect(data.items).toHaveLength(3)
+    expect(data.items).toHaveLength(7)
   })
-  it('activity 返回 10 条且带 hasMore', async () => {
+  it('activity 返回 19 条（基础样例 10 条加核心生成的 9 条技能库记录）且带 hasMore', async () => {
     const data = await (await call('/api/agent-hub/activity')).json() as { rows: unknown[]; hasMore: boolean }
-    expect(data.rows).toHaveLength(10)
+    expect(data.rows).toHaveLength(19)
     expect(typeof data.hasMore).toBe('boolean')
   })
-  it('settings 与 recent-sessions 可用', async () => {
+  it('settings 可用（P75r7：recent-sessions 路由已删去）', async () => {
     const settings = await (await call('/api/agent-hub/settings')).json() as { settings: { rootDir: string } }
     expect(settings.settings.rootDir).toBeTypeOf('string')
-    const sessions = await (await call('/api/agent-hub/recent-sessions')).json() as unknown[]
-    expect(sessions.length).toBeGreaterThan(0)
   })
   it('office 返回办公室投影（F03）：座位就是一位在岗队友，带灯与房间健康', async () => {
     const data = await (await call('/api/agent-hub/office')).json() as {
@@ -200,11 +202,11 @@ describe('其余 GET 路由', () => {
       counts: { active: number; paused: number; done: number; archived: number; total: number; tasksTotal: number; tasksPendingCheck: number }
     }
     expect(typeof data.asOf).toBe('number')
-    expect(data.projects).toHaveLength(5)
+    expect(data.projects).toHaveLength(6)
     // 归档项目沉底（core projectView 的排序契约）。
     expect(data.projects.at(-1)!.project.status).toBe('archived')
     // 计数与行内容一致：总数、任务合计、待验收一条（pt_weekly_5）。
-    expect(data.counts.total).toBe(5)
+    expect(data.counts.total).toBe(6)
     expect(data.counts.tasksTotal).toBe(10)
     expect(data.counts.tasksPendingCheck).toBe(1)
     expect(data.counts.tasksTotal).toBe(data.projects.reduce((n, row) => n + row.tasks.length, 0))

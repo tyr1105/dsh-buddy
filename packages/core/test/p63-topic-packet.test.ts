@@ -59,7 +59,7 @@ describe('P63 主题段内容', () => {
     }
     await openTopic(fix, '进展如何');
     const packet = lastPacket(fix, owner!);
-    expect(packet).toContain('事务doing｜小王｜进行中');
+    expect(packet).toContain('事务doing｜小王｜执行中');
     expect(packet).not.toContain('事务accepted');
   });
 
