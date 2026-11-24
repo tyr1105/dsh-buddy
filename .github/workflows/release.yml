@@ -1,0 +1,150 @@
+# 自动发版流程。
+#
+# 怎么触发：
+#   - 推送一个形如 v0.3.2 的标签：跑完整流程——检查、测试、构建、发布到 npm、创建 GitHub 发布页（带安装包）。
+#   - 在 GitHub 的 Actions 页面手动运行：只做演练——检查、测试、构建、打包，不发布任何东西。
+#
+# 发版前要准备好的两样东西（缺了流程会在最前面报错停下，不会发出半成品）：
+#   1. 三个 package.json 里的版本号已改成新版本，并且和标签一致（标签 v0.3.2 对应版本 0.3.2）；
+#   2. release-notes/ 下有同名的发布说明文件，例如 release-notes/v0.3.2.md。
+#
+# 发布到 npm 不用令牌，也不用验证码：npm 网站上把本仓库的这个文件登记为「可信发布来源」后，
+# npm 直接认 GitHub 签发的身份（需要下面的 id-token: write 权限）。
+# 登记位置：npmjs.com → 包 @tyr1105/dsh-buddy → Settings → Trusted publishing → GitHub Actions，
+# 填 用户 tyr1105、仓库 dsh-buddy、文件名 release.yml，并允许 npm publish。
+# 这个文件改名的话，npm 上的登记要删掉重建。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# 默认只给读权限；发布需要的权限在下面的任务里单独给。
+permissions:
+  contents: read
+
+# 同一个标签不并发跑两遍，避免重复发布。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # 插件只支持 macOS，测试也是在 macOS 上写的，所以用 macOS 环境跑。
+    # 必须用 GitHub 托管的机器：npm 的可信发布不支持自建机器。
+    runs-on: macos-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write   # 创建发布页、上传安装包
+      id-token: write   # npm 可信发布：让 GitHub 给这次运行签发身份
+    env:
+      # 是否真的发布：只有推送标签才发布；手动运行一律是演练。
+      PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      # 第三方动作固定到具体提交，避免动作被改动后影响发布。注释里是对应的版本号。
+      - name: 取出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 安装 pnpm（版本取 package.json 里的 packageManager）
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: 发版前检查（版本号与标签一致、发布说明已备好）
+        if: env.PUBLISH == 'true'
+        run: |
+          VERSION=$(node -p "JSON.parse(require('fs').readFileSync('packages/plugin/package.json','utf8')).version")
+          if [ "v$VERSION" != "$TAG" ]; then
+            echo "::error::标签是 $TAG，但 packages/plugin/package.json 里的版本是 $VERSION。两者必须一致。"
+            exit 1
+          fi
+          for f in package.json packages/core/package.json; do
+            OTHER=$(node -p "JSON.parse(require('fs').readFileSync('$f','utf8')).version")
+            if [ "$OTHER" != "$VERSION" ]; then
+              echo "::error::$f 里的版本是 $OTHER，应为 $VERSION。三个 package.json 的版本号要一起改。"
+              exit 1
+            fi
+          done
+          if [ ! -s "release-notes/$TAG.md" ]; then
+            echo "::error::缺少发布说明 release-notes/$TAG.md。先写好并提交，再推标签。"
+            exit 1
+          fi
+          echo "版本 $VERSION，标签 $TAG，发布说明已备好。"
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm -r typecheck
+
+      # 三条测试命令先后运行，不同时跑：长场景测试有时间限制，机器繁忙时会超时。
+      - name: 引擎测试（快速）
+        run: pnpm --filter @agent-hub/core test:fast
+
+      - name: 引擎测试（长场景）
+        run: pnpm --filter @agent-hub/core test:scenarios
+
+      - name: 插件测试
+        run: pnpm --filter @tyr1105/dsh-buddy test
+
+      - name: 构建
+        run: pnpm -r build
+
+      - name: 整理发布目录并打包
+        run: |
+          node scripts/release/pack.mjs
+          tar -tzvf dist/release/dsh-buddy.tgz
+
+      - name: 演练到此结束（手动运行不发布）
+        if: env.PUBLISH != 'true'
+        run: echo "这是一次演练：检查、测试、构建、打包都已通过，没有发布任何东西。"
+
+      # npm 可信发布要求 npm 11.5.1 以上，Node 22 自带的 npm 版本不够，这里单独升级。
+      - name: 升级 npm
+        if: env.PUBLISH == 'true'
+        run: |
+          npm install -g npm@11
+          npm --version
+
+      - name: 发布到 npm
+        if: env.PUBLISH == 'true'
+        run: |
+          VERSION="${TAG#v}"
+          # 这个版本已经在 npm 上就跳过：流程中途失败后重跑时，不会卡在「版本已存在」。
+          if npm view "@tyr1105/dsh-buddy@$VERSION" version >/dev/null 2>&1; then
+            echo "npm 上已有 $VERSION，跳过发布。"
+          else
+            npm publish dist/release/dsh-buddy --access public
+          fi
+
+      # 发布页和安装包在同一步创建：插件市场从「最新发布页的 dsh-buddy.tgz」安装，
+      # 发布页不能有哪怕片刻不带安装包。
+      - name: 创建 GitHub 发布页（带安装包）
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${TAG#v}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "发布页 $TAG 已存在，只更新安装包。"
+            gh release upload "$TAG" dist/release/dsh-buddy.tgz --clobber
+          else
+            gh release create "$TAG" dist/release/dsh-buddy.tgz \
+              --title "DSH Buddy $VERSION" \
+              --notes-file "release-notes/$TAG.md" \
+              --verify-tag --latest
+          fi
+
+      - name: 核对市场下载地址
+        if: env.PUBLISH == 'true'
+        run: |
+          curl -sSL --fail --retry 10 --retry-delay 6 --retry-all-errors \
+            -o /tmp/latest.tgz https://github.com/tyr1105/dsh-buddy/releases/latest/download/dsh-buddy.tgz
+          cmp /tmp/latest.tgz dist/release/dsh-buddy.tgz
+          echo "市场下载地址拿到的安装包与本次构建一致。"
