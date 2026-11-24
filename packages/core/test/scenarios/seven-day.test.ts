@@ -22,6 +22,11 @@ function injectPeerMessage(world: SimWorld, fromId: string, toId: string, text: 
   expect(enqueuePeerPercept(ctx, percept, { ownerSummary: `${sender.name}发来一条消息，等待处理`, directed: true })).not.toBeNull();
 }
 
+// 这条测试对总耗时有上限，用来防止引擎意外变慢。上限默认 15 秒，是按开发用的电脑定的。
+// GitHub 的公共机器明显更慢（实测约 21 秒），发版流程里用环境变量 SEVEN_DAY_BUDGET_MS 放宽；
+// 不设这个变量时行为与原来完全一样。
+const TIME_BUDGET_MS = Number(process.env.SEVEN_DAY_BUDGET_MS) > 0 ? Number(process.env.SEVEN_DAY_BUDGET_MS) : 15_000;
+
 it('18：三个机器人完整七天，事件可复现且并发、预算、夜间通知和理由始终守界', async () => {
   const began = performance.now();
   // P73r5：原来显式用旧起始回合数 8，让七天里持续出现额度用完、红灯、恢复；P76d 起额度灯不再按回合数，这个设置不再有作用，已去掉（见下面额度断言处的说明）。
@@ -195,5 +200,5 @@ it('18：三个机器人完整七天，事件可复现且并发、预算、夜�
       selfInitiated: bot.selfInitiated, turnsByDay: bot.turnsByDay, reasons: bot.reasons })),
     pushes: report.pushes, notificationSources, reasons: report.reasons };
   expect(summary).toMatchSnapshot();
-  expect(elapsedMs).toBeLessThan(15_000);
-}, 15_000);
+  expect(elapsedMs).toBeLessThan(TIME_BUDGET_MS);
+}, TIME_BUDGET_MS);

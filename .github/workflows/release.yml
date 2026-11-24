@@ -87,7 +87,11 @@ jobs:
       - name: 引擎测试（快速）
         run: pnpm --filter @agent-hub/core test:fast
 
+      # 七天仿真那条测试对耗时有上限（默认 15 秒，按开发电脑定的）。这里的机器更慢，
+      # 实测约 21 秒，所以放宽到 60 秒；测的内容不变，只是不因为机器慢而失败。
       - name: 引擎测试（长场景）
+        env:
+          SEVEN_DAY_BUDGET_MS: '60000'
         run: pnpm --filter @agent-hub/core test:scenarios
 
       - name: 插件测试
