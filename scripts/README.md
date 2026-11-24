@@ -49,3 +49,27 @@ make-entrypoints.sh 会在 `$HOME/.agent-hub/` 下生成两个极短的入口脚
 | `bash scripts/sandbox.sh install / run / dump / remove / status` | 沙箱环境的安装、前台启动、配置查看、移除与状态。 |
 | `bash scripts/dev/ui-sandbox.sh` | 界面走查：开一个能在浏览器里点的隔离沙箱（端口 3951）+ 走查专用假模型，打印带 token 的网址。在员工的对话里发带暗号的消息就能出对应场景：【提问】提问卡、【提议】提议卡、【审批】审批卡（批准后中心真的执行一次，发到假模型自己的 /hook-test）、【慢】回合故意拖 90 秒，用来测「打断」（要点两次确认）。Ctrl+C 结束。和 `sandbox.sh e2e` 共用 18080 端口，不要同时跑。 |
 | `node scripts/dev/fake-model-cards.mjs` | 走查专用假模型本体（ui-sandbox.sh 会自动拉起，一般不用单独跑）。日志在 `.sandbox/fake-model-cards.log`。 |
+| `bash scripts/dev/host-sandbox.sh <DSH 应用的路径> <端口>` | 兼容走查：用另一个版本的 DSH（解压到任意目录即可，不用安装）开隔离沙箱，确认插件在那个版本上正常。新版 DSH 的下载地址和用法见脚本开头的说明。和上面两个沙箱共用 18080 端口，同一时间只能开一个。 |
+
+## 发版
+
+发版由 GitHub 上的自动流程完成（`.github/workflows/release.yml`）：推送一个版本标签，它依次做检查、全部测试、构建、发布到 npm、创建 GitHub 发布页并带上安装包。
+
+发一个新版本的步骤（以 0.3.2 为例）：
+
+1. 把三个 `package.json`（项目根、`packages/core`、`packages/plugin`）里的版本号改成 `0.3.2`。
+2. 写发布说明 `release-notes/v0.3.2.md`，分「新增 / 改动 / 修复」几段，写法参照已有的文件。
+3. 提交并推送到 main。
+4. 打标签并推送：`git tag v0.3.2`，`git push origin v0.3.2`。
+
+推送标签后，在仓库的 Actions 页面可以看到进度。版本号和标签不一致、或者缺发布说明时，流程会在最前面报错停下，不会发出半成品。
+
+| 一条命令 | 做什么 |
+|---|---|
+| `node scripts/release/pack.mjs` | 把构建好的插件整理成发布目录 `dist/release/dsh-buddy/`（6 个文件）和安装包 `dist/release/dsh-buddy.tgz`。自动流程会调用它；本机想看看发出去的内容时也可以单独运行（先 `pnpm -r build`）。 |
+
+几点说明：
+
+- **安装包不能缺。** 插件市场的条目是从「最新发布页的 `dsh-buddy.tgz`」安装的，所以发布页和安装包在同一步创建。不要手工创建不带安装包的发布页。
+- **发布到 npm 不用令牌。** npm 网站上把本仓库的 `release.yml` 登记成了「可信发布来源」（包设置 → Trusted publishing → GitHub Actions：用户 `tyr1105`、仓库 `dsh-buddy`、文件名 `release.yml`，并允许 `npm publish`）。这个文件改名的话，npm 上的登记要删掉重建。
+- **演练。** 在 Actions 页面手动运行 release 流程，只做检查、测试、构建、打包，不发布任何东西。改了流程文件之后先演练一次。
