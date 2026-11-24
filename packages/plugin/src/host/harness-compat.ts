@@ -39,11 +39,15 @@ export interface HarnessCompatReport {
   degradedOptional: string[]
 }
 
-/** 能力描述：paths 里每一条都必须读到函数，才算这项能力可用。 */
+/**
+ * 能力描述：paths 里每一条都必须读到函数，才算这项能力可用。
+ * anyOf 用于「宿主不同版本用不同接口提供同一项能力」的情况：里面只要有一条读到函数就算通过。
+ */
 interface CapabilityProbe {
   key: string
   label: string
   paths: string[][]
+  anyOf?: string[][]
 }
 
 /** 外壳能力：路由注册、事件订阅、清理钩子、服务注入。缺一项就完全跑不起来。 */
@@ -70,7 +74,15 @@ const OPTIONAL_PROBES: CapabilityProbe[] = [
   { key: 'ctx.provide', label: '诊断服务（ctx.provide）', paths: [['provide']] },
   { key: 'ctx.get', label: '可选服务探测（ctx.get）', paths: [['get']] },
   { key: 'webServer.register', label: '实时推送（webServer.register）', paths: [['webServer', 'register']] },
-  { key: 'connection.requestRejection', label: '推送鉴权（connection.requestRejection）', paths: [['connection', 'requestRejection']] },
+  // 推送鉴权：DSH 0.2.2 及更早由插件调 requestRejection；0.2.3 起这个接口被删掉，改由宿主的
+  // 网页服务先鉴权再把 peer 传给处理函数。新一代连接服务没法按「某个方法在不在」直接探测，
+  // 这里用它一定带着的 admit 来识别；真正放行与否仍由 events.ts 按是否拿到 peer 判断。
+  {
+    key: 'connection.admission',
+    label: '推送鉴权（connection.admit 或 connection.requestRejection）',
+    paths: [],
+    anyOf: [['connection', 'requestRejection'], ['connection', 'admit']],
+  },
   { key: 'sessionController.selectModel', label: '按会话选模型（sessionController.selectModel）', paths: [['sessionController', 'selectModel']] },
   { key: 'sessionController.modelCatalog', label: '模型目录（sessionController.modelCatalog）', paths: [['sessionController', 'modelCatalog']] },
   { key: 'llm.listProviders', label: '模型目录兜底（llm.listProviders）', paths: [['llm', 'listProviders']] },
@@ -121,9 +133,10 @@ function readPath(ctx: unknown, path: string[]): unknown {
   return current
 }
 
-/** 一条能力是否可用：所有路径都读到函数才算通过。 */
+/** 一条能力是否可用：paths 全部读到函数，并且 anyOf（如果有）至少一条读到函数。 */
 function probeOne(ctx: unknown, probe: CapabilityProbe): CapabilityStatus {
-  const ok = probe.paths.every(path => typeof readPath(ctx, path) === 'function')
+  const isFunction = (path: string[]): boolean => typeof readPath(ctx, path) === 'function'
+  const ok = probe.paths.every(isFunction) && (probe.anyOf === undefined || probe.anyOf.some(isFunction))
   return { key: probe.key, label: probe.label, ok }
 }
 

@@ -1,6 +1,6 @@
 /** SSE：被拒时写状态码结束；接受时写 event-stream 头；变化时写 changed 事件；close 后取消订阅；卸载时结束全部连接。 */
 import { describe, expect, it, vi } from 'vitest'
-import { registerEvents } from '../src/host/events.js'
+import { registerEvents, requestRejectionOf } from '../src/host/events.js'
 import { FixtureHub } from '../src/host/hub-facade.js'
 
 /** 假 res：记录 writeHead/write，close 语义由测试手动触发。 */
@@ -34,6 +34,50 @@ function setup(rejection?: number) {
   registered!.handler({}, res as never)
   return { hub, res }
 }
+
+/** DSH 0.2.3 的形状：连接服务没有 requestRejection，宿主把鉴权后选出的 peer 作为第三个参数传给处理函数。 */
+function setupPeer(peer: unknown) {
+  const hub = new FixtureHub()
+  const res = fakeRes()
+  let registered: { auth?: string; handler: (req: unknown, res: unknown, peer?: unknown) => void } | null = null
+  const ctx = {
+    webServer: { register: (route: { auth?: string; handler: (req: unknown, res: unknown, peer?: unknown) => void }) => { registered = route; return () => {} } },
+    connection: { admit: () => { throw new Error('cannot get property "connection.authentication" without inject') } },
+  }
+  registerEvents(ctx as never, hub)
+  registered!.handler({}, res as never, peer)
+  return { res, route: registered! }
+}
+
+describe('推送鉴权兼容两代宿主', () => {
+  it('旧接口 requestRejection 还在时用它，不看 peer', () => {
+    expect(requestRejectionOf({ requestRejection: () => undefined }, {})).toBeUndefined()
+    expect(requestRejectionOf({ requestRejection: () => 401 }, {}, { id: 'owner' })).toBe(401)
+    expect(requestRejectionOf({ requestRejection: () => 403 }, {})).toBe(403)
+  })
+  it('DSH 0.2.3：路由声明 auth 为 required，拿到 peer 就放行并开始推送', () => {
+    const { res, route } = setupPeer({ id: 'owner' })
+    expect(route.auth).toBe('required')
+    expect(res.headers!.status).toBe(200)
+    expect(res.chunks[0]).toBe(': connected\n\n')
+  })
+  it('DSH 0.2.3：没有拿到 peer 时拒绝，不写事件流，也不去调 admit', () => {
+    for (const peer of [undefined, null, 'owner', 0]) {
+      const { res } = setupPeer(peer)
+      expect(res.headers!.status).toBe(401)
+      expect(res.ended).toBe(true)
+      expect(res.chunks).toHaveLength(0)
+    }
+  })
+  it('没有任何鉴权依据、或旧接口抛错：一律拒绝', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    expect(requestRejectionOf({}, {})).toBe(401)
+    expect(requestRejectionOf(undefined, {})).toBe(401)
+    expect(requestRejectionOf(null, {})).toBe(401)
+    expect(requestRejectionOf({ requestRejection: () => { throw new Error('boom') } }, {}, { id: 'owner' })).toBe(503)
+    vi.restoreAllMocks()
+  })
+})
 
 describe('SSE /agent-hub/events', () => {
   it('注册的是 exact 路由 /agent-hub/events', () => {

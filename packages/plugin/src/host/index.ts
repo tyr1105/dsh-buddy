@@ -136,7 +136,7 @@ export function apply(ctx: any, config: HostConfig = {}): void {
   // ctx.inject 本身属于外壳能力，shellOk 为假时连这一步都不能走。
   if (compat.shellOk
     && hasCapability(compat, 'webServer.register')
-    && hasCapability(compat, 'connection.requestRejection')) {
+    && hasCapability(compat, 'connection.admission')) {
     ctx.inject(['webServer'], (sub: any) => {
       sub.effect(() => registerEvents(sub, facade), 'agent-hub: sse')
     })

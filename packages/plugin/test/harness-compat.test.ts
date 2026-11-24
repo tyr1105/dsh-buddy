@@ -125,7 +125,7 @@ describe('apply 的 E04 接线', () => {
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
-  it('缺推送鉴权（requestRejection）：不注册 SSE，也不影响引擎启动', async () => {
+  it('缺推送鉴权（新旧接口都没有）：不注册 SSE，也不影响引擎启动', async () => {
     const root = safeTempRoot('agent-hub-compat-sse-')
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
@@ -134,7 +134,25 @@ describe('apply 的 E04 接线', () => {
       apply(made.ctx, { rootDir: root })
       expect(made.webRoutes).toHaveLength(0)
       const service = made.provided.get('agentHub') as any
-      expect(service.compat().degradedOptional).toContain('推送鉴权（connection.requestRejection）')
+      expect(service.compat().degradedOptional).toContain('推送鉴权（connection.admit 或 connection.requestRejection）')
+      await made.ctx.dispose()
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  // DSH 0.2.3 删掉了 requestRejection，只留 admit：实时推送必须照常注册，
+  // 否则界面连不上 /agent-hub/events，30 秒后整页显示「连接失败」。
+  it('宿主只有 admit（DSH 0.2.3）：照常注册 SSE，不报降级', async () => {
+    const root = safeTempRoot('agent-hub-compat-sse-admit-')
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const made = createFakeCtx(engineHarnessServices())
+      const connection = made.ctx.connection as { requestRejection?: unknown; admit?: unknown }
+      delete connection.requestRejection
+      connection.admit = () => ({ peer: { id: 'owner' } })
+      apply(made.ctx, { rootDir: root })
+      expect(made.webRoutes.map(route => route.path)).toContain('/agent-hub/events')
+      const service = made.provided.get('agentHub') as any
+      expect(service.compat().degradedOptional).not.toContain('推送鉴权（connection.admit 或 connection.requestRejection）')
       await made.ctx.dispose()
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
