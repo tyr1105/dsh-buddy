@@ -116,6 +116,50 @@ try {
     await scenario('旧版直接子节点：两个观察器共存并可折叠', false)
     await scenario('新版滚动容器：两个观察器共存并收敛', true)
     await scenario('新版入口延迟、移除重建与整根侧栏重建', true, true)
+    // DSH 0.2.2 起滚动容器是真实的 grid：列「4px 264px 6px」、行「8px 自动 2px 自动」，
+    // 原生导航写死在第 2 行第 2 列，工作区写死在第 4 行第 2 列（0.2.3-alpha.2 实测）。
+    // 折叠按钮必须和导航同列、紧贴在导航上方：不指定列会被挤进 4px 的内边距轨道，
+    // 只指定列会被排到工作区下面。
+    {
+      const name = '新版 grid 滚动容器：折叠按钮紧贴在导航上方'
+      const style = document.createElement('style')
+      style.textContent = [
+        '.demo_grid .demo_scrollArea{display:grid;grid-template-columns:4px 264px 6px;grid-template-rows:8px auto 2px auto;align-content:start;width:274px}',
+        '.demo_grid .demo_panelList{grid-column:2;grid-row:2;min-height:100px}',
+        '.demo_grid .demo_regionArea{grid-column:2;grid-row:4;min-height:100px}',
+        // 与 workspace.css 里的两条规则保持一致：按钮高度，以及共用格子时导航让出的空间。
+        'button.ah-host-navigation-toggle{display:flex;width:calc(100% - 24px);min-height:28px;margin:3px 12px;padding:4px 8px;border:0}',
+        '.ah-host-navigation-toggle svg{width:12px;height:12px;flex-shrink:0}',
+        "nav[data-dsh-buddy-nav-cell='true']{margin-top:34px}",
+        "nav[data-dsh-buddy-nav-collapsed='true']{display:none !important}",
+      ].join('')
+      document.head.append(style)
+      document.body.innerHTML = fixture(true)
+      document.querySelector('.demo_root').classList.add('demo_grid')
+      const cleanup = watchHostNavigation(document)
+      try {
+        await wait()
+        const toggle = document.querySelector('.ah-host-navigation-toggle')
+        const nav = document.querySelector('nav')
+        const region = document.querySelector('.demo_regionArea')
+        if (!toggle) throw new Error('功能导航折叠按钮没有挂上')
+        const box = toggle.getBoundingClientRect(), navBox = nav.getBoundingClientRect(), regionBox = region.getBoundingClientRect()
+        if (box.width < 200) throw new Error(`折叠按钮只有 ${box.width}px 宽，被挤进了窄轨道`)
+        if (box.bottom > navBox.top + 4) throw new Error(`折叠按钮没有排在导航上方（按钮底 ${box.bottom}，导航顶 ${navBox.top}）`)
+        if (navBox.top - box.bottom > 8) throw new Error(`折叠按钮与导航之间空了 ${navBox.top - box.bottom}px`)
+        if (box.top >= regionBox.top) throw new Error('折叠按钮被排到了工作区下面')
+        toggle.click()
+        await wait()
+        const folded = toggle.getBoundingClientRect(), regionAfter = region.getBoundingClientRect()
+        if (nav.getBoundingClientRect().height !== 0) throw new Error('折叠后导航仍然占位')
+        if (folded.width < 200 || folded.bottom > regionAfter.top + 4) throw new Error('折叠后按钮位置不对')
+        toggle.click()
+        results.push({ name, pass: true, toggle: { width: box.width, gapToNav: navBox.top - box.bottom } })
+      } catch (error) {
+        results.push({ name, pass: false, error: error.message })
+      } finally { cleanup(); style.remove() }
+      if (document.querySelector('[data-dsh-buddy-nav-cell]')) throw new Error('卸载未清理导航上的共用格子标记')
+    }
     document.body.innerHTML = '<header><div class="demo_logoRow">unrelated</div></header><section><nav class="demo_panelList"></nav></section><section class="demo_regionArea"></section>'
     results.push({ name: '无入口且标识与导航分属不同区域：保守降级', pass: findHostSpaceRoot(document) === null })
     return results

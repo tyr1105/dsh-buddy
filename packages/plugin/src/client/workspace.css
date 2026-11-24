@@ -89,6 +89,8 @@ button.ah-host-navigation-toggle:focus-visible { outline: 2px solid var(--dsw-al
 .ah-host-navigation-toggle svg { width: 12px; height: 12px; flex-shrink: 0; transition: transform .15s ease; }
 .ah-host-navigation-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
 nav[data-dsh-buddy-nav-collapsed='true'] { display: none !important; }
+/* 新版 DSH 的 grid 侧栏里，折叠按钮和原生导航共用一个格子：给导航让出按钮的高度（最小高 28 + 上下外边距各 3）。 */
+nav[data-dsh-buddy-nav-cell='true'] { margin-top: 34px; }
 @media (prefers-reduced-motion: reduce) { .ah-host-navigation-toggle svg { transition: none; } }
 .ah-thread { min-width: 0; min-height: 0; background: var(--dsw-alias-bg-base); }
 .ah-thread-header { padding: 16px 22px; gap: 12px; align-items: flex-start; }

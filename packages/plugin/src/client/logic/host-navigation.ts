@@ -31,6 +31,49 @@ function hasExpandedSidebar(nav: HTMLElement): boolean {
   return !!bounds && bounds.width >= 140 && bounds.height > 0
 }
 
+/** 标在原生导航上：表示折叠按钮和它共用同一个 grid 格子，样式据此给导航让出顶部空间。 */
+const sharedCellAttribute = 'data-dsh-buddy-nav-cell'
+
+/**
+ * 在 grid 侧栏里给折叠按钮定位，让它紧贴在原生导航上方。
+ *
+ * 为什么需要：DSH 0.2.2 起把功能导航放进一个 grid 滚动容器（实测列「4px 264px 6px」、
+ * 行「8px 自动 2px 自动」），原生导航和工作区各自写死了所在的行和列。我们插在导航前面的
+ * 按钮没有指定位置，会被自动排到别处：
+ * - 不指定列：落进第一列那条 4px 的内边距轨道，宽度只剩十几个像素，「功能」两个字竖排；
+ * - 只指定列：导航所在的行已被占用，按钮被排到最后一行，跑到工作区列表下面。
+ *
+ * 做法：父容器是 grid 时，把导航实际用的列号照抄给按钮；导航写死了行号时，按钮也用同一行、
+ * 靠上对齐，并在导航上标一个属性，由样式给导航加上等于按钮高度的顶部外边距。两者共用一个
+ * 格子、上下排开。位置全部从宿主的计算样式里读，不写死数字，宿主调整轨道也能跟上。
+ *
+ * 父容器不是 grid（旧版宿主）时什么都不做。这里只写按钮的 style 和导航上的自有属性，
+ * 观察器不监听这两样，所以不会引起重新同步。
+ */
+export function placeToggleInGrid(nav: HTMLElement, button: HTMLElement): void {
+  try {
+    const win = nav.ownerDocument?.defaultView
+    const parent = nav.parentElement
+    // 测试与降级环境可能没有真实布局：拿不到计算样式就保持原样。
+    if (!win || !parent || typeof win.getComputedStyle !== 'function') return
+    const display = win.getComputedStyle(parent).display
+    if (display !== 'grid' && display !== 'inline-grid') return
+    const style = win.getComputedStyle(nav)
+    const line = (start: string, end: string): string | null => {
+      if (!start || start === 'auto') return null
+      return end && end !== 'auto' ? `${start} / ${end}` : start
+    }
+    const column = line(style.gridColumnStart, style.gridColumnEnd)
+    if (column) button.style.gridColumn = column
+    const row = line(style.gridRowStart, style.gridRowEnd)
+    if (row) {
+      button.style.gridRow = row
+      button.style.alignSelf = 'start'
+      nav.setAttribute(sharedCellAttribute, 'true')
+    }
+  } catch { /* 读不到布局时保持宿主原样，不影响折叠功能 */ }
+}
+
 /**
  * 观察导航是否重建及侧栏是否变窄；属性值不变时不重复写 DOM，避免观察器自循环。
  * 所有事件都有异常兜底，卸载移除按钮、监听器和本功能添加的属性。
@@ -58,6 +101,7 @@ export function watchHostNavigation(doc: Document): () => void {
       else nav.setAttribute('id', previousId)
       if (previousCollapsed === null) nav.removeAttribute(collapsedAttribute)
       else nav.setAttribute(collapsedAttribute, previousCollapsed)
+      nav.removeAttribute(sharedCellAttribute)
     }
     nav = null
   }
@@ -115,6 +159,7 @@ export function watchHostNavigation(doc: Document): () => void {
       button.append(icon, label)
       button.addEventListener('click', toggle)
       nav.before(button)
+      placeToggleInGrid(nav, button)
       render()
     } catch (error) {
       try { clear() } catch { /* 宿主重建过程中清理失败也不向外抛错 */ }
