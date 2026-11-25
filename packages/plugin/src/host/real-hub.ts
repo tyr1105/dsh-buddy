@@ -195,7 +195,10 @@ export async function openEvidenceFile(target: string, action: 'open' | 'reveal'
     try {
       await deps.hostOpen(action === 'reveal' ? { path: target, action: 'reveal' } : { path: target })
       return { ok: true, path: target }
-    } catch { /* 宿主拒绝或不支持：退回系统命令 */ }
+    } catch (error) {
+      // 宿主拒绝或不支持：记一行再退回系统命令。
+      try { console.warn('[agent-hub] DSH 打开文件失败，改用系统命令', String(error)) } catch { /* 日志出错不影响打开 */ }
+    }
   }
   try {
     const { file, args } = action === 'reveal' ? revealCommandFor(deps.platform, target) : openCommandFor(deps.platform, target)
@@ -203,7 +206,8 @@ export async function openEvidenceFile(target: string, action: 'open' | 'reveal'
       deps.execFile(file, args, { timeout: 15000, windowsHide: true }, error => (error === null ? resolve() : reject(error)))
     })
     return { ok: true, path: target }
-  } catch {
+  } catch (error) {
+    try { console.warn('[agent-hub] 系统命令打开文件失败', String(error)) } catch { /* 日志出错不影响返回 */ }
     return failed
   }
 }
@@ -217,7 +221,7 @@ async function openJobEvidenceCommand(api: UiApi, raw: Record<string, unknown>, 
   const checked = await api.jobEvidenceOpenTarget({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId, action })
   if (!checked.ok) return { ok: false, error: checked.error }
   if (checked.data === undefined) return bad('没能取得文件的位置')
-  return openEvidenceFile(checked.data.path, checked.data.action, deps)
+  return openEvidenceFile(checked.data.path, checked.data.action === 'reveal' ? 'reveal' : 'open', deps)
 }
 
 /** 真正的系统实现：用 node:child_process 的 execFile（参数数组，不经过 shell）。 */
@@ -251,6 +255,8 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'openJobPreview': return run(() => openJobPreviewCommand(api, raw, deps))
       // W12：卡片上的文件证据：用默认应用打开或在访达中显示。位置由 core 查过后给出，宿主再查一次。
       case 'openJobEvidence': return run(() => openJobEvidenceCommand(api, raw, deps))
+      // W12：在 DSH 自带的文件预览里看：只取检查过的路径和会话交给界面，宿主这里不打开任何东西。
+      case 'locateJobEvidence': return run(() => api.jobEvidenceOpenTarget({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId, action: 'view' }))
       // P74i：交付卡与三轮不过卡的按钮、回合上限与「停住了」条目的答复。
       // 都是普通 core 命令：整对象透传，由 core 的 zod 校验（缺哪一项它会用中文说清）。
       case 'acceptJob': return run(() => api.acceptJob(raw))

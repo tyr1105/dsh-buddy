@@ -120,3 +120,25 @@ describe('4 证据本身不对、参数不对', () => {
     }
   });
 });
+
+describe('5 在 DSH 自带的预览里看（view）', () => {
+  it('给出真实路径和交付员工的会话；员工没有会话时用总管的；都没有时为 null', async () => {
+    const { botFixture } = await import('./model-fixtures.js');
+    const { CHIEF, EXECUTOR } = await import('./p74a-job-fixtures.js');
+    const s = setup();
+    s.write('交付/报告.md', '# 报告\n');
+    submitFile(s, '交付/报告.md');
+    expect(await target(s, { action: 'view' })).toEqual({ ok: true, data: { path: join(s.jobDir, '交付/报告.md'), action: 'view', sessionId: null } });
+    s.ctx.store.table('bots').put({ ...botFixture, id: CHIEF, sessionId: 'sess-chief' });
+    expect(await target(s, { action: 'view' })).toMatchObject({ ok: true, data: { sessionId: 'sess-chief' } });
+    s.ctx.store.table('bots').put({ ...botFixture, id: EXECUTOR, sessionId: 'sess-exec' });
+    expect(await target(s, { action: 'view' })).toMatchObject({ ok: true, data: { sessionId: 'sess-exec' } });
+  });
+
+  it('能运行的文件不给 view', async () => {
+    const s = setup();
+    s.write('交付/run.command', 'echo');
+    submitFile(s, '交付/run.command');
+    expect(await target(s, { action: 'view' })).toEqual({ ok: false, error: EVIDENCE_NOT_OPENABLE_TEXT });
+  });
+});

@@ -48,7 +48,7 @@ export const JOB_TEXT = {
   shotDialogLabel: '证据大图',
   shotClose: '关闭',
   // W12：文件证据交给电脑打开
-  fileOpen: '用默认应用打开',
+  fileOpen: '在 DSH 里查看',
   fileOpening: '正在打开…',
   fileReveal: '在访达中显示',
   fileRevealOther: '在文件夹中显示',

@@ -108,6 +108,17 @@ describe('openJobEvidence', () => {
   })
 })
 
+describe('locateJobEvidence', () => {
+  it('只按 view 请 core 查，把路径和会话原样交给界面，宿主不调用任何程序', async () => {
+    const e = env()
+    const { api, seen } = fakeApi({ ok: true, data: { path: MD, action: 'view', sessionId: 'sess-exec' } })
+    expect(await dispatchCommand(api, 'locateJobEvidence', { ...INPUT, action: 'open', path: '/etc/passwd' }, e.deps)).toEqual({ ok: true, data: { path: MD, action: 'view', sessionId: 'sess-exec' } })
+    expect(seen).toEqual([{ ...INPUT, action: 'view' }])
+    expect(e.hostCalls).toEqual([])
+    expect(e.execCalls).toEqual([])
+  })
+})
+
 describe('hostFileOpener：取 DSH 的 openWorkspacePath', () => {
   it('按方法调用（保留 this），把请求和一个信号交过去；没有这个接口时返回 undefined', async () => {
     const seen: unknown[] = []

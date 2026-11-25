@@ -24,6 +24,7 @@ import { HubToastOverlay } from './components/HubToastOverlay.js'
 import { applySpaceMode, fallbackSpace, watchHostSpace, type HostSpaceState } from './logic/host-mount.js'
 import { readSpaceMode, readSurface, saveSpaceMode, saveSurface, targetPanel, type StorageAccess } from './logic/mode-nav.js'
 import { focusAfterSwitch } from './logic/space-focus.js'
+import { registerDshViewer } from './logic/dsh-viewer.js'
 import { createTeamPanelRestore } from './logic/restore-team-panel.js'
 import type { SpaceMode } from './logic/space-capability.js'
 import type { SpaceSwitchSource } from './components/space-switch.js'
@@ -156,6 +157,11 @@ export function apply(ctx: any): void {
     if (source === 'keyboard') focusOnSwitch(next)
   }
   const backToChat = (): void => switchSpace('chat', 'pointer')
+  // W12：卡片上的文件在 DSH 自带的文件预览里看，要用到客户端上下文和「切回对话侧」。
+  try {
+    const unregister = registerDshViewer({ ctx, toChat: backToChat })
+    ctx.effect?.(() => unregister, 'agent-hub: dsh viewer')
+  } catch (error) { console.error('[agent-hub] 登记文件预览失败:', error) }
 
   /** 提示点进来：先记下要聚焦的收件箱项，再切到队友侧并打开中心页（P43）。 */
   const openInboxFromToast = (inboxItemId: string): void => {

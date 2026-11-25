@@ -23,11 +23,16 @@ import { parseInput } from '../engine/validation.js';
 import { nonempty, recordId } from '../model/primitives.js';
 import { centerWrittenError, checkTopicFile } from './evidence.js';
 
-/** 宿主要做的事：用默认应用打开，或在访达（文件管理器）中显示。 */
-export type EvidenceOpenAction = 'open' | 'reveal';
+/**
+ * 要做的事：用默认应用打开、在访达（文件管理器）中显示，或在 DSH 自带的文件预览里看（view：界面拿路径和会话去开 DSH 的右侧预览）。
+ */
+export type EvidenceOpenAction = 'open' | 'reveal' | 'view';
 
-/** 交给宿主的目标：检查过的真实绝对路径和要做的事。 */
-export interface EvidenceOpenTarget { path: string; action: EvidenceOpenAction }
+/**
+ * 检查过的目标：真实绝对路径和要做的事。
+ * sessionId 只在 view 时给：交付这件事的员工的 DSH 会话（没有就用总管的），DSH 的文件预览要挂在一个会话上读文件。
+ */
+export interface EvidenceOpenTarget { path: string; action: EvidenceOpenAction; sessionId?: string | null }
 
 /** 可以「用默认应用打开」的扩展名（小写，不带点）：只有文档、表格、演示、图片和纯文本。 */
 export const EVIDENCE_OPENABLE_EXTS: readonly string[] = [
@@ -51,7 +56,7 @@ const OpenEvidenceSchema = z.strictObject({
   jobId: recordId('job'),
   submissionId: recordId('jsb'),
   evidenceId: nonempty,
-  action: z.enum(['open', 'reveal']),
+  action: z.enum(['open', 'reveal', 'view']),
 });
 
 const fail = (error: string): CommandResult<EvidenceOpenTarget> => ({ ok: false, error });
@@ -72,7 +77,11 @@ export async function jobEvidenceOpenTarget(ctx: HubContext, raw: unknown): Prom
     const checked = await checkTopicFile(ctx, job, evidence.path);
     if (checked.status === 'empty') return fail('这个文件是空的');
     if (checked.status !== 'ok' || checked.real === undefined) return fail(EVIDENCE_FILE_GONE_TEXT);
-    if (args.action === 'open' && !evidenceOpenable(checked.real)) return fail(EVIDENCE_NOT_OPENABLE_TEXT);
+    if (args.action !== 'reveal' && !evidenceOpenable(checked.real)) return fail(EVIDENCE_NOT_OPENABLE_TEXT);
+    if (args.action === 'view') {
+      const sessionOf = (botId: string): string | null => ctx.store.table('bots').get(botId)?.sessionId ?? null;
+      return { ok: true, data: { path: checked.real, action: 'view', sessionId: sessionOf(job.executorId) ?? sessionOf(job.chiefId) } };
+    }
     return { ok: true, data: { path: checked.real, action: args.action } };
   } catch (error) {
     try { ctx.logger.warn('取证据文件位置失败', { jobId: args.jobId, error: String(error) }); } catch { /* 日志出错也不能影响返回。 */ }

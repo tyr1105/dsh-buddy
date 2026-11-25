@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { EvidenceItemView } from '../../shared/views.js'
 import { JOB_TEXT, evidenceTag, loadShot, returnFocus, trapTabIn, verdictClass, type ShotEntry, type ShotReader } from '../logic/job.js'
 import { api } from '../api.js'
+import { viewInDsh } from '../logic/dsh-viewer.js'
 
 /**
  * 截图读取命令的定位参数：core 的卡片视图不带内部编号，由接线的一层补上
@@ -181,6 +182,24 @@ function evidenceNode(evidence: EvidenceItemView['evidence'][number], shotRef: S
 /** 打开文件的函数形状：与 client/api.ts 的 openJobEvidence 一致，测试里注入假实现。 */
 export type FileOpener = (input: ShotRef & { evidenceId: string; action: 'open' | 'reveal' }) => Promise<{ ok: boolean; error?: string; path?: string }>
 
+/**
+ * 默认的打开办法（W12 验收后改）：点文件名先在 DSH 自带的文件预览里看（切到交付员工的工作会话，右侧边栏打开）；
+ * 这个版本的 DSH 做不到时退回用默认应用打开。「在访达中显示」直接交给宿主。
+ */
+export const defaultFileOpener: FileOpener = async input => {
+  if (input.action === 'open') {
+    const located = await api.locateJobEvidence({ jobId: input.jobId, submissionId: input.submissionId, evidenceId: input.evidenceId })
+    if (!located.ok) return located
+    const sessionId = located.data?.sessionId
+    if (located.data !== undefined && typeof sessionId === 'string' && sessionId !== '') {
+      const problem = await viewInDsh(sessionId, located.data.path)
+      if (problem === null) return { ok: true }
+      try { console.warn('[agent-hub] DSH 文件预览打不开，改用默认应用', problem) } catch { /* 日志出错不影响 */ }
+    }
+  }
+  return api.openJobEvidence(input)
+}
+
 /** 「在访达中显示」按系统换说法：苹果电脑叫访达，其余叫文件夹。读不到系统时按苹果电脑。 */
 function revealLabel(): string {
   try {
@@ -196,7 +215,7 @@ function revealLabel(): string {
  */
 export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['evidence'][number]; open?: FileOpener }): ReactNode {
   const { evidence, shotRef } = props
-  const open: FileOpener = props.open ?? (input => api.openJobEvidence(input))
+  const open: FileOpener = props.open ?? defaultFileOpener
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<{ error: string; path: string | null } | null>(null)
   const run = (action: 'open' | 'reveal'): void => {
