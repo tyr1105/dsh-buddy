@@ -24,6 +24,7 @@ import { consumeRelatedPercepts } from '../scheduler/percept-consumption.js';
 import { openLedgerForWake, sealLedgerForWake } from '../ledger/service.js';
 import { settleFailedTopicDelivery } from '../project/topics.js';
 import { verifyBeforeDelivery } from '../turn/pre-delivery.js';
+import { MAIN_LANE, laneLabel, laneOf, multiLaneText, openLaneCount, pickSessionSlot, releaseSession, setSessionSlot, usesLanes } from '../scheduler/lanes.js';
 
 /** pump 由 Hub 串行入口调用；探针身份仅绑定实际投递的唤醒单。 */
 export function createDispatcher(ctx: HubContext) {
@@ -96,7 +97,12 @@ export function createDispatcher(ctx: HubContext) {
         // P76r1 小修：证据里只要有一条是主人亲手批准或拒绝的，这条拆出来的候选就不算员工自己发起的；全部是到期处理的不带。
         ...(ownerDecidedByEvidence(ctx, bot.id, approvalEvidence) ? { ownerDecided: true } : {}) }));
     }
-    let wake: WakeTicket = createTicket(ctx, entry, bot.sessionId);
+    // W1b：总管几条线同时在跑时，原来的会话被占着就用备用会话（见 pickSessionSlot）；其他员工永远是原来的会话。
+    const lane = laneOf(ctx, bot, entry);
+    const slot = pickSessionSlot(ctx, bot);
+    const laneBot = { ...bot, sessionId: slot.sessionId, sessionStartedAt: slot.sessionStartedAt,
+      ...(slot.sessionModel === undefined ? { sessionModel: undefined } : { sessionModel: slot.sessionModel }) };
+    let wake: WakeTicket = createTicket(ctx, entry, laneBot.sessionId);
     const delivery = deliveries.open(wake.id);
     // Promise.race 已结算仍可能尚未恢复 await；每个异步阶段后都要重新核对主人取消事实。
     const assertNotInterrupted = () => {
@@ -112,7 +118,7 @@ export function createDispatcher(ctx: HubContext) {
     };
     let probe = false;
     try {
-      const info = bot.sessionId ? await delivery.wait(ctx.host.sessionInfo(bot.sessionId)) : { exists: false, running: false, contextRatio: null };
+      const info = laneBot.sessionId ? await delivery.wait(ctx.host.sessionInfo(laneBot.sessionId)) : { exists: false, running: false, contextRatio: null };
       assertNotInterrupted();
       if (info.running) {
         // 主人直聊占用会话时保留候选与感知，临时投递占位不能冒充一次真实回合。
@@ -133,14 +139,14 @@ export function createDispatcher(ctx: HubContext) {
       await delivery.wait(verifyBeforeDelivery(ctx, bot.id));
       assertNotInterrupted();
       probe = consumeProbe(ctx, wake.id);
-      const rotate = needsRotation(bot, info, ctx.clock.now(), ctx.settings);
+      const rotate = needsRotation(laneBot, info, ctx.clock.now(), ctx.settings);
       if (rotate) wake = ctx.store.table('wakes').patch(wake.id, { sessionId: null });
-      const packet = await delivery.wait(buildWakePacket(ctx, bot, entry, wake));
+      const packet = await delivery.wait(buildWakePacket(ctx, laneBot, entry, wake));
       assertNotInterrupted();
       const source = { kind: 'agent-hub' as const, botId: bot.id, wakeId: wake.id, variant: wake.variant };
-      let sessionId = bot.sessionId;
+      let sessionId = laneBot.sessionId;
       if (rotate) {
-        const creating = ctx.host.createSession({ botId: bot.id, title: `${bot.name} · Agent 中心`,
+        const creating = ctx.host.createSession({ botId: bot.id, title: slot.slot === 0 ? `${bot.name} · Agent 中心` : `${bot.name} · Agent 中心（${lane === MAIN_LANE ? '私聊' : laneLabel(ctx, lane)}）`,
           cwd: bot.homeDir, rolePresetId: `agent-hub-${bot.role}`, permissionPresetId: 'agent-hub-unattended',
           model: bot.model, firstMessage: packet, source });
         // 超时后才返回的新会话没有被绑定；尽力停止它，不能污染下一次成功投递的身份。
@@ -155,7 +161,7 @@ export function createDispatcher(ctx: HubContext) {
         if (!created.sessionId?.trim()) throw new Error('宿主未返回有效的 sessionId');
         sessionId = created.sessionId;
         // P74r10：同时记下这次建会话交给宿主的模型，之后员工换了模型才能看出与会话不一致。
-        ctx.store.table('bots').patch(bot.id, { sessionId, sessionStartedAt: ctx.clock.now(), sessionModel: bot.model });
+        setSessionSlot(ctx, bot.id, { slot: slot.slot, sessionId, sessionStartedAt: ctx.clock.now(), sessionModel: bot.model });
       } else await delivery.wait(ctx.host.deliver(sessionId!, packet, source));
       assertNotInterrupted();
       const now = ctx.clock.now();
@@ -164,7 +170,8 @@ export function createDispatcher(ctx: HubContext) {
       // 投递成功才开账：并发占用等早退路径不建账本行，避免把临时占位记成真实唤醒。
       try { openLedgerForWake(ctx, wake.id, Math.max(0, now - entry.enqueuedAt)); }
       catch (error) { try { ctx.logger.error('唤醒账本开账失败', error); } catch { /* 开账失败不能阻断投递。 */ } }
-      ctx.store.table('bots').patch(bot.id, { activity: 'thinking', activityText: `正在处理：${ownerReasonSummary(entry.reason, ctx)}`,
+      const lanesOpen = usesLanes(bot) ? openLaneCount(ctx, bot.id) : 1;
+      ctx.store.table('bots').patch(bot.id, { activity: 'thinking', activityText: lanesOpen > 1 ? multiLaneText(lanesOpen) : `正在处理：${ownerReasonSummary(entry.reason, ctx)}`,
         retryAt: null, updatedAt: now });
       ctx.runtime.lastDispatchAt = now;
       consumeRelatedPercepts(ctx, entry, wake.id, now);
@@ -190,12 +197,10 @@ export function createDispatcher(ctx: HubContext) {
       // 投递失败也要留一条账本：主人需要区分「没有理由」和「有理由但没送出去」。
       try { sealLedgerForWake(ctx, wake.id, { createIfMissing: true }); }
       catch (sealError) { try { ctx.logger.error('投递失败后封存唤醒账本失败', sealError); } catch { /* 账本故障不阻断故障收尾。 */ } }
-      if (delivery.expired() && bot.sessionId) {
+      if (delivery.expired() && laneBot.sessionId) {
         // 旧会话的迟到事件不能冒充重试回合；取消不再阻塞中心，重试会创建新会话。
-        if (ctx.store.table('bots').get(bot.id)?.sessionId === bot.sessionId) {
-          ctx.store.table('bots').patch(bot.id, { sessionId: null, sessionStartedAt: null });
-        }
-        void Promise.resolve().then(() => ctx.host.cancel(bot.sessionId!)).catch(error => {
+        releaseSession(ctx, bot.id, laneBot.sessionId);
+        void Promise.resolve().then(() => ctx.host.cancel(laneBot.sessionId!)).catch(error => {
           try { ctx.logger.warn('投递超时后的旧会话取消未完成', error); } catch { /* 不阻塞故障收尾。 */ }
         });
       }

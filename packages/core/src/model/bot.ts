@@ -23,6 +23,14 @@ export const BotSchema = z.strictObject({
   // P74r10：当前会话建立时交给宿主的模型（取值范围同 model，null 表示当时跟随宿主默认）。
   // 缺省表示不知道（升级前建的会话）；与 model 不一致时下一次叫醒重建会话，见 memory/rotation.ts。
   sessionModel: ModelChoiceSchema.optional(),
+  // W1b：总管按项目分线并行时，主线会话（上面三项）正被别的项目线占着，就用这里的备用会话（按需新建，空闲的复用）。
+  // 只有总管会有；旧档案没有这一项，按「没有备用会话」读，零迁移。
+  extraSessions: z.array(z.strictObject({
+    slot: z.number({ error: '必须是整数' }).int('必须是整数').min(1, '从 1 起'),
+    sessionId: nonempty.nullable(),
+    sessionStartedAt: timestamp.nullable(),
+    sessionModel: ModelChoiceSchema.optional(),
+  })).optional(),
   createdAt: timestamp, // 创建时间（Unix 毫秒）
   probationStartedAt: timestamp.optional(), // 实际开始试岗的时间；旧档案缺省时兼容使用创建时间
   probationEndsAt: timestamp.nullable(), // 试岗结束时间；空值表示不在试岗

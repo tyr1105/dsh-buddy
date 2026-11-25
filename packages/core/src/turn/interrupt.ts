@@ -1,4 +1,5 @@
 /** 主人打断是主动停止，不是机器人故障；先同步记终态，宿主后续结束事件才不会合成未交账。 */
+import { releaseSession, remainingLanesText } from '../scheduler/lanes.js';
 import type { HubContext } from '../engine/context.js';
 import type { WakeTicket } from '../model/wake.js';
 import { recordUsage } from '../quota/usage.js';
@@ -34,7 +35,12 @@ export function interruptWake(ctx: HubContext, wakeId: string, at: number): Wake
     && q.reason.kind === wake.reason.kind && q.reason.evidence.every(id => wake.reason.evidence.includes(id)))) removeEntry(ctx, entry.id);
   const bot = ctx.store.table('bots').get(wake.botId)!;
   // TurnEvent 没有 wakeId。下一回合用新工作会话隔离旧 ended/error；界面线程仍是同一个 botId。
-  ctx.store.table('bots').patch(bot.id, { sessionId: null, sessionStartedAt: null,
+  // W1b：只解绑被打断的回合用的那个会话（总管别的线照常在跑）；别的线还有回合时状态仍是「在想」。
+  // 投递中还没绑会话的回合沿用原来的做法：解绑原来的会话。
+  if (wake.sessionId) releaseSession(ctx, bot.id, wake.sessionId);
+  else ctx.store.table('bots').patch(bot.id, { sessionId: null, sessionStartedAt: null });
+  const stillOpen = ['paused', 'retired'].includes(bot.lifecycle) ? null : remainingLanesText(ctx, bot.id, wake.id);
+  ctx.store.table('bots').patch(bot.id, stillOpen !== null ? { activity: 'thinking', activityText: stillOpen, updatedAt: at } : {
     activity: ['paused', 'retired'].includes(bot.lifecycle) ? 'resting' : 'watching',
     activityText: bot.lifecycle === 'paused' ? '已停用（你停用的）' : bot.lifecycle === 'retired' ? '已归档' : '继续关注变化',
     updatedAt: at });

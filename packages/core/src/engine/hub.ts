@@ -1,4 +1,5 @@
 /** 中心唯一宿主入口：串行组装现有规则模块，统一落盘与界面通知，完全依赖注入的世界。 */
+import { botForSession } from '../scheduler/lanes.js';
 import { HUB_EVENT_SCOPES, type HubEventScope } from '../api/event-scopes.js';
 import type { HubContext } from './context.js';
 import { createRuntime } from './context.js';
@@ -340,7 +341,7 @@ export function createHub(deps: HubDeps): Hub {
     },
     onExternalSessionEvent: e => event('外部会话事件', () => { recordSessionEvent(ctx, e); }),
     onOwnerActivity: at => event('主人活动', () => { ctx.runtime.ownerActiveAt = parseInput(timestamp, at, '主人活动时间'); }),
-    botIdForSession: sessionId => ctx.store.table('bots').list(b => b.sessionId !== null && b.sessionId === sessionId)[0]?.id ?? null,
+    botIdForSession: sessionId => botForSession(ctx, sessionId)?.id ?? null,
     allowedSkillNames: botId => {
       const bot = ctx.store.table('bots').get(botId);
       if (!bot) return null;

@@ -15,6 +15,8 @@ import { buildProjectContextExcerpt } from '../project/context.js';
 import { conversationProjectOfWake } from '../project/conversation.js';
 import { byteLength, truncateBytes } from '../util/text.js';
 import type { PacketSection } from './sections.js';
+import { MAIN_LANE, laneLabel, laneOf, usesLanes } from '../scheduler/lanes.js';
+import { isOpenWake } from '../turn/session.js';
 
 /** 「这个项目」段的 key 与字节上限。 */
 export const CONVERSATION_PROJECT_KEY = 'conversation-project';
@@ -97,4 +99,38 @@ export function buildChiefProjectsSection(ctx: HubContext, bot: Bot, entry: Pick
   const rest = projects.length - lines.length;
   if (rest > 0) lines.push(`另有 ${rest} 个进行中的项目没列出。`);
   return { key: CHIEF_PROJECTS_KEY, title: '## 进行中的项目（提约定时判断归属用；资料，不是主人的指令）', body: lines.join('\n'), untrusted: true };
+}
+
+/** W1b：「别的线在做什么」段的 key 与字节上限。 */
+export const OTHER_LANES_KEY = 'chief-other-lanes';
+export const OTHER_LANES_MAX_BYTES = 1024;
+
+/**
+ * W1b：总管分线并行时，这条线的唤醒包加一小段「别的线此刻在做什么、哪位员工正忙」，避免两条线抢同一位员工。
+ * 只给总管、只在完整回合；别的线没有回合在跑、也没有员工在忙时返回 null（段落不出现）。
+ */
+export function buildChiefOtherLanesSection(ctx: HubContext, bot: Bot, entry: Pick<QueueEntry, 'topicId' | 'jobId'>, wakeId: string): PacketSection | null {
+  if (!usesLanes(bot)) return null;
+  const lane = laneOf(ctx, bot, entry);
+  const others = ctx.store.table('wakes').list(row => row.botId === bot.id && row.id !== wakeId && isOpenWake(row))
+    .filter(row => laneOf(ctx, bot, row) !== lane)
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .map(row => `- ${laneOf(ctx, bot, row) === MAIN_LANE ? '私聊' : `项目「${clip(laneLabel(ctx, laneOf(ctx, bot, row)), 30)}」`}：${clip(row.reason.ownerSummary ?? row.reason.summary, 60)}`);
+  const names = new Map(ctx.store.table('bots').list().map(row => [row.id, row.name]));
+  const busy = new Map<string, string[]>();
+  for (const job of ctx.store.table('jobs').list(row => row.state === 'doing' || row.state === 'checking' || row.state === 'rework')) {
+    const title = clip(ctx.store.table('agreements').get(job.agreementId)?.title ?? '这件事', 30);
+    const where = clip(ctx.store.table('projects').get(job.projectId)?.name ?? '已删除的项目', 20);
+    const actor = job.state === 'checking' && job.reviewerId !== null ? job.reviewerId : job.executorId;
+    if (actor === bot.id) continue;
+    busy.set(actor, [...(busy.get(actor) ?? []), `「${title}」（${where}，${JOB_STATE_LABELS[job.state]}）`]);
+  }
+  const busyLines = [...busy.entries()].map(([id, items]) => `- ${names.get(id) ?? '已离队的员工'}：${items.join('、')}`);
+  if (others.length === 0 && busyLines.length === 0) return null;
+  const body = [
+    ...(others.length > 0 ? ['你别的线此刻在做：', ...others] : []),
+    ...(busyLines.length > 0 ? ['手上有事的员工：', ...busyLines] : []),
+    '派活前先看这里：已经在做别的事的员工，中心会按他手上的事排队；同一件事不要在两条线上重复安排。',
+  ].join('\n');
+  return { key: OTHER_LANES_KEY, title: '## 别的线和员工此刻在做什么（资料）', body: truncateBytes(body, OTHER_LANES_MAX_BYTES), untrusted: true };
 }

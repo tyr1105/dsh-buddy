@@ -142,7 +142,8 @@ describe('P63 主人发言叫谁', () => {
     expect(topic.agentTurnsSinceOwner).toBe(0);
     expect(topic.pendingBotIds).toEqual([owner!.id]);
     expect(queued(fix.ctx, li!.id, topicId)).toBeUndefined();
-    expect(queued(fix.ctx, owner!.id, topicId)).toBeDefined();
+    // W1b：你亲自叫总管按平时的并发上限（2）算，小王在跑也不挡，总管直接开始；以前是你在场时上限 1，总管排队。
+    expect(queued(fix.ctx, owner!.id, topicId) ?? runningWake(fix.ctx, owner!.id)).toBeDefined();
   });
 
   it('已读沿用线程命令：主题未读清零', async () => {

@@ -11,6 +11,7 @@
  * - nativeGateContext：队友自己的工具（bash、write 这些）用的上下文。沙箱没确认时不带项目目录，
  *   「项目文件夹不用审批」只给经中心代写的动作，不给没有沙箱兜底的原生工具。
  */
+import { ownsSession } from '../scheduler/lanes.js';
 import { posix } from 'node:path';
 import type { HubContext } from '../engine/context.js';
 import type { Bot } from '../model/index.js';
@@ -72,7 +73,7 @@ export function gateContextFor(ctx: HubContext, bot: Bot, host?: ToolCallHostRep
   // 复盘回合（总控裁定第 1 条）：本卡的放宽一律不生效，所以复盘时不管宿主怎么报，都当作「沙箱没确认」，
   // 完全按旧规则判；守卫照旧以「复盘回合只读」拒绝，不记越界，也不新增任何 protected 判定。
   // P75r5c（审查 H2）：学习回合（变体 teach、事项键 learn:）同样只读，统一用 isReadonlySkillTurn 判断。
-  const reflection = ctx.store.table('wakes').list(w => w.botId === bot.id && w.sessionId === bot.sessionId
+  const reflection = ctx.store.table('wakes').list(w => w.botId === bot.id && ownsSession(bot, w.sessionId)
     && w.endedAt === null && ['running', 'delivering', 'committed'].includes(w.status) && isReadonlySkillTurn(w)).length > 0;
   const sandboxed = host?.sandboxed === true && !reflection;
   return { homeDir: bot.homeDir, ownerHome: ctx.ownerHome, maxCommandDepth: ctx.settings.c03.maxCommandDepth, sharedDir: `${ctx.settings.rootDir}/shared`, rootDir: ctx.settings.rootDir,
