@@ -257,19 +257,23 @@ describe('A3：同一回合先对同一份约定派活、后 revise（P74b 收�
 // ---------------------------------------------------------------------------
 // A4
 // ---------------------------------------------------------------------------
-describe('A4：约定只能建在总管自己负责的项目里', () => {
-  it('复现：放进负责人是小王的项目，提交被拒，不留半条记录', async () => {
+describe('A4（W1 放开）：约定可以放进别人负责的项目，主题里的话仍交给总管', () => {
+  it('放进负责人是小王的项目成功；主人在约定主题里说话，叫醒的是总管，不是负责人', async () => {
     const fix = await setup();
     const saved = await fix.hub.api.saveProject({ name: '老项目', memberBotIds: [fix.chief.id, fix.wang.id], ownerBotId: fix.wang.id });
     expect(saved.ok).toBe(true);
     const oldProject = fix.ctx.store.table('projects').list(row => row.name === '老项目')[0]!;
     await ownerSays(fix, fix.chief.id, '帮我做个每日报价页');
-    const topics = fix.ctx.store.table('projectTopics').count();
     const result = await submit(fix, { ...submitFixture(), projectId: oldProject.id });
-    expect(result.ok).toBe(false);
-    expect(failText(result)).toContain('自己负责的项目');
-    expect(fix.ctx.store.table('agreements').count()).toBe(0);
-    expect(fix.ctx.store.table('projectTopics').count()).toBe(topics);
+    expect(result.ok).toBe(true);
+    const agreement = fix.ctx.store.table('agreements').list()[0]!;
+    expect(agreement.projectId).toBe(oldProject.id);
+    expect(fix.ctx.store.table('projects').get(oldProject.id)!.ownerBotId).toBe(fix.wang.id);
+    const queuedBefore = fix.ctx.store.table('queue').list().map(row => row.id);
+    const { sendOwnerTopicMessage } = await import('../src/project/topics.js');
+    sendOwnerTopicMessage(fix.ctx, agreement.topicId, '页面再加一个导出按钮');
+    const queued = fix.ctx.store.table('queue').list(row => row.topicId === agreement.topicId && !queuedBefore.includes(row.id));
+    expect(queued.map(row => row.botId)).toEqual([fix.chief.id]);
   });
 
   it('正例：放进总管负责的项目成功；主人在约定主题里打「定了」，固定并叫醒的是总管，不是别人', async () => {

@@ -184,6 +184,9 @@ export const ProjectTopicSchema = z.strictObject({
   lastMessageAt: timestamp, // 最后一条消息的时间，项目页按它排序
   agentTurnsSinceOwner: count, // 主人上次说话后队友的累计发言次数
   pendingBotIds: z.array(nonempty), // 这一轮还在等谁开口
+  // W1：conversation 是这个项目的「项目对话」（每个项目最多一条，主人在里面直接跟总管说话）；
+  // 没有这一项或写 topic 的是普通主题（一件事一个主题）。旧数据没有这一项，按普通主题读，零迁移。
+  kind: z.enum(['topic', 'conversation'], { error: '主题类型必须是 topic 或 conversation' }).optional(),
 });
 export type ProjectTopic = z.infer<typeof ProjectTopicSchema>;
 

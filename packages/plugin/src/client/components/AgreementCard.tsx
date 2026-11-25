@@ -132,6 +132,10 @@ function bodyNodes(
           <p className="ah-agr-src">{card.originLine}</p>
         </div>
       ) : null}
+      {/* W1：「归属」一行（这件事放进哪个项目，core 给的原文），没有时不显示。 */}
+      {card.projectLine != null && card.projectLine !== '' ? (
+        <p className="ah-agr-project">{card.projectLine}</p>
+      ) : null}
       {showChanges && card.versionNo > 1 && (card.changeNote.trim() !== '' || card.removed.length > 0) ? (
         <div className="ah-agr-sec ah-agr-changes">
           {heading(AGR_TEXT.changes)}

@@ -20,6 +20,7 @@ import { knowledgePacketSection } from '../knowledge/index.js';
 import { buildProjectTasksSection } from './project-tasks.js';
 import { buildProjectContextSection } from './project-context.js';
 import { buildTopicSections } from './topic-section.js';
+import { buildChiefProjectsSection, buildConversationProjectSection } from './conversation-section.js';
 import { packetEvidence } from './evidence.js';
 import { approvalModelSummary } from '../util/owner-text.js';
 import { hasApprovalDecision } from '../util/approval-candidate.js';
@@ -189,6 +190,10 @@ export async function buildWakePacket(ctx: HubContext, rawBot: Bot, rawEntry: Qu
             const teamBody = buildTeamBody(ctx, bot, entry);
             if (teamBody !== '')
                 add(TEAM_SECTION_KEY, TEAM_SECTION_TITLE, teamBody);
+            // W1：项目对话里带「这个项目」段；私聊里带「进行中的项目」段，提约定时据此判断归属。
+            const projectSection = buildConversationProjectSection(ctx, bot, entry) ?? buildChiefProjectsSection(ctx, bot, entry);
+            if (projectSection)
+                sections.push(projectSection);
         }
         // P74c：「你手上的事」段（所有员工都可能有；复盘不带）。自带 4 KB 上限、可截断、不计入原有预算，总管守则和约定段不受它影响。
         // 组装出错只记日志、整段省略，不能让一件事的问题挡住这位员工的整个唤醒。

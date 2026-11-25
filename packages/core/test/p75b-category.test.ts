@@ -57,11 +57,11 @@ describe('4 类别：只靠唤醒包文字就能提交成功', () => {
     expect(agreementCategory(fix.ctx, agreement.id)).toBe(first);
   });
 
-  it('总管守则第 2 条含新增的一句，位置在「约定卡就是给主人的提问。」之后、「这件事属于你负责的」之前', () => {
-    expect(CHIEF_RULES_TEXT).toContain('约定卡就是给主人的提问。提交时 category 填这件事属于哪类工作，从约定段末尾的类别表里选一个。\n   这件事属于你负责的');
+  it('总管守则第 2 条含新增的一句，位置在「约定卡就是给主人的提问。」之后、W1 的归属一句之前', () => {
+    expect(CHIEF_RULES_TEXT).toContain('约定卡就是给主人的提问。提交时 category 填这件事属于哪类工作，从约定段末尾的类别表里选一个。\n   在项目对话里提的约定');
     // 只多了这一句：去掉它之后与原来的第 2 条衔接处一字不差。
     expect(CHIEF_RULES_TEXT.replace('提交时 category 填这件事属于哪类工作，从约定段末尾的类别表里选一个。', ''))
-      .toContain('约定卡就是给主人的提问。\n   这件事属于你负责的');
+      .toContain('约定卡就是给主人的提问。\n   在项目对话里提的约定');
   });
 
   it('约定段很长被截断时，类别表仍在最末一行，整段不超过上限', async () => {

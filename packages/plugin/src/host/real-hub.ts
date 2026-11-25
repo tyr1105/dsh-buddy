@@ -261,6 +261,7 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'dispatchTask': return run(() => api.dispatchTask(raw))
       // P63：开项目主题，整对象透传由 core zod 校验；之后发消息沿用 sendMessage，线程 id 就是主题 id。
       case 'createProjectTopic': return run(() => api.createProjectTopic(raw))
+      case 'openProjectConversation': return run(() => api.openProjectConversation(raw))
       case 'taskBlock': return run(() => api.taskBlock(reqStr(raw, 'id')))
       case 'taskResume': return run(() => api.taskResume(reqStr(raw, 'id')))
       case 'reportDone': return run(() => api.reportDone(reqStr(raw, 'id')))

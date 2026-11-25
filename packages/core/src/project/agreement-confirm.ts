@@ -21,6 +21,8 @@ import { writeOutreachAudit } from '../outreach/audit.js';
 import { emitInboxChange } from '../outreach/inbox.js';
 import { postThread, wakeForOwnerMessage } from '../outreach/thread.js';
 import { confirmNeedsNoChief, onAgreementLocked } from '../job/agreement-hooks.js';
+import { isConversationTopic } from './conversation.js';
+import { wakeTopicResponder } from './topics.js';
 import { agreementForTopic, applyLock, pendingAgreementsOf } from './agreements.js';
 import { followTopicTitle, versionTitleOf } from './agreement-title.js';
 
@@ -121,7 +123,10 @@ function lockWithOwnerMessage(ctx: HubContext, agreement: Agreement, input: Omit
   // P74f-2：确认的是写明「不再做」的版本、中心刚把这件事停下时，同样不叫醒总管（固定之后这件事已不是进行中，所以不能只看进行中）。
   if (confirmNeedsNoChief(ctx, agreement.id)) return;
   const chief = ctx.store.table('bots').get(agreement.botId);
-  if (chief) wakeForOwnerMessage(ctx, chief, message);
+  if (!chief) return;
+  // W1：卡片发在项目对话里时，按主题的方式叫醒总管（回复落在项目对话，不落到私聊）。
+  if (ctx.store.table('projectTopics').get(agreement.originThread)) wakeTopicResponder(ctx, agreement.originThread, chief.id, message.id);
+  else wakeForOwnerMessage(ctx, chief, message);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,11 +192,16 @@ export function ambiguousConfirmText(count: number): string {
   return `现在有 ${count} 张约定在等你确认，请在要确认的那张卡上点「定了」。`;
 }
 
-/** 总管私聊里主人已经看到卡片的待确认约定（最新版待确认且已落楼），按 updatedAt 从新到旧。 */
-function seenPendingIn(ctx: HubContext, threadId: string): Agreement[] {
-  return pendingAgreementsOf(ctx, threadId).filter(row => {
+/**
+ * 总管私聊（或 W1 的项目对话）里主人已经看到卡片的待确认约定（最新版待确认且已落楼），按 updatedAt 从新到旧。
+ * 约定卡发在约定的 originThread：总管私聊（线程 id 就是总管 id）或项目对话（线程 id 是那个主题 id）。
+ */
+export function seenPendingIn(ctx: HubContext, threadId: string): Agreement[] {
+  const rows = ctx.store.table('projectTopics').get(threadId) !== null
+    ? ctx.store.table('agreements').list(row => row.state === 'pending').sort((a, b) => b.updatedAt - a.updatedAt)
+    : pendingAgreementsOf(ctx, threadId);
+  return rows.filter(row => {
     const latest = row.versions[row.versions.length - 1]!;
-    // 约定卡只发在总管私聊，所以必须就是这个私聊里的约定。
     return row.originThread === threadId && latest.state === 'pending' && latest.cardMessageId !== null;
   });
 }
@@ -204,6 +214,7 @@ export interface ConfirmByTextResult { locked: Agreement | null; ambiguous: numb
  * 返回固定了哪一份（P74e：调用方据此决定要不要叫醒总管——这份约定有正在做的事时不叫，见方案 5.3、5.4）。
  * 规则：
  * - 主题线程：只认这个主题自己的那一张；
+ * - 项目对话（W1）：和总管私聊一样，认卡片发在这里的待确认约定；
  * - 总管私聊（含 DSH 会话直聊）：待确认约定恰好一张时照旧识别；两张以上时不识别、不固定任何一张，
  *   中心落一句「现在有 n 张约定在等你确认，请在要确认的那张卡上点「定了」。」，返回 ambiguous 为 n。
  * 同步函数，任何异常都捕获后记日志并返回「没有固定」，绝不能让主人发消息失败。
@@ -213,7 +224,8 @@ export function confirmByTextDetail(ctx: HubContext, threadId: string, message: 
   try {
     if (!isConfirmPhrase(message.text)) return none;
     let agreement: Agreement | null;
-    if (ctx.store.table('projectTopics').get(threadId)) {
+    const topic = ctx.store.table('projectTopics').get(threadId);
+    if (topic && !isConversationTopic(topic)) {
       const found = agreementForTopic(ctx, threadId);
       agreement = found?.state === 'pending' ? found : null;
     } else {
