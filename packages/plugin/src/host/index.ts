@@ -21,7 +21,7 @@ import {
 } from '@agent-hub/core'
 import { FixtureHub } from './hub-facade.js'
 import type { HubFacade } from './hub-facade.js'
-import { DisabledHub, LazyHubFacade, RealHubFacade } from './real-hub.js'
+import { DisabledHub, LazyHubFacade, RealHubFacade, type HostFileOpener } from './real-hub.js'
 import { registerRoutes } from './routes.js'
 import { registerEvents } from './events.js'
 import { safe } from './safe.js'
@@ -237,6 +237,21 @@ export function apply(ctx: any, config: HostConfig = {}): void {
  * 引擎句柄在 createHub 之后立刻登记（不等 onReady），启动期间被卸载也能 stop；
  * start 完成后若已卸载，立即 stop 再返回（手册 2.8 的 `if (state.stopped)` 检查）。
  */
+/**
+ * W12：取宿主的 sessionController.openWorkspacePath（DSH 0.2.2 起有）。必须按方法调用，取出来裸调会丢 this。
+ * 宿主没有这个接口时返回 undefined。
+ */
+export function hostFileOpener(ctx: any): HostFileOpener | undefined {
+  let sc: any
+  try { sc = ctx?.sessionController } catch { sc = undefined }
+  if (typeof sc?.openWorkspacePath !== 'function') return undefined
+  return async request => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
+    try { await sc.openWorkspacePath(request, controller.signal) } finally { clearTimeout(timer) }
+  }
+}
+
 async function startEngine(ctx: any, rootDir: string, facade: LazyHubFacade, engineState: { handle: EngineHandle | null; stopped: boolean }, roster: SessionRoster, mints: Map<string, string>): Promise<void> {
   const running = new Map<string, boolean>()
   let real: RealHubFacade | null = null
@@ -309,7 +324,8 @@ async function startEngine(ctx: any, rootDir: string, facade: LazyHubFacade, eng
   // M07/D06：打断按钮经路由命令 interruptBot 直接交给 core（取消、线程消息、恢复
   // 感知都由 core 完成），插件不自己 cancel、不写系统消息。
   // P74r4b：传入 rootDir，宿主打开预览之前据此确认目标在中心的预览目录之内。
-  real = new RealHubFacade(hub, store, rootDir)
+  // W12：卡片上的文件交给 DSH 自带的「用默认应用打开 / 在访达中显示」；宿主没有这个接口时由门面退回系统命令。
+  real = new RealHubFacade(hub, store, rootDir, hostFileOpener(ctx))
   facade.setImpl(real)
   console.log(`[agent-hub] 引擎已启动 rootDir=${rootDir}`)
 }

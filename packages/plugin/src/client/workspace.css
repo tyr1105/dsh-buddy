@@ -1570,6 +1570,14 @@ nav[data-dsh-buddy-nav-cell='true'] { margin-top: 34px; }
 .ah-ev-file, .ah-ev-link { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--dsw-alias-separator); border-radius: 6px; padding: 3px 8px; background: var(--dsw-alias-bg-inset); color: var(--dsw-alias-text-primary); font-size: 12px; overflow-wrap: anywhere; }
 /* P74i-m2（第四次审查中-2）：链接证据是员工写的地址，画成不可点的文字（可以选中复制），颜色不再用链接色。 */
 .ah-ev-link { color: var(--dsw-alias-text-primary); user-select: text; }
+.ah-ev-file-wrap { display: inline-grid; gap: 4px; }
+.ah-ev-file-row { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ah-ev-file.is-openable { cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.ah-ev-file.is-openable:hover:not(:disabled) { border-color: var(--dsw-alias-text-secondary); text-decoration: underline; }
+.ah-ev-file.is-openable:focus-visible, .ah-ev-file-reveal:focus-visible { outline: 2px solid var(--dsw-alias-text-secondary); outline-offset: 1px; }
+.ah-ev-file-reveal { border: none; background: none; padding: 0 2px; font: inherit; font-size: 11px; color: var(--dsw-alias-text-secondary); cursor: pointer; text-decoration: underline; }
+.ah-ev-file-reveal:disabled, .ah-ev-file.is-openable:disabled { cursor: default; opacity: 0.6; }
+.ah-ev-file-error { display: grid; gap: 2px; font-size: 12px; color: var(--dsw-alias-warning-text, var(--dsw-alias-text-secondary)); }
 .ah-ev-tag { flex: none; font-size: 10px; color: var(--dsw-alias-text-secondary); border: 1px solid var(--dsw-alias-separator); border-radius: 3px; padding: 0 3px; }
 /* 测试证据：一句结果，左边细线（结果不符时仍用同一形状，结论章已用文字表达）。 */
 .ah-ev-test { border-left: 2px solid var(--dsw-alias-success, var(--dsw-alias-accent)); padding-left: 8px; color: var(--dsw-alias-text-primary); font-size: 12px; overflow-wrap: anywhere; }
@@ -1601,6 +1609,35 @@ nav[data-dsh-buddy-nav-cell='true'] { margin-top: 34px; }
 .ah-shot-dialog img { max-width: min(88vw, 860px); max-height: 82vh; height: auto; border-radius: 6px; }
 /* 「关闭」在弹窗右上角；按钮本身可 Tab 到达（焦点圈的一部分）。 */
 .ah-shot-dialog-close { position: absolute; top: 8px; right: 8px; }
+/* W12：文件预览侧栏。照 DSH 自带的文件预览侧栏：左边一条细分隔线，38 像素标题行（下边 .5 像素线），
+   28 像素的图标按钮，正文 10/12 像素内边距、可滚动。默认占页面 45%，左边缘可拖动。页面窄时铺满整页。 */
+.ah-fp { position: relative; flex: 0 0 auto; width: 45%; min-width: 320px; max-width: 70%; display: flex; flex-direction: column; min-height: 0;
+  background: var(--dsw-alias-bg-base); border-left: .5px solid var(--dsw-alias-border-l3, var(--dsw-alias-separator)); }
+.ah-fp-resize { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; z-index: 2; touch-action: none; }
+.ah-fp-resize:hover, .ah-fp-resize:focus-visible { background: color-mix(in srgb, var(--dsw-alias-accent) 35%, transparent); outline: none; }
+.ah-fp-head { box-sizing: border-box; flex: none; display: flex; align-items: center; gap: 4px; height: 38px; padding: 0 6px 0 16px;
+  border-bottom: .5px solid var(--dsw-alias-border-l3, var(--dsw-alias-separator)); }
+.ah-fp-icon { flex: none; display: inline-flex; margin-right: 4px; }
+.ah-fp-name { flex: 1; min-width: 0; margin-right: 12px; font-size: 13px; color: var(--dsw-alias-label-primary, var(--dsw-alias-text-primary));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ah-fp-tool { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 6px; line-height: 1;
+  border: none; background: none; cursor: pointer; border-radius: var(--dsw-radius-sm, 6px); color: var(--dsw-alias-label-secondary, var(--dsw-alias-text-secondary)); }
+.ah-fp-tool:hover { background: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2)); }
+.ah-fp-tool:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.ah-fp-tool:disabled { opacity: .5; cursor: default; }
+.ah-fp-tool-text { font-size: 12px; white-space: nowrap; padding: 0 2px; }
+.ah-fp-changed { flex: none; margin: 0; padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-label-secondary, var(--dsw-alias-text-secondary));
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base)); border-bottom: .5px solid var(--dsw-alias-border-l1, var(--dsw-alias-separator)); }
+.ah-fp-scroll { flex: 1; min-height: 0; overflow: auto; }
+.ah-fp-doc { min-width: 0; padding: 10px 12px; white-space: normal; }
+.ah-fp-pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; font: var(--dsw-font-markdown-code-block, 12px/1.6 monospace); }
+.ah-fp-status { margin: 0; padding: 12px 10px; font-size: 13px; line-height: 1.6; color: var(--dsw-alias-label-secondary, var(--dsw-alias-text-secondary)); }
+@container buddy (max-width: 767px) {
+  .ah-fp { position: absolute; inset: 0; width: auto !important; min-width: 0; max-width: none; z-index: 5; border-left: none; }
+  .ah-fp-resize { display: none; }
+}
+/* 正在预览的那个文件名：浅色底，和 DSH 文件列表里选中的一行一样。 */
+.ah-ev-file.is-previewing { background: var(--dsw-alias-accent-muted, var(--dsw-alias-bg-layer-2)); }
 
 /* 约定卡两栏（B2）：沿用「这次做 / 这次不做」的版式（ah-agr-split），只在有 jobSplit 时出现。 */
 /* P74h-m1 第 3 处：两栏都从顶部对齐——栏里的行不随栏高拉伸（条目少的栏内容不再落到栏的中部），

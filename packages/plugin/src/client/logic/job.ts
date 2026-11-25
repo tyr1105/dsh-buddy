@@ -47,6 +47,11 @@ export const JOB_TEXT = {
   shotOpen: '点开大图',
   shotDialogLabel: '证据大图',
   shotClose: '关闭',
+  // W12：文件证据交给电脑打开
+  fileOpen: '查看',
+  fileOpening: '正在打开…',
+  fileReveal: '在访达中显示',
+  fileRevealOther: '在文件夹中显示',
   // 私聊里兜底的 job_card 占位（交付卡等 P74i 再画）
   jobCardPending: '这件事的卡片',
   // 交付卡（P74i）

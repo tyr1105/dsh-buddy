@@ -11,6 +11,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { EvidenceItemView } from '../../shared/views.js'
 import { JOB_TEXT, evidenceTag, loadShot, returnFocus, trapTabIn, verdictClass, type ShotEntry, type ShotReader } from '../logic/job.js'
 import { api } from '../api.js'
+import { useStore } from '../store.js'
+import { filePreviewStore, isPreviewing, openFilePreview } from '../logic/file-preview.js'
 
 /**
  * 截图读取命令的定位参数：core 的卡片视图不带内部编号，由接线的一层补上
@@ -169,9 +171,111 @@ function evidenceNode(evidence: EvidenceItemView['evidence'][number], shotRef: S
       </span>
     )
   }
+  // W12：有定位参数时文件小条可以点（交给电脑打开），旁边一个「在访达中显示」；没有定位参数（旧数据、预览）时仍是一行文字。
+  if (shotRef !== null) return <FileChip key={evidence.id} shotRef={shotRef} evidence={evidence} />
   return (
     <span key={evidence.id} className="ah-ev-file">
       <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
+    </span>
+  )
+}
+
+/** 打开文件的函数形状：与 client/api.ts 的 openJobEvidence 一致，测试里注入假实现。 */
+export type FileOpener = (input: ShotRef & { evidenceId: string; action: 'open' | 'reveal' }) => Promise<{ ok: boolean; error?: string; path?: string }>
+
+/** 默认的打开办法：交给宿主（用默认应用打开 / 在访达中显示）。 */
+export const defaultFileOpener: FileOpener = input => api.openJobEvidence(input)
+
+/** 读文本的函数形状：与 client/api.ts 的 readJobEvidenceText 一致，测试里注入假实现。 */
+export type FileTextReader = (input: ShotRef & { evidenceId: string }) =>
+  Promise<{ ok: boolean; error?: string; data?: { text: string; format: 'markdown' | 'plain'; name: string } }>
+
+export const defaultFileTextReader: FileTextReader = input => api.readJobEvidenceText(input)
+
+/** 能在当前页面直接看的纯文本格式（与 core 的 EVIDENCE_TEXT_EXTS 一致；core 读的时候还会再查一次）。 */
+const TEXT_EXTS = ['md', 'markdown', 'txt', 'log', 'csv', 'tsv', 'json', 'yaml', 'yml']
+
+/** 这条证据点文件名时能不能在当前页面直接看。 */
+export function evidenceViewableHere(evidence: EvidenceItemView['evidence'][number]): boolean {
+  if (evidence.kind !== 'file' || evidence.path === null) return false
+  const match = /\.([^./\\]+)$/.exec(evidence.path)
+  return match !== null && TEXT_EXTS.includes(match[1]!.toLowerCase())
+}
+
+/** 「在访达中显示」按系统换说法：苹果电脑叫访达，其余叫文件夹。读不到系统时按苹果电脑。 */
+function revealLabel(): string {
+  try {
+    const platform = String((globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator?.platform ?? '')
+    if (platform !== '' && !/mac/i.test(platform)) return JOB_TEXT.fileRevealOther
+  } catch { /* 读不到按苹果电脑 */ }
+  return JOB_TEXT.fileReveal
+}
+
+/**
+ * 文件小条（W12）：点文件名查看——md、txt 这类文本在页面右边的预览侧栏里看（DSH 自带的 Markdown 渲染，卡片留在左边），
+ * 其余格式（pdf、表格、图片……）交给电脑上的默认应用；旁边的小按钮在访达中显示。
+ * 打不开时在下面一行写原因，带路径时路径可以选中复制。
+ */
+export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['evidence'][number]; open?: FileOpener; readText?: FileTextReader }): ReactNode {
+  const { evidence, shotRef } = props
+  const open: FileOpener = props.open ?? defaultFileOpener
+  const readText: FileTextReader = props.readText ?? defaultFileTextReader
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<{ error: string; path: string | null } | null>(null)
+  const nameRef = useRef<HTMLButtonElement | null>(null)
+  const previewRef = { jobId: shotRef.jobId, submissionId: shotRef.submissionId, evidenceId: evidence.id }
+  const previewing = isPreviewing(useStore(filePreviewStore), previewRef)
+  // 侧栏关掉时焦点如果掉到了页面最外面（侧栏里按了 Esc 或「关闭」），交回这个文件名。
+  const wasPreviewing = useRef(false)
+  useEffect(() => {
+    if (wasPreviewing.current && !previewing) {
+      let active: unknown = null
+      try { active = document.activeElement } catch { active = null }
+      try { if (active === null || active === document.body) returnFocus(nameRef.current) } catch { /* 测试替身没有 document */ }
+    }
+    wasPreviewing.current = previewing
+  }, [previewing])
+  const fail = (error: unknown): void => {
+    setBusy(false)
+    setProblem({ error: error instanceof Error ? error.message : String(error), path: null })
+  }
+  const run = (action: 'open' | 'reveal'): void => {
+    if (busy) return
+    setBusy(true)
+    setProblem(null)
+    void open({ ...shotRef, evidenceId: evidence.id, action })
+      .then(result => {
+        setBusy(false)
+        if (!result.ok) setProblem({ error: result.error ?? '没能打开', path: typeof result.path === 'string' && result.path !== '' ? result.path : null })
+      })
+      .catch(fail)
+  }
+  // md、txt 这类：在页面右边的预览侧栏里看（读取、出错都显示在侧栏里）；其余格式交给默认应用。
+  const view = (): void => {
+    if (busy) return
+    if (!evidenceViewableHere(evidence)) { run('open'); return }
+    setProblem(null)
+    void openFilePreview(previewRef, evidence.label, readText)
+  }
+  const reveal = revealLabel()
+  return (
+    <span className="ah-ev-file-wrap">
+      <span className="ah-ev-file-row">
+        <button type="button" ref={nameRef} className={`ah-ev-file is-openable${previewing ? ' is-previewing' : ''}`} title={JOB_TEXT.fileOpen} aria-label={`${JOB_TEXT.fileOpen}：${evidence.label}`}
+          aria-pressed={evidenceViewableHere(evidence) ? previewing : undefined} disabled={busy} onClick={view}>
+          <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
+        </button>
+        <button type="button" className="ah-ev-file-reveal" title={reveal} aria-label={`${reveal}：${evidence.label}`}
+          disabled={busy} onClick={() => { run('reveal') }}>
+          {busy ? JOB_TEXT.fileOpening : reveal}
+        </button>
+      </span>
+      {problem !== null ? (
+        <span className="ah-ev-file-error" role="alert">
+          <span>{problem.error}</span>
+          {problem.path !== null ? <code className="ah-job-preview-path">{problem.path}</code> : null}
+        </span>
+      ) : null}
     </span>
   )
 }

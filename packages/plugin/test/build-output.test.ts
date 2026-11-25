@@ -1,7 +1,8 @@
 /**
  * 构建产物：先跑一次 build，再检查两份产物的契约（任务卡「测试」一节）。
  * - lib/client.js 以 window.__ModuleLoader__.load( 开头、只出现一次、顶层没有 import/export、
- *   不含 @deepseek-ai/dsh-client-ui-primitives；
+ *   @deepseek-ai/dsh-client-ui-primitives 只在 logic/dsh-primitives.ts 里按需取一次（W12：借 DSH 的 Markdown 渲染器），
+ *   不在加载时 require，取不到时有退路；
  * - lib/index.js 能被 import() 并导出 name/inject/apply；
  * - styles.css 里没有十六进制/rgb/hsl 颜色。
  */
@@ -33,8 +34,10 @@ describe('lib/client.js（经典脚本契约）', () => {
     expect(firstLine.startsWith('import ')).toBe(false)
     expect(firstLine.startsWith('export ')).toBe(false)
   })
-  it('不含 @deepseek-ai/dsh-client-ui-primitives', () => {
-    expect(source).not.toContain('@deepseek-ai/dsh-client-ui-primitives')
+  it('@deepseek-ai/dsh-client-ui-primitives 只出现一次，且只在按需取用的函数里 require（不打进包里、加载时不取）', () => {
+    expect(source.split('@deepseek-ai/dsh-client-ui-primitives').length - 1).toBe(1)
+    expect(source).toContain('var MODULE_ID = "@deepseek-ai/dsh-client-ui-primitives"')
+    expect(source).toMatch(/typeof require === "function" \? require\(MODULE_ID\)/)
   })
   it('没有 sourcemap 尾注', () => {
     expect(source).not.toContain('sourceMappingURL')

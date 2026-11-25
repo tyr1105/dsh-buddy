@@ -684,6 +684,12 @@ export class FixtureHub implements HubFacade {
       const sample: { ok: false; path: string; error: string } = { ok: false, path: '/样例/交付/index.html', error: '样例环境不打开文件' }
       return sample
     }
+    // W12：打开卡片上的文件在样例模式里同样不打开任何东西，只把样例路径交给界面显示。
+    if (name === 'readJobEvidenceText') return { ok: true, data: { text: '# 样例报告\n\n这是样例环境里的报告正文。', format: 'markdown', name: '报告.md' } }
+    if (name === 'openJobEvidence') {
+      const sample: { ok: false; path: string; error: string } = { ok: false, path: '/样例/交付/报告.md', error: '样例环境不打开文件' }
+      return sample
+    }
     // P74i：一件事的四个命令（验收、选办法、回合上限、停住了的答复）在样例模式里改样例状态：
     // 对应的「待你处理」条目了结、总览计数减掉、条目所在线程落一句固定话；没有对应条目时安静成功。
     if (name === 'acceptJob' || name === 'chooseJobOption' || name === 'answerJobCap' || name === 'answerJobStall') {
