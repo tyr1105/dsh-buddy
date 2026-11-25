@@ -187,6 +187,8 @@ export function saveProject(ctx: HubContext, raw: unknown, actor = 'owner', audi
     // P60：背景的更新人和时间同样只由上下文命令维护，保存项目时原样带上，不能被这里冲掉。
     ...(existing?.backgroundUpdatedAt != null
       ? { backgroundUpdatedAt: existing.backgroundUpdatedAt, backgroundUpdatedBy: existing.backgroundUpdatedBy ?? null } : {}),
+    // W7a：工作文件夹只走主人的挂接命令（work-folder.ts），保存项目时原样带上，不能被这里冲掉或改掉。
+    ...(existing?.workFolder != null ? { workFolder: existing.workFolder } : {}),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     archivedAt: existing?.archivedAt ?? null,

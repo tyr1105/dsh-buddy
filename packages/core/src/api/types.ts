@@ -619,6 +619,8 @@ export interface UiApi {
   setGrant(input: unknown): Promise<CommandResult<Grant>>;
   revokeGrant(input: unknown): Promise<CommandResult<{ revoked: boolean }>>;
   saveProject(input: unknown): Promise<CommandResult<Project>>;
+  /** W7a：挂接（path 为路径）或取消（path 为 null）项目的工作文件夹，只读。 */
+  setProjectWorkFolder(input: unknown): Promise<CommandResult<Project>>;
   pauseProject(id: string): Promise<CommandResult<Project>>;
   resumeProject(id: string): Promise<CommandResult<Project>>;
   completeProject(id: string): Promise<CommandResult<Project>>;

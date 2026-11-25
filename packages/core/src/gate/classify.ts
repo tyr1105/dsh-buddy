@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { parseInput, validationMessage } from '../engine/validation.js';
 import { classifyCommand, classifyArgv } from './commands.js';
-import { classifyPath, mostDangerous, resolveGatePath } from './paths.js';
+import { WORK_FOLDER_WRITE_REFUSAL, classifyPath, mostDangerous, resolveGatePath, within } from './paths.js';
 import { classifyUrl } from './network-options.js';
 import { scanOpaque } from './sandbox-rules.js';
 import { pathArguments, editTargetPaths, selectedCommand, commandArguments } from './tool-targets.js';
@@ -73,7 +73,29 @@ const ContextSchema = z.object({ homeDir: z.string().min(1), sharedDir: z.string
     // P69：沙箱开关、临时目录、项目目录。缺省都等于旧行为。
     sandboxed: z.boolean().optional(), tmpDirs: z.array(z.string()).optional(), projectDirs: z.array(z.string()).optional(),
     // P74r16a：中心根目录的真实路径。zod 的普通对象会悄悄丢掉没声明的字段，不声明的话它传不进分类器。
-    realRootDir: z.string().optional() });
+    realRootDir: z.string().optional(),
+    // W7a：项目挂接的工作文件夹（全部、本人所在项目的）。
+    workFolders: z.array(z.string()).optional(), memberWorkFolders: z.array(z.string()).optional() });
+/**
+ * W7a：项目挂接的工作文件夹只读。命令分类器对 rm、sed -i、git commit 这类写法给的是「要主人确认」，
+ * 批了就能写进去；这里在分类之后再查一遍：命令要主人确认、并且执行目录在工作文件夹里，
+ * 或命令原文里有落在工作文件夹里的路径，就整条拒绝（不计越界）。宁可误拦（例如在仓库里跑测试），
+ * 不让主人的文件夹被改；要改的东西放到隔离副本里做，是 W7b 的事。
+ */
+function guardWorkFolders(result: Classification, raw: string, ctx: z.infer<typeof ContextSchema>): Classification {
+    const folders = ctx.workFolders ?? [];
+    // 已经判成 A 的命令，分类器看懂了它写到哪（写的位置都过了 classifyPath，落在工作文件夹里的早被拒）；
+    // 例如把工作文件夹里的文件 cp 到自己的 work 下，这是读，不拦。要主人确认（B、C、D）的再查，免得批了就写进去；
+    // 沙箱里「看不懂、交给沙箱」的（sandboxed_exec）也再查一遍，不只靠 DSH 的沙箱。
+    if (folders.length === 0 || result.readOnly === true || result.cls === 'protected'
+        || (result.cls === 'A' && result.subclass !== 'sandboxed_exec')) return result;
+    const inFolder = (path: string): boolean => folders.some(dir => within(path, dir));
+    const cwdInFolder = ctx.cwd !== undefined && inFolder(resolveGatePath(ctx.cwd, { ...ctx, cwd: undefined }));
+    const tokens = raw.split(/[\s;|&<>()'"=,`]+/).filter(token => token.includes('/') || token.startsWith('~'));
+    const named = tokens.map(token => resolveGatePath(token, ctx)).filter(path => path.startsWith('/') && inFolder(path));
+    if (!cwdInFolder && named.length === 0) return result;
+    return mostDangerous([result, { cls: 'protected', reason: WORK_FOLDER_WRITE_REFUSAL, subclass: 'work_folder_readonly', paths: named }]);
+}
 /** 把宿主工具适配为读、写或命令分类；无法识别的工具和参数保守进入审批。 */
 export function classifyToolCall(tool: string, args: unknown, gctx: GateContext): Classification {
     const ctx = parseInput(ContextSchema, gctx, '动作上下文');
@@ -110,9 +132,11 @@ export function classifyToolCall(tool: string, args: unknown, gctx: GateContext)
             return { cls: 'C', reason: '执行命令参数缺失' };
         const argv = commandArguments(input);
         // 沙箱开着时，内联代码放行之后还要在命令原文里找一遍写死的凭据路径（尽力而为，见 sandbox-rules.ts）。
-        if (argv)
-            return scanOpaque(classifyArgv([command, ...argv], commandCtx), [command, ...argv].join(' '), commandCtx);
-        return scanOpaque(classifyCommand(command, commandCtx), command, commandCtx);
+        const raw = argv ? [command, ...argv].join(' ') : command;
+        const result = argv
+            ? scanOpaque(classifyArgv([command, ...argv], commandCtx), raw, commandCtx)
+            : scanOpaque(classifyCommand(command, commandCtx), raw, commandCtx);
+        return guardWorkFolders(result, raw, commandCtx);
     }
     const paths = shape.paths?.(input, pathContext) ?? [];
     if (!paths.length)

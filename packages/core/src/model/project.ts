@@ -139,6 +139,22 @@ export const ProjectContextProposalSchema = z.strictObject({
 export type ProjectContextProposal = z.infer<typeof ProjectContextProposalSchema>;
 
 /**
+ * 项目挂接的工作文件夹（W7a）：主人电脑上已有的一个文件夹或代码仓库，项目成员只读。
+ *
+ * 为什么单独一项而不是复用 sharedDir：sharedDir 是中心建的产物目录（成员可写），
+ * 工作文件夹是主人自己的东西，中心不建、不写、不删，员工也不能写；两者的边界规则完全不同。
+ * path 是主人选的写法（规范化后），realPath 是挂接时解析符号链接后的真实位置，两者都参与读写判断。
+ * 只有主人能挂接、更换、取消（approvedBy 固定 owner），校验规则见 project/work-folder.ts。
+ */
+export const ProjectWorkFolderSchema = z.strictObject({
+  path: nonempty.max(1000, '工作文件夹路径不能超过 1000 字'),
+  realPath: nonempty.max(1000, '工作文件夹路径不能超过 1000 字'),
+  approvedAt: timestamp,
+  approvedBy: z.literal('owner', { error: '工作文件夹只能由主人挂接' }),
+});
+export type ProjectWorkFolder = z.infer<typeof ProjectWorkFolderSchema>;
+
+/**
  * 一个项目。ownerBotId 可空（尚未指定负责人）；成员是队友 id 数组，项目就是工作区。
  * sharedDir 只存路径字符串，本模型不创建目录、不校验文件；路径边界（必须落在
  * rootDir/projects 子树内）由 project/service.ts 在保存时判断。
@@ -162,6 +178,8 @@ export const ProjectSchema = z.strictObject({
   // P60：项目背景最近一次由谁、什么时候更新；旧项目没有这两项，读取时按「没更新过」处理。
   backgroundUpdatedAt: timestamp.nullable().optional(),
   backgroundUpdatedBy: text.max(100, '背景更新人不能超过 100 字').nullable().optional(), // 'owner' 或队友 id
+  // W7a：主人挂接的工作文件夹（只读）；旧项目没有这一项，按「没挂接」处理。
+  workFolder: ProjectWorkFolderSchema.nullable().optional(),
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: timestamp.nullable(), // 归档时间；软归档不删任务

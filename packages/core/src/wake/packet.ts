@@ -9,6 +9,7 @@ import { formatAgo, formatDuration, formatShort, isInQuietHours, localDateKey, l
 import { byteLength, truncateBytes } from '../util/text.js';
 import { readableResources } from '../org/access.js';
 import { RESOURCE_KIND_LABELS } from '../model/resource.js';
+import { memberWorkFolders } from '../project/work-folder.js';
 import { teamSummary } from '../peer/index.js';
 import { effectiveAutonomy } from '../tools/common.js';
 import { fitSections, type PacketSection } from './sections.js';
@@ -95,8 +96,13 @@ function addResources(ctx: HubContext, bot: Bot, add: (key: string, title: strin
         resources: ctx.store.table('resources').list(),
         grants: ctx.store.table('grants').list(),
     }, bot.id, ctx.clock.now());
-    if (readable.length === 0) return;
-    const lines = readable.map(r => `- ${r.name}（${RESOURCE_KIND_LABELS[r.kind]}）：${r.locator}${r.sensitivity === 'restricted' ? '（授权）' : ''}`);
+    // W7a：本人所在项目挂接的工作文件夹（主人电脑上已有的文件夹或代码仓库），只读；和资料一样只给位置，不放正文。
+    const folders = memberWorkFolders(ctx, bot.id);
+    if (readable.length === 0 && folders.length === 0) return;
+    const lines = [
+        ...readable.map(r => `- ${r.name}（${RESOURCE_KIND_LABELS[r.kind]}）：${r.locator}${r.sensitivity === 'restricted' ? '（授权）' : ''}`),
+        ...folders.map(({ project, folder }) => `- 项目「${project.name}」的工作文件夹（只读，不能写改删）：${folder.path}`),
+    ];
     add('resources', '## 可查资料', lines.join('\n'));
 }
 /** 时间明确写北京时间，即使宿主机器使用另一时区，包内时间也不随环境漂移。 */

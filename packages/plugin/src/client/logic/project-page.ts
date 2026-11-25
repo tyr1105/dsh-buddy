@@ -177,3 +177,21 @@ export function botOptions(
   }
   return [...byId.values()]
 }
+
+/**
+ * W7a：项目挂接的工作文件夹（主人电脑上已有的文件夹或代码仓库，成员只读）。
+ * 没挂接时 value 为空、显示「未挂接」；挂了显示目录名，完整路径进悬停提示、可复制。
+ */
+export const WORK_FOLDER_LABEL = '工作文件夹（只读）'
+export const WORK_FOLDER_EMPTY_TEXT = '未挂接。挂接后，项目成员能读这个文件夹（含代码仓库），不能改。'
+export function workFolderRow(folder: { path: string } | null | undefined): ProjectPathRow | null {
+  if (folder == null) return null
+  return { label: WORK_FOLDER_LABEL, value: folder.path, ...workspaceDirDisplay(folder.path) }
+}
+/** 挂接前的确认话：说清谁能读、读不到什么、不能做什么。 */
+export function workFolderConfirmText(projectName: string, path: string): string {
+  return `挂接后，「${projectName}」的成员可以读 ${path} 里的文件（.env、密钥这类凭据文件除外），不能新建、修改或删除里面的任何东西。不是这个项目的员工要读，会先问你。随时可以更换或取消。`
+}
+export function workFolderDetachText(projectName: string, path: string): string {
+  return `取消后，「${projectName}」的成员不再在资料里看到 ${path}，文件夹本身不受影响。`
+}

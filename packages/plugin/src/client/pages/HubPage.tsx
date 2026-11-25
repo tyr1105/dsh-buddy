@@ -32,6 +32,7 @@ import { Skeleton } from '../components/Ui.js'
 import type { CardActions } from '../components/Cards.js'
 import { cardSubmission } from '../logic/cards.js'
 import { teamCardActions } from '../logic/team-actions.js'
+import { pickDirectory } from '../directory-picker.js'
 import { modelTiers } from '@agent-hub/core/team'
 import { displayRoleLabel, isChiefEntry } from '../logic/agreement.js'
 import { OPEN_SESSION_HINTS, openBotSessionWith } from '../logic/thread.js'
@@ -672,6 +673,7 @@ export function HubPage(props: {
               onRetry={() => void hub.refreshProject()}
               run={(name, input) => hub.command(name, input)}
               onRefresh={() => hub.refreshProject()}
+              pickFolder={() => pickDirectory(props.clientCtx)}
               bots={overview ? overview.bots.map(b => ({ id: b.id, name: b.name, lifecycle: b.lifecycle, role: b.role })) : []}
               botsLoaded={overview !== null}
               selectedProjectId={state.activeProjectId}

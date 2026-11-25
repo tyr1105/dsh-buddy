@@ -11,6 +11,9 @@
 import { posix } from 'node:path';
 import { PROJECT_CONTEXT_FILE } from '../project/context.js';
 import type { AskHint } from '../model/outreach.js';
+/** 这两句话放在 paths 里而不是 work-folder.ts：work-folder.ts 依赖本文件，反过来引用会绕成圈。 */
+export const WORK_FOLDER_WRITE_REFUSAL = '这是主人挂接给项目的工作文件夹，只能读，不能写、改、删。要改里面的东西，把改法写进交付物或项目文件夹，交给主人决定。';
+export const WORK_FOLDER_NON_MEMBER_READ = '读取别的项目挂接的工作文件夹（这位员工不是该项目成员）';
 export interface GateContext {
     homeDir: string;
     ownerHome?: string;
@@ -35,6 +38,12 @@ export interface GateContext {
      * DSH 报来的工作目录是真实路径，resolveGatePath 会把落在它下面的目标换回设置里的写法，之后所有判断都不用各自处理。
      */
     realRootDir?: string;
+    /**
+     * W7a：所有项目挂接的工作文件夹（主人电脑上已有的文件夹，含真实路径写法）。落在里面的写入一律拒绝（不计越界）。缺省为空。
+     */
+    workFolders?: string[];
+    /** W7a：这位员工所在项目挂接的工作文件夹，可以直接读；不在这里的工作文件夹，读取要主人确认。缺省为空。 */
+    memberWorkFolders?: string[];
 }
 export type ToolActionClass = 'A' | 'B' | 'C' | 'D' | 'protected';
 /** 一件要主人确认的事：合并判定时逐条保留，审批卡据此把每件事都说出来，不会只报其中一件。 */
@@ -244,6 +253,13 @@ export function inSandboxTmp(path: string, ctx: GateContext): boolean {
  * 项目目录里由中心维护的文件（项目共享上下文正文）。
  * 它的修改要经主人采纳，所以不跟着「项目文件夹成员直接放」一起放开，照旧要主人确认。
  */
+/**
+ * 拒绝但不计越界的两种受保护写入：技能库三处（P75e）、项目挂接的工作文件夹（W7a）。
+ * 员工不是有意越界，计越界会让员工被停用。
+ */
+export function isQuietRefusal(subclass: string | undefined): boolean {
+    return subclass === 'skill_dir_readonly' || subclass === 'work_folder_readonly';
+}
 export function isCenterProjectFile(path: string, projectDir: string): boolean {
     return folded(path) === folded(posix.join(projectDir, PROJECT_CONTEXT_FILE));
 }
@@ -270,6 +286,11 @@ export function classifyPath(input: string, write: boolean, ctx: GateContext, _o
             return { cls: 'A', reason: '路径含未知变量，由沙箱限制写入范围', subclass: 'sandboxed_exec', paths: [path] };
         }
         return { cls: 'C', reason: '路径含未知变量或无法确定的家目录，需审批', subclass: write ? 'write_file' : 'read_file', paths: [path] };
+    }
+    // W7a：项目挂接的工作文件夹只读：写入一律拒绝（不计越界，和技能库只读同一种处理）；不是成员的员工去读要主人确认。
+    if ((ctx.workFolders ?? []).some(dir => within(path, dir))) {
+        if (write) return { cls: 'protected', reason: WORK_FOLDER_WRITE_REFUSAL, subclass: 'work_folder_readonly', paths: [path] };
+        if (!(ctx.memberWorkFolders ?? []).some(dir => within(path, dir))) return { cls: 'C', reason: WORK_FOLDER_NON_MEMBER_READ, subclass: 'read_file', paths: [path] };
     }
     if (!write) return { cls: 'A', reason: '只读操作', readOnly: true, paths: [path] };
     const memory = folded(path) === folded(`${ctx.homeDir}/memory/MEMORY.md`) || folded(path) === folded(`${ctx.homeDir}/MEMORY.md`);
@@ -317,7 +338,7 @@ export function mostDangerous(items: Classification[]): Classification {
     const rank: Record<ToolActionClass, number> = { A: 0, B: 1, C: 2, D: 3, protected: 4 };
     // P75r3：同为 protected 时，不是「技能库只读」的优先（它要计越界）：一条命令里先写一处技能库、再写 AGENTS.md，
     // 不能借前者躲开越界计数；只写技能库的命令不受影响（没有别的 protected 项）。
-    const countsViolation = (item: Classification): boolean => item.cls === 'protected' && item.subclass !== 'skill_dir_readonly';
+    const countsViolation = (item: Classification): boolean => item.cls === 'protected' && !isQuietRefusal(item.subclass);
     const selected = items.reduce((a, b) => rank[b.cls] > rank[a.cls] || (rank[b.cls] === rank[a.cls] && (b.subclass === 'work_data' || (a.readOnly === true && b.readOnly !== true)
         || (b.cls === 'protected' && countsViolation(b) && !countsViolation(a))
         || (b.cls === 'A' && b.readOnly !== true && aPriority(b) > aPriority(a)))) ? b : a, { cls: 'A', reason: '未产生对外动作', readOnly: true } as Classification);
