@@ -54,10 +54,10 @@ describe('ackText：已记下固定句', () => {
   });
 
   test('第一问打字未命中：句子带原话；超过 30 字截断加省略号', () => {
-    expect(ackText(1, { value: 'mixed', fallback: true, typedText: '随便' })).toBe('已记下：你的原话「随便」，按以上都有处理。');
+    expect(ackText(1, { value: 'mixed', fallback: true, typedText: '随便' })).toBe('已记下：你说的是「随便」，看不出偏哪一类，先按三类都有来安排。');
     const long = '字'.repeat(40);
     const text = ackText(1, { value: 'mixed', fallback: true, typedText: long });
-    expect(text).toBe(`已记下：你的原话「${'字'.repeat(30)}…」，按以上都有处理。`);
+    expect(text).toBe(`已记下：你说的是「${'字'.repeat(30)}…」，看不出偏哪一类，先按三类都有来安排。`);
     expect(text).not.toContain('字'.repeat(31));
   });
 });
