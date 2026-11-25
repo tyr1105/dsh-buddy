@@ -14,7 +14,7 @@ import { buildCandidate } from '../src/appraisal/think.js';
 import { buildSnapshot, evaluateGates } from '../src/scheduler/gates.js';
 import { enqueue } from '../src/scheduler/queue.js';
 import { lastPacket } from './p63-topic-fixtures.js';
-import { answerAll, expectNoModelWork, teamHub, thread } from './p73c-fixtures.js';
+import { answerAll, expectOnlyPickTurn, teamHub, thread } from './p73c-fixtures.js';
 import { afterAdditionConfirmed } from '../src/team/proposals.js';
 import { TEAM_PROJECT_NOTE } from '../src/team/setup.js';
 import {
@@ -137,7 +137,8 @@ describe('只用唤醒包里的文字：推荐、确认、交给新员工', () =
     const initial = await answerAll(hub);
     okData(await hub.hub.api.confirmTeamProposal({ proposalId: initial.id, rev: initial.rev }));
     expect(thread(hub.ctx, hub.chief!.id).filter(row => row.text === '确认入职')).toHaveLength(0);
-    expectNoModelWork(hub.ctx);
+    // W11：答完三问时排过一次挑人回合；确认之后不再叫醒任何人。
+    expectOnlyPickTurn(hub.ctx);
   });
 
   it('反例：没有人成功入职时（全部失败）不叫醒总管：afterAdditionConfirmed 什么都不做', async () => {

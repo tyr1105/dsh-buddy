@@ -138,10 +138,13 @@ async function swapCandidate(ctx: HubContext, proposal: TeamProposal, candidate:
   return {
     ...candidate,
     templateId: template.id, name, mbti: alternate.mbti, modelTier,
-    suggested: { templateId: template.id, name, mbti: alternate.mbti, modelTier },
+    suggested: { templateId: template.id, name, mbti: alternate.mbti, modelTier,
+      ...(sameTemplate && candidate.suggested.brief != null ? { brief: candidate.suggested.brief } : {}) },
     swappedFrom: sameTemplate ? candidate.swappedFrom : (candidate.swappedFrom ?? candidate.templateId),
     // 换了模板，原来改写的员工说明不再适用；只是换性格时保留。
     brief: sameTemplate ? candidate.brief : null,
+    // W11：换了模板，总管为原来那位写的工作和选的技能也不再适用。
+    ...(sameTemplate ? {} : { work: null, skills: null }),
     alternates: alternatesFor(template.id).map(item => ({ templateId: item.templateId, mbti: item.mbti, label: item.label })),
   };
 }

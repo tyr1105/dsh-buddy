@@ -39,6 +39,15 @@ export { editTeamCandidate } from './proposal-edit.js';
 export const TEAM_READY_TEXT = '团队已就位。你交代的第一件真实的事，就是他们的试用；做完后我会告诉你每位做得怎样。现在可以直接把事情交给我。';
 /** 现有员工已能覆盖主人要做的事、不需要发卡时总管落的固定句。 */
 export const TEAM_NO_NEED_TEXT = '现有员工已能覆盖这类事。你可以直接把事情交给我。';
+/**
+ * W11：总管没能按项目挑人、改按规则表给默认推荐时，结论句前面加的一句。
+ * 原因只分两种说法，不写内部状态；卡片上另有一行写明这是默认推荐。
+ */
+export function PICK_FALLBACK_PREFIX(reason: 'timeout' | 'no_card'): string {
+  return reason === 'timeout'
+    ? '挑人花的时间太久了，我先按默认给你推荐，之后随时可以换。'
+    : '这次没能按你的项目挑人，我先按默认给你推荐，之后随时可以换。';
+}
 /** 拒绝新增时的中心旁白。 */
 export const TEAM_DECLINED_TEXT = '你选择不新增员工。';
 
@@ -56,7 +65,7 @@ export function pendingTeamProposalOf(ctx: HubContext, chiefId: string): TeamPro
  * 推荐 0 位：不发卡，总管落一句话，三问转 done；否则依次落结论句、卡片消息、「待你处理」条目，三问转 proposed。
  * 幂等：三问已经有组队卡、或不是 asking 状态时什么都不做。返回新卡；没发卡返回 null。
  */
-export async function createInitialProposal(ctx: HubContext, setup: TeamSetup): Promise<TeamProposal | null> {
+export async function createInitialProposal(ctx: HubContext, setup: TeamSetup, options: { fallback?: 'timeout' | 'no_card' } = {}): Promise<TeamProposal | null> {
   const tiers = await currentTiers(ctx);
   // 等待模型目录期间记录可能已变，重新读一次再判断。
   const fresh = ctx.store.table('teamSetups').get(setup.id);
@@ -82,13 +91,16 @@ export async function createInitialProposal(ctx: HubContext, setup: TeamSetup): 
   const proposal = TeamProposalSchema.parse({
     id: newId('tpr', ctx.rng), chiefId: fresh.chiefId, kind: 'initial', state: 'pending', rev: 1,
     agreementId: null, needReason: null, residentReason: null, candidates, cardMessageId: null, inboxId: null,
-    sourceMessageId: null, wakeId: null, decidedAt: null, decidedVia: null, rosterAfter: null, createdAt: now, updatedAt: now,
+    sourceMessageId: null, wakeId: null, decidedAt: null, decidedVia: null, rosterAfter: null,
+    ...(options.fallback !== undefined ? { pickedBy: 'default' as const } : {}), createdAt: now, updatedAt: now,
   });
   ctx.store.table('teamProposals').put(proposal);
   // 先把三问转为 proposed 并记下组队卡，再落消息：中途出错也不会重复生成卡。
   saveSetup(ctx, fresh, { state: 'proposed', proposalId: proposal.id });
   // 结论在前、卡片在后。
-  postThread(ctx, { thread: proposal.chiefId, from: proposal.chiefId, kind: 'chat', text: INITIAL_CONCLUSION(picks) });
+  const conclusion = INITIAL_CONCLUSION(picks);
+  postThread(ctx, { thread: proposal.chiefId, from: proposal.chiefId, kind: 'chat',
+    text: options.fallback === undefined ? conclusion : `${PICK_FALLBACK_PREFIX(options.fallback)}${conclusion}` });
   postTeamCard(ctx, proposal);
   setChiefActivityText(ctx, proposal.chiefId, CHIEF_WAITING_TEXT);
   ctx.emit(HUB_EVENT_SCOPES.thread, proposal.chiefId);

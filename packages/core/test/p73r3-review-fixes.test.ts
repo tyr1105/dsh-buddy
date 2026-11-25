@@ -15,7 +15,7 @@ import { floors, openTopic } from './p72b-fixtures.js';
 import { lastPacket } from './p63-topic-fixtures.js';
 import { agreementFixture } from './p72a-agreement-fixtures.js';
 import {
-  answerAll, expectNoModelWork, modelCalls, pick, presetBot, teamHub, theProposal, theSetup, thread,
+  answerAll, expectNoModelWork, modelCalls, pick, pickFallsBack, presetBot, teamHub, theProposal, theSetup, thread,
 } from './p73c-fixtures.js';
 import { buildCandidate } from '../src/appraisal/think.js';
 import { enqueue } from '../src/scheduler/queue.js';
@@ -301,6 +301,8 @@ describe('S3 三问期间总管不被叫醒，两种卡互斥', () => {
     expect(fix.ctx.store.table('teamProposals').count()).toBe(0);
     expect(theSetup(fix.ctx).state).toBe('asking');
     expect(pendingOwnerConfirmOf(fix.ctx, chief.id)?.kind).toBe('agreement');
+    // W11：总管的挑人回合没能出卡（有约定卡待确认时它也出不了卡），改走默认推荐。
+    await pickFallsBack(fix);
     // 兜底检查在约定仍待确认时也不补发。
     await tickOnce(fix.ctx, fix.hub);
     await fix.hub.api.overview();

@@ -1460,7 +1460,7 @@ nav[data-dsh-buddy-nav-cell='true'] { margin-top: 34px; }
 .ah-team-name-input { width: 9em; max-width: 100%; padding: 3px 8px; font: inherit; font-weight: 600; color: var(--dsw-alias-text-primary); background: var(--dsw-alias-bg-base, transparent); border: 1px solid var(--dsw-alias-separator); border-radius: 6px; }
 .ah-team-name-input:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
 .ah-team-tpl, .ah-team-estimate { font-size: 12px; color: var(--dsw-alias-text-secondary); }
-.ah-team-fit, .ah-team-brief, .ah-team-removed { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.ah-team-fit, .ah-team-reason, .ah-team-brief, .ah-team-removed { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .ah-team-removed { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-text-secondary); }
 .ah-team-kv { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13px; }
 .ah-team-kv-item { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }

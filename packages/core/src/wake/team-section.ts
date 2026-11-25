@@ -21,6 +21,8 @@ import { suggestArchiveFor } from '../team/archive-suggestion.js';
 import { TEAM_QUESTIONS, isDeclinePhrase } from '../team/rules.js';
 import { isOnDuty, liveBots, templateHolders } from '../team/roster.js';
 import { BOT_TEMPLATES, templateById } from '../team/templates.js';
+import { awaitingPickOf } from '../team/pick-key.js';
+import { PRESET_SKILLS } from '../config/preset-skills.js';
 import { truncateBytes } from '../util/text.js';
 import { withLabel } from '../util/name-label.js';
 import { evidenceMessageIds } from './chief-packet.js';
@@ -99,6 +101,33 @@ function answerLines(ctx: HubContext): string[] {
   return [`主人在组队时说：${workText(work)}；在做的项目：${projectName ?? '暂无'}；希望被打扰的程度：${notifyLabel}。`];
 }
 
+/** 项目背景在挑人段里最多带多少字（背景上限 2000 字，挑人只需要前面的要点）。 */
+const PICK_BACKGROUND_CHARS = 800;
+
+/**
+ * W11 第 0 项：三问答完、正在等总管挑人时，写出主人的原话、项目背景和要做的事。
+ * 主人的原话只有打字回答第一问时才有；点选时只有类别。项目背景取三问第二问建的项目。
+ */
+function pickLines(ctx: HubContext, bot: Bot): string[] {
+  const setup = awaitingPickOf(ctx, bot.id);
+  if (setup === null) return [];
+  const { work, workText: typed, projectId, notify } = setup.answers;
+  const project = projectId === null ? null : ctx.store.table('projects').get(projectId);
+  const background = project?.context.background.trim() ?? '';
+  const notifyLabel = TEAM_QUESTIONS[2].options.find(option => option.value === notify)?.label ?? notify ?? '';
+  const lines = [
+    '等你挑人：主人刚答完组队三问，团队里现在只有你。按主人的项目挑初始团队，调用 hub_team_propose，mode 写 initial，candidates 每位写 template（下面「可推荐的模板」里的名字）和 work（他在这个项目里具体做什么工作）。',
+    '挑人的要求：先想清楚这个项目接下来最常做的是哪几类事，每类事需要什么人；只挑真正用得上的 1 到 3 位，宁少勿多；work 要写到这个项目的具体活，不要复述模板介绍。',
+    '模板只是起点：可以按这个项目调整 name、brief（员工说明全文：这个岗位在这个项目里怎么做事）、mbti、modelTier（standard 或 light）、skills（下面「可选技能」的编号）；不调整的项省略，用模板原样。执行风格和红线改不了。',
+    `主人说想让团队做的事：${work === null ? '没说' : workText(work)}${typed ? `；原话「${typed}」` : ''}。`,
+    `在做的项目：${project?.name ?? '暂无'}${background !== '' ? `；项目背景：${[...background].slice(0, PICK_BACKGROUND_CHARS).join('')}` : ''}。`,
+    `希望被打扰的程度：${notifyLabel}。`,
+    '这一回合只挑人，不要立约定、派活或改别的东西；回复主人时用一两句话说挑了谁、各做什么。',
+    `可选技能（skills 写编号）：${PRESET_SKILLS.map(skill => `${skill.id}（${skill.name}）`).join('、')}。`,
+  ];
+  return lines;
+}
+
 /** 在册已满时的一行：不能推荐，并给出建议归档谁。 */
 function fullLine(ctx: HubContext): string {
   const pick = suggestArchiveFor(ctx);
@@ -126,12 +155,14 @@ function templateLines(ctx: HubContext): string[] {
 /** 「组队」段正文：按顺序拼出，超过上限截断。 */
 export function buildTeamBody(ctx: HubContext, bot: Bot, entry: QueueEntry): string {
   const pending = ctx.store.table('teamProposals').list(row => row.chiefId === bot.id && row.state === 'pending')[0];
+  const pick = pickLines(ctx, bot);
   const parts = [
+    ...pick,
     ...justHiredLines(ctx, bot, entry),
     ...justDeclinedLines(ctx, bot, entry),
     ...pendingLines(ctx, pending),
     ...answerLines(ctx),
     ...templateLines(ctx),
   ];
-  return truncateBytes(parts.join('\n'), D.PACKET_MAX_BYTES);
+  return truncateBytes(parts.join('\n'), pick.length > 0 ? D.PICK_PACKET_MAX_BYTES : D.PACKET_MAX_BYTES);
 }
