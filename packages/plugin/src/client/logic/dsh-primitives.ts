@@ -1,5 +1,5 @@
 /**
- * 借用 DSH 自带的界面零件（W12 验收后加）：Markdown 渲染器 MarkdownText 和弹窗 Modal。
+ * 借用 DSH 自带的界面零件（W12 验收后加）：Markdown 渲染器 MarkdownText、文件类型图标和关闭、文件夹图标（Modal 备用）。
  *
  * 为什么：主人希望 md 文件用 DSH 内置的查看效果来看，又不想跳到别的对话里。DSH 的客户端模块表
  * 公开了 @deepseek-ai/dsh-client-ui-primitives（和 react 一样由基座提供），我们在自己的页面里直接用它，
@@ -29,9 +29,16 @@ export interface DshModalProps {
   contentClassName?: string
 }
 
+/** DSH 的产品图标、文件类型图标（只列我们用到的属性）。 */
+export interface DshIconProps { size?: number; className?: string }
+export interface DshFileTypeIconProps extends DshIconProps { path: string }
+
 export interface DshPrimitives {
   MarkdownText: ComponentType<DshMarkdownTextProps> | null
   Modal: ComponentType<DshModalProps> | null
+  FileTypeIcon: ComponentType<DshFileTypeIconProps> | null
+  IconClose: ComponentType<DshIconProps> | null
+  IconFolderOpen: ComponentType<DshIconProps> | null
 }
 
 const MODULE_ID = '@deepseek-ai/dsh-client-ui-primitives'
@@ -63,7 +70,10 @@ export function dshPrimitives(): DshPrimitives | null {
     }
     const MarkdownText = pick('MarkdownText') as DshPrimitives['MarkdownText']
     const Modal = pick('Modal') as DshPrimitives['Modal']
-    cached = MarkdownText === null && Modal === null ? null : { MarkdownText, Modal }
+    const FileTypeIcon = pick('FileTypeIcon') as DshPrimitives['FileTypeIcon']
+    const IconClose = pick('IconCloseOutlineRegular') as DshPrimitives['IconClose']
+    const IconFolderOpen = pick('IconFolderOpenOutlineRegular') as DshPrimitives['IconFolderOpen']
+    cached = MarkdownText === null && Modal === null ? null : { MarkdownText, Modal, FileTypeIcon, IconClose, IconFolderOpen }
   } catch (error) {
     try { console.warn('[agent-hub] 取不到 DSH 的界面零件，改用纯文本显示', String(error)) } catch { /* 日志出错不影响 */ }
     cached = null

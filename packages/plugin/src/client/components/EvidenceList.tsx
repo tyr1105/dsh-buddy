@@ -11,7 +11,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { EvidenceItemView } from '../../shared/views.js'
 import { JOB_TEXT, evidenceTag, loadShot, returnFocus, trapTabIn, verdictClass, type ShotEntry, type ShotReader } from '../logic/job.js'
 import { api } from '../api.js'
-import { dshPrimitives } from '../logic/dsh-primitives.js'
+import { useStore } from '../store.js'
+import { filePreviewStore, isPreviewing, openFilePreview } from '../logic/file-preview.js'
 
 /**
  * 截图读取命令的定位参数：core 的卡片视图不带内部编号，由接线的一层补上
@@ -201,54 +202,6 @@ export function evidenceViewableHere(evidence: EvidenceItemView['evidence'][numb
   return match !== null && TEXT_EXTS.includes(match[1]!.toLowerCase())
 }
 
-/** Markdown 渲染器里代码块、脚注的按钮文字。 */
-const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' }
-
-/**
- * 文件查看弹窗（W12 验收后改）：浮在当前页面上，不跳去别的对话。
- * md 用 DSH 自带的 Markdown 渲染器（MarkdownText），弹窗用 DSH 自带的 Modal；
- * 这个版本的 DSH 没有这两个零件时，退回我们自己的遮罩弹窗和纯文本显示。
- */
-export function FileTextViewer(props: { name: string; text: string; format: 'markdown' | 'plain'; onClose: () => void }): ReactNode {
-  const { name, text, format, onClose } = props
-  const prims = dshPrimitives()
-  const MarkdownText = prims?.MarkdownText ?? null
-  const Modal = prims?.Modal ?? null
-  const body = format === 'markdown' && MarkdownText !== null
-    ? <div className="ah-ev-viewer-md"><MarkdownText text={text} labels={MD_LABELS} variant="body" /></div>
-    : <pre className="ah-ev-viewer-pre">{text}</pre>
-  if (Modal !== null) {
-    return <Modal open onClose={onClose} title={name} closeLabel={JOB_TEXT.shotClose} contentClassName="ah-ev-viewer">{body}</Modal>
-  }
-  return <FallbackViewer name={name} onClose={onClose}>{body}</FallbackViewer>
-}
-
-/** 没有 DSH 弹窗时的退路：和截图大图同一种遮罩弹窗，Esc、点遮罩空白处、「关闭」都能关。 */
-function FallbackViewer(props: { name: string; onClose: () => void; children: ReactNode }): ReactNode {
-  const dialogRef = useRef<HTMLDivElement | null>(null)
-  const closeRef = useRef<HTMLButtonElement | null>(null)
-  useEffect(() => { try { dialogRef.current?.focus?.() } catch { /* 聚焦失败不影响显示 */ } }, [])
-  const keyDown = (event: { key: string; shiftKey: boolean; preventDefault(): void; stopPropagation?: () => void }): void => {
-    if (event.key === 'Escape') { try { event.stopPropagation?.() } catch { /* 替身没有也不影响 */ } props.onClose(); return }
-    if (event.key !== 'Tab') return
-    let active: unknown = null
-    try { active = document.activeElement } catch { active = null }
-    if (trapTabIn([dialogRef.current, closeRef.current], active, event.shiftKey)) event.preventDefault()
-  }
-  return (
-    <div className="ah-shot-overlay" onClick={props.onClose}>
-      <div ref={dialogRef} className="ah-shot-dialog ah-ev-viewer" role="dialog" aria-modal="true" tabIndex={-1} aria-label={props.name}
-        onClick={event => { event.stopPropagation() }} onKeyDown={keyDown}>
-        <div className="ah-ev-viewer-head">
-          <strong>{props.name}</strong>
-          <button type="button" ref={closeRef} className="ah-btn ah-shot-dialog-close" onClick={props.onClose}>{JOB_TEXT.shotClose}</button>
-        </div>
-        {props.children}
-      </div>
-    </div>
-  )
-}
-
 /** 「在访达中显示」按系统换说法：苹果电脑叫访达，其余叫文件夹。读不到系统时按苹果电脑。 */
 function revealLabel(): string {
   try {
@@ -259,7 +212,7 @@ function revealLabel(): string {
 }
 
 /**
- * 文件小条（W12）：点文件名查看——md、txt 这类文本在当前页面上弹窗看（DSH 自带的 Markdown 渲染），
+ * 文件小条（W12）：点文件名查看——md、txt 这类文本在页面右边的预览侧栏里看（DSH 自带的 Markdown 渲染，卡片留在左边），
  * 其余格式（pdf、表格、图片……）交给电脑上的默认应用；旁边的小按钮在访达中显示。
  * 打不开时在下面一行写原因，带路径时路径可以选中复制。
  */
@@ -269,8 +222,19 @@ export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['
   const readText: FileTextReader = props.readText ?? defaultFileTextReader
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<{ error: string; path: string | null } | null>(null)
-  const [viewing, setViewing] = useState<{ text: string; format: 'markdown' | 'plain'; name: string } | null>(null)
   const nameRef = useRef<HTMLButtonElement | null>(null)
+  const previewRef = { jobId: shotRef.jobId, submissionId: shotRef.submissionId, evidenceId: evidence.id }
+  const previewing = isPreviewing(useStore(filePreviewStore), previewRef)
+  // 侧栏关掉时焦点如果掉到了页面最外面（侧栏里按了 Esc 或「关闭」），交回这个文件名。
+  const wasPreviewing = useRef(false)
+  useEffect(() => {
+    if (wasPreviewing.current && !previewing) {
+      let active: unknown = null
+      try { active = document.activeElement } catch { active = null }
+      try { if (active === null || active === document.body) returnFocus(nameRef.current) } catch { /* 测试替身没有 document */ }
+    }
+    wasPreviewing.current = previewing
+  }, [previewing])
   const fail = (error: unknown): void => {
     setBusy(false)
     setProblem({ error: error instanceof Error ? error.message : String(error), path: null })
@@ -286,29 +250,19 @@ export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['
       })
       .catch(fail)
   }
+  // md、txt 这类：在页面右边的预览侧栏里看（读取、出错都显示在侧栏里）；其余格式交给默认应用。
   const view = (): void => {
     if (busy) return
     if (!evidenceViewableHere(evidence)) { run('open'); return }
-    setBusy(true)
     setProblem(null)
-    void readText({ ...shotRef, evidenceId: evidence.id })
-      .then(result => {
-        setBusy(false)
-        if (result.ok && result.data !== undefined) setViewing(result.data)
-        else setProblem({ error: result.error ?? '没能读出这个文件', path: null })
-      })
-      .catch(fail)
-  }
-  const closeViewer = (): void => {
-    setViewing(null)
-    returnFocus(nameRef.current)
+    void openFilePreview(previewRef, evidence.label, readText)
   }
   const reveal = revealLabel()
   return (
     <span className="ah-ev-file-wrap">
       <span className="ah-ev-file-row">
-        <button type="button" ref={nameRef} className="ah-ev-file is-openable" title={JOB_TEXT.fileOpen} aria-label={`${JOB_TEXT.fileOpen}：${evidence.label}`}
-          disabled={busy} onClick={view}>
+        <button type="button" ref={nameRef} className={`ah-ev-file is-openable${previewing ? ' is-previewing' : ''}`} title={JOB_TEXT.fileOpen} aria-label={`${JOB_TEXT.fileOpen}：${evidence.label}`}
+          aria-pressed={evidenceViewableHere(evidence) ? previewing : undefined} disabled={busy} onClick={view}>
           <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
         </button>
         <button type="button" className="ah-ev-file-reveal" title={reveal} aria-label={`${reveal}：${evidence.label}`}
@@ -322,7 +276,6 @@ export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['
           {problem.path !== null ? <code className="ah-job-preview-path">{problem.path}</code> : null}
         </span>
       ) : null}
-      {viewing !== null ? <FileTextViewer name={viewing.name} text={viewing.text} format={viewing.format} onClose={closeViewer} /> : null}
     </span>
   )
 }

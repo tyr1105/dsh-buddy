@@ -42,6 +42,8 @@ import { sendDraftFirstMessage, sidebarSelectedThread, topicDraftThreadId } from
 import { TopicDraftPane } from '../components/topic-draft-pane.js'
 import { isNoThread, landingSurface } from '../logic/missing-teammate.js'
 import { createOwnerSeenReporter } from '../logic/owner-seen.js'
+import { FilePreviewPane } from '../components/FilePreviewPane.js'
+import { closeFilePreview, filePreviewStore } from '../logic/file-preview.js'
 
 /**
  * 没有外部定位来源时的空仓库（P43）：保证 useStore 始终被调用，
@@ -184,6 +186,13 @@ export function HubPage(props: {
     setThreadError(null)
     void hub.refreshThread(selectedThread).catch(() => setThreadError('线程读取失败。点击「重试」；仍失败请确认插件未停用。'))
   }, [hub, selectedThread, state.connectionDown, threadLoadable])
+
+  // W12：文件预览侧栏和员工侧边栏同一个位置，一次只开一个（同 DSH 右侧栏只有一栏）。
+  // 打开预览时收起员工侧边栏；展开员工侧边栏时关掉预览；换页、换对话时关掉预览（文件属于原来那张卡）。
+  const previewOpen = useStore(filePreviewStore) !== null
+  useEffect(() => { if (previewOpen) setRightOpen(false) }, [previewOpen])
+  useEffect(() => { if (rightOpen) closeFilePreview() }, [rightOpen])
+  useEffect(() => { closeFilePreview() }, [view, selectedThread])
 
   // P58：选中的队友已不存在、仓库把选中退回办公室时（P71 前是团队全景），页面里跟这位队友绑定的状态也要归位，
   // 否则会留着旧提示条，下次选别人时右侧边栏也会莫名打开。
@@ -888,6 +897,10 @@ export function HubPage(props: {
             />
           </BlockBoundary>
         ) : null}
+        {/* W12：卡片上点 md 时，页面最右边的文件预览侧栏（与 DSH 自带的文件预览同一个样子）。 */}
+        <BlockBoundary label="文件预览">
+          <FilePreviewPane />
+        </BlockBoundary>
       </div>
 
       {/* 跳转面板：打开时才挂载——useDialogFocus 要在挂载渲染期抓住触发钮用于还焦；

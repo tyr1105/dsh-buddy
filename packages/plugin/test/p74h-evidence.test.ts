@@ -5,8 +5,8 @@
  * 样例取自 fixture-job.ts（core 的纯函数生成），链接一条在测试里补（样例约定没有链接证据）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { EvidenceList, FileChip, FileTextViewer, ShotThumb } from '../src/client/components/EvidenceList.js'
-import { setPrimitivesLoaderForTest } from '../src/client/logic/dsh-primitives.js'
+import { EvidenceList, FileChip, ShotThumb } from '../src/client/components/EvidenceList.js'
+import { closeFilePreview, filePreviewStore } from '../src/client/logic/file-preview.js'
 import { clearShotCache, returnFocus } from '../src/client/logic/job.js'
 import { SAMPLE_SHOT_REF, sampleEvidenceItems, sampleReviewPassCard, sampleReviewReturnCard, sampleSubmissionCard } from '../src/shared/fixture-job.js'
 import type { EvidenceItemView } from '../src/shared/views.js'
@@ -206,54 +206,31 @@ describe('文件小条（W12）', () => {
 
   const MD = { ...FILE, path: '交付/现状梳理与下一步建议.md', label: '现状梳理与下一步建议.md' }
 
-  it('md 点文件名：按定位参数读出全文，在当前页面弹窗显示，不发「打开」', async () => {
+  it('md 点文件名：按定位参数读出全文，交给页面右边的预览侧栏，不发「打开」；正在预览的文件名高亮', async () => {
+    closeFilePreview()
     const open = vi.fn(async () => ({ ok: true }))
     const readText = vi.fn(async () => ({ ok: true, data: { text: '# 报告', format: 'markdown' as const, name: '现状梳理与下一步建议.md' } }))
     const host = createHookHost()
     const first = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: MD, open, readText }), 'button')
     ;(first[0]!.props.onClick as () => void)()
+    expect(filePreviewStore.getSnapshot()).toMatchObject({ status: 'loading', name: MD.label })
     await flush()
     expect(readText).toHaveBeenCalledWith({ ...SAMPLE_SHOT_REF, evidenceId: MD.id })
     expect(open).not.toHaveBeenCalled()
-    const viewers = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: MD, open, readText }), FileTextViewer)
-    expect(viewers.length).toBe(1)
-    expect(viewers[0]!.props).toMatchObject({ name: '现状梳理与下一步建议.md', text: '# 报告', format: 'markdown' })
+    expect(filePreviewStore.getSnapshot()).toEqual({ ref: { ...SAMPLE_SHOT_REF, evidenceId: MD.id }, name: '现状梳理与下一步建议.md', status: 'ok', text: '# 报告', format: 'markdown' })
+    const again = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: MD, open, readText }), 'button')
+    expect(classOf(again[0]!)).toContain('is-previewing')
+    expect(again[0]!.props['aria-pressed']).toBe(true)
+    closeFilePreview()
   })
 
-  it('读不出来：下面一行写原因，不弹窗', async () => {
+  it('读不出来：原因写在侧栏里', async () => {
+    closeFilePreview()
     const readText = vi.fn(async () => ({ ok: false, error: '这个文件超过 2 MB，请用「在访达中显示」打开' }))
     const host = createHookHost()
     ;(findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: MD, readText }), 'button')[0]!.props.onClick as () => void)()
     await flush()
-    const tree = host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: MD, readText })
-    expect(findElements(tree, FileTextViewer).length).toBe(0)
-    expect(textOf(findElements(tree, 'span').find(node => classOf(node) === 'ah-ev-file-error'))).toContain('超过 2 MB')
-  })
-
-  it('查看弹窗：有 DSH 零件时用 DSH 的弹窗和 Markdown 渲染器；纯文本用 pre', () => {
-    const Modal = (props: { children?: unknown }) => props.children
-    const MarkdownText = () => null
-    setPrimitivesLoaderForTest(() => ({ Modal, MarkdownText }))
-    try {
-      const md = createHookHost().render(FileTextViewer, { name: 'a.md', text: '# a', format: 'markdown', onClose: () => {} })
-      const modal = findElements(md, Modal)[0]!
-      expect(modal.props).toMatchObject({ open: true, title: 'a.md' })
-      expect(findElements(md, MarkdownText)[0]!.props).toMatchObject({ text: '# a', labels: { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' } })
-      const plain = createHookHost().render(FileTextViewer, { name: 'a.csv', text: 'a,b', format: 'plain', onClose: () => {} })
-      expect(findElements(plain, MarkdownText).length).toBe(0)
-      expect(textOf(findElements(plain, 'pre')[0])).toBe('a,b')
-    } finally { setPrimitivesLoaderForTest(null) }
-  })
-
-  it('查看弹窗：取不到 DSH 零件时退回自己的遮罩弹窗，纯文本显示，有「关闭」', () => {
-    setPrimitivesLoaderForTest(() => { throw new Error('unknown module') })
-    try {
-      const onClose = vi.fn()
-      const tree = createHookHost().render(FileTextViewer, { name: 'a.md', text: '# a', format: 'markdown', onClose })
-      // 退路弹窗是子组件（不展开）：检查交给它的文件名、关闭函数和里面的纯文本。
-      const fallback = tree as unknown as StubElement
-      expect(fallback.props).toMatchObject({ name: 'a.md', onClose })
-      expect(textOf(findElements(fallback, 'pre')[0])).toBe('# a')
-    } finally { setPrimitivesLoaderForTest(null) }
+    expect(filePreviewStore.getSnapshot()).toMatchObject({ status: 'error', error: expect.stringContaining('超过 2 MB') })
+    closeFilePreview()
   })
 })
