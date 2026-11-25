@@ -96,6 +96,7 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     readJobEvidence: record('readJobEvidence') as any, // P74g：core 新增的两个只读命令，类型同步
     jobPreviewTarget: record('jobPreviewTarget') as any,
     jobEvidenceOpenTarget: record('jobEvidenceOpenTarget') as any, // W12
+    readJobEvidenceText: record('readJobEvidenceText') as any,
     chooseJobOption: record('chooseJobOption') as any, // P74f-2：同上
     answerJobCap: record('answerJobCap') as any,
     answerJobStall: record('answerJobStall') as any,

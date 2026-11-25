@@ -255,8 +255,8 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'openJobPreview': return run(() => openJobPreviewCommand(api, raw, deps))
       // W12：卡片上的文件证据：用默认应用打开或在访达中显示。位置由 core 查过后给出，宿主再查一次。
       case 'openJobEvidence': return run(() => openJobEvidenceCommand(api, raw, deps))
-      // W12：在 DSH 自带的文件预览里看：只取检查过的路径和会话交给界面，宿主这里不打开任何东西。
-      case 'locateJobEvidence': return run(() => api.jobEvidenceOpenTarget({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId, action: 'view' }))
+      // W12：读出文本类文件证据（只读），界面在员工页里用 DSH 的 Markdown 渲染器显示。整对象交给 core 的 zod 校验。
+      case 'readJobEvidenceText': return run(() => api.readJobEvidenceText({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId }))
       // P74i：交付卡与三轮不过卡的按钮、回合上限与「停住了」条目的答复。
       // 都是普通 core 命令：整对象透传，由 core 的 zod 校验（缺哪一项它会用中文说清）。
       case 'acceptJob': return run(() => api.acceptJob(raw))

@@ -11,7 +11,7 @@ import { confirmAgreementCommand } from '../project/agreement-confirm.js';
 import { acceptJobCommand } from '../job/accept.js';
 import { readJobEvidence } from '../job/evidence-read.js';
 import { jobPreviewTarget } from '../job/preview.js';
-import { jobEvidenceOpenTarget } from '../job/evidence-open.js';
+import { jobEvidenceOpenTarget, readJobEvidenceText } from '../job/evidence-open.js';
 import { answerJobCapCommand, answerJobStallCommand } from '../job/blocked-answer.js';
 import { chooseJobOptionCommand } from '../job/choose-option.js';
 import { flushJobHooks } from '../job/agreement-hooks.js';
@@ -145,6 +145,7 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
     jobPreviewTarget: raw => jobPreviewTarget(ctx, raw),
     // W12：卡片上的文件证据交给宿主打开之前的校验（只读，core 不打开任何东西）。
     jobEvidenceOpenTarget: raw => jobEvidenceOpenTarget(ctx, raw),
+    readJobEvidenceText: raw => readJobEvidenceText(ctx, raw),
     // P76i：总管私聊的线程视图顶部带离开期间摘要（threadViewWithAway 只在有未收起的摘要时多一个字段）。
     overview: () => overview(ctx), bot: botId => botView(ctx, botId), thread: (threadId, page) => threadViewWithAway(ctx, threadId, page),
     inbox: () => inboxView(ctx), activity: page => activityView(ctx, page), settings: () => settingsView(ctx), recentSessions: () => recentSessions(ctx),

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import * as nodeFs from 'node:fs';
 import { join } from 'node:path';
-import { EVIDENCE_FILE_GONE_TEXT, EVIDENCE_NOT_OPENABLE_TEXT, evidenceOpenable, jobEvidenceOpenTarget } from '../src/job/evidence-open.js';
+import { EVIDENCE_FILE_GONE_TEXT, EVIDENCE_NOT_OPENABLE_TEXT, evidenceOpenable, jobEvidenceOpenTarget, readJobEvidenceText } from '../src/job/evidence-open.js';
 import { evidenceFixture } from './p74a-job-fixtures.js';
 import { PNG, registerCleanup, setup, storeSnapshot, type Env } from './p74g-fixtures.js';
 
@@ -121,24 +121,51 @@ describe('4 证据本身不对、参数不对', () => {
   });
 });
 
-describe('5 在 DSH 自带的预览里看（view）', () => {
-  it('给出真实路径和交付员工的会话；员工没有会话时用总管的；都没有时为 null', async () => {
-    const { botFixture } = await import('./model-fixtures.js');
-    const { CHIEF, EXECUTOR } = await import('./p74a-job-fixtures.js');
+
+describe('6 在员工页里直接看（readJobEvidenceText）', () => {
+  const read = (s: Env, patch: Record<string, unknown> = {}) =>
+    readJobEvidenceText(s.ctx, { jobId: 'job_0000000001', submissionId: 'jsb_0000000001', evidenceId: 'ev1', ...patch });
+
+  it('md 按 Markdown、txt/csv 按纯文本读出全文；不写存储', async () => {
     const s = setup();
-    s.write('交付/报告.md', '# 报告\n');
+    s.write('交付/报告.md', '# 报告\n\n第一段');
     submitFile(s, '交付/报告.md');
-    expect(await target(s, { action: 'view' })).toEqual({ ok: true, data: { path: join(s.jobDir, '交付/报告.md'), action: 'view', sessionId: null } });
-    s.ctx.store.table('bots').put({ ...botFixture, id: CHIEF, sessionId: 'sess-chief' });
-    expect(await target(s, { action: 'view' })).toMatchObject({ ok: true, data: { sessionId: 'sess-chief' } });
-    s.ctx.store.table('bots').put({ ...botFixture, id: EXECUTOR, sessionId: 'sess-exec' });
-    expect(await target(s, { action: 'view' })).toMatchObject({ ok: true, data: { sessionId: 'sess-exec' } });
+    const before = storeSnapshot(s.ctx);
+    expect(await read(s)).toEqual({ ok: true, data: { text: '# 报告\n\n第一段', format: 'markdown', name: '报告.md' } });
+    expect(storeSnapshot(s.ctx)).toBe(before);
+    s.write('交付/名单.csv', 'a,b\n1,2');
+    submitFile(s, '交付/名单.csv');
+    expect(await read(s)).toEqual({ ok: true, data: { text: 'a,b\n1,2', format: 'plain', name: '名单.csv' } });
   });
 
-  it('能运行的文件不给 view', async () => {
+  it('不是文本格式、不是 UTF-8、超过 2 MB、空文件：各给一句话', async () => {
     const s = setup();
-    s.write('交付/run.command', 'echo');
-    submitFile(s, '交付/run.command');
-    expect(await target(s, { action: 'view' })).toEqual({ ok: false, error: EVIDENCE_NOT_OPENABLE_TEXT });
+    s.write('交付/a.pdf', '%PDF');
+    submitFile(s, '交付/a.pdf');
+    expect(await read(s)).toEqual({ ok: false, error: '这种文件不能在这里直接看' });
+    s.write('交付/b.md', Buffer.from([0xff, 0xfe, 0x00, 0x41]));
+    submitFile(s, '交付/b.md');
+    expect(await read(s)).toMatchObject({ ok: false, error: expect.stringContaining('不是 UTF-8') });
+    s.write('交付/c.md', Buffer.alloc(2 * 1024 * 1024 + 1, 0x61));
+    submitFile(s, '交付/c.md');
+    expect(await read(s)).toMatchObject({ ok: false, error: expect.stringContaining('超过 2 MB') });
+    s.write('交付/d.md', '');
+    submitFile(s, '交付/d.md');
+    expect(await read(s)).toEqual({ ok: false, error: '这个文件是空的' });
+  });
+
+  it('越界、符号链接、中心写的文件、截图证据、参数里夹带路径：一律拒绝', async () => {
+    const s = setup();
+    nodeFs.writeFileSync(join(s.outside, 'secret.md'), 'secret');
+    nodeFs.symlinkSync(join(s.outside, 'secret.md'), join(s.jobDir, '交付/外链.md'));
+    s.write('材料/参考.md', 'x');
+    for (const path of ['../../../../../outside/secret.md', join(s.outside, 'secret.md'), '交付/外链.md', '材料/参考.md']) {
+      submitFile(s, path);
+      expect(await read(s), path).toEqual({ ok: false, error: EVIDENCE_FILE_GONE_TEXT });
+    }
+    s.write('证据/a.png', PNG);
+    submitFile(s, '证据/a.png', 'image');
+    expect(await read(s)).toEqual({ ok: false, error: '这项证据不是文件' });
+    expect((await read(s, { path: '/etc/passwd' })).ok).toBe(false);
   });
 });

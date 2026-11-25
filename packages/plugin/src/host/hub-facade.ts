@@ -685,7 +685,7 @@ export class FixtureHub implements HubFacade {
       return sample
     }
     // W12：打开卡片上的文件在样例模式里同样不打开任何东西，只把样例路径交给界面显示。
-    if (name === 'locateJobEvidence') return { ok: false, error: '样例环境不打开文件' }
+    if (name === 'readJobEvidenceText') return { ok: true, data: { text: '# 样例报告\n\n这是样例环境里的报告正文。', format: 'markdown', name: '报告.md' } }
     if (name === 'openJobEvidence') {
       const sample: { ok: false; path: string; error: string } = { ok: false, path: '/样例/交付/报告.md', error: '样例环境不打开文件' }
       return sample

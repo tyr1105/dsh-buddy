@@ -57,7 +57,7 @@ await build({
   jsx: 'automatic',
   jsxDev: false,
   outfile: join(root, 'lib/client.js'),
-  external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
+  external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'],
   loader: { '.css': 'text' },
   banner: { js: clientBanner },
   footer: { js: clientFooter },

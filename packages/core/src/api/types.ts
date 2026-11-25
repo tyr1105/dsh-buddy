@@ -680,6 +680,8 @@ export interface UiApi {
    * 成功返回检查过的真实绝对路径 { path, action }，不合格返回一句中文错误。真正打开由宿主做。
    */
   jobEvidenceOpenTarget(input: unknown): Promise<CommandResult<import('../job/evidence-open.js').EvidenceOpenTarget>>;
+  /** W12：读出一个文本类文件证据（md、txt、csv……，不超过 2 MB，UTF-8），界面在员工页里用 DSH 的 Markdown 渲染器显示。只读。 */
+  readJobEvidenceText(input: unknown): Promise<CommandResult<import('../job/evidence-open.js').EvidenceText>>;
   /** P74f：交付卡上点「验收通过」；stage 必须是卡片的阶段（不是最新一张卡时被拒）。 */
   acceptJob(input: unknown): Promise<CommandResult<{ jobId: string; stage: number }>>;
   /** P74f-2：三轮不过卡上选一个办法；option 从 0 起（0 对应 A）；stage 必须是卡片的阶段。 */

@@ -1609,6 +1609,14 @@ nav[data-dsh-buddy-nav-cell='true'] { margin-top: 34px; }
 .ah-shot-dialog img { max-width: min(88vw, 860px); max-height: 82vh; height: auto; border-radius: 6px; }
 /* 「关闭」在弹窗右上角；按钮本身可 Tab 到达（焦点圈的一部分）。 */
 .ah-shot-dialog-close { position: absolute; top: 8px; right: 8px; }
+/* W12：文件查看弹窗（md 用 DSH 自带的 Markdown 渲染）。DSH 的 Modal 用 contentClassName 挂这个类；
+   退路弹窗沿用截图大图的遮罩，内容左对齐、可滚动。 */
+.ah-ev-viewer { width: min(880px, 90vw); max-height: 85vh; overflow: auto; }
+.ah-shot-dialog.ah-ev-viewer { justify-items: stretch; align-content: start; padding: 16px 20px; }
+.ah-ev-viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 56px; }
+.ah-ev-viewer-head strong { font-size: 14px; overflow-wrap: anywhere; }
+.ah-ev-viewer-md { min-width: 0; text-align: left; }
+.ah-ev-viewer-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; text-align: left; }
 
 /* 约定卡两栏（B2）：沿用「这次做 / 这次不做」的版式（ah-agr-split），只在有 jobSplit 时出现。 */
 /* P74h-m1 第 3 处：两栏都从顶部对齐——栏里的行不随栏高拉伸（条目少的栏内容不再落到栏的中部），

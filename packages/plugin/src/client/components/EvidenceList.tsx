@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { EvidenceItemView } from '../../shared/views.js'
 import { JOB_TEXT, evidenceTag, loadShot, returnFocus, trapTabIn, verdictClass, type ShotEntry, type ShotReader } from '../logic/job.js'
 import { api } from '../api.js'
-import { viewInDsh } from '../logic/dsh-viewer.js'
+import { dshPrimitives } from '../logic/dsh-primitives.js'
 
 /**
  * 截图读取命令的定位参数：core 的卡片视图不带内部编号，由接线的一层补上
@@ -182,22 +182,71 @@ function evidenceNode(evidence: EvidenceItemView['evidence'][number], shotRef: S
 /** 打开文件的函数形状：与 client/api.ts 的 openJobEvidence 一致，测试里注入假实现。 */
 export type FileOpener = (input: ShotRef & { evidenceId: string; action: 'open' | 'reveal' }) => Promise<{ ok: boolean; error?: string; path?: string }>
 
+/** 默认的打开办法：交给宿主（用默认应用打开 / 在访达中显示）。 */
+export const defaultFileOpener: FileOpener = input => api.openJobEvidence(input)
+
+/** 读文本的函数形状：与 client/api.ts 的 readJobEvidenceText 一致，测试里注入假实现。 */
+export type FileTextReader = (input: ShotRef & { evidenceId: string }) =>
+  Promise<{ ok: boolean; error?: string; data?: { text: string; format: 'markdown' | 'plain'; name: string } }>
+
+export const defaultFileTextReader: FileTextReader = input => api.readJobEvidenceText(input)
+
+/** 能在当前页面直接看的纯文本格式（与 core 的 EVIDENCE_TEXT_EXTS 一致；core 读的时候还会再查一次）。 */
+const TEXT_EXTS = ['md', 'markdown', 'txt', 'log', 'csv', 'tsv', 'json', 'yaml', 'yml']
+
+/** 这条证据点文件名时能不能在当前页面直接看。 */
+export function evidenceViewableHere(evidence: EvidenceItemView['evidence'][number]): boolean {
+  if (evidence.kind !== 'file' || evidence.path === null) return false
+  const match = /\.([^./\\]+)$/.exec(evidence.path)
+  return match !== null && TEXT_EXTS.includes(match[1]!.toLowerCase())
+}
+
+/** Markdown 渲染器里代码块、脚注的按钮文字。 */
+const MD_LABELS = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' }
+
 /**
- * 默认的打开办法（W12 验收后改）：点文件名先在 DSH 自带的文件预览里看（切到交付员工的工作会话，右侧边栏打开）；
- * 这个版本的 DSH 做不到时退回用默认应用打开。「在访达中显示」直接交给宿主。
+ * 文件查看弹窗（W12 验收后改）：浮在当前页面上，不跳去别的对话。
+ * md 用 DSH 自带的 Markdown 渲染器（MarkdownText），弹窗用 DSH 自带的 Modal；
+ * 这个版本的 DSH 没有这两个零件时，退回我们自己的遮罩弹窗和纯文本显示。
  */
-export const defaultFileOpener: FileOpener = async input => {
-  if (input.action === 'open') {
-    const located = await api.locateJobEvidence({ jobId: input.jobId, submissionId: input.submissionId, evidenceId: input.evidenceId })
-    if (!located.ok) return located
-    const sessionId = located.data?.sessionId
-    if (located.data !== undefined && typeof sessionId === 'string' && sessionId !== '') {
-      const problem = await viewInDsh(sessionId, located.data.path)
-      if (problem === null) return { ok: true }
-      try { console.warn('[agent-hub] DSH 文件预览打不开，改用默认应用', problem) } catch { /* 日志出错不影响 */ }
-    }
+export function FileTextViewer(props: { name: string; text: string; format: 'markdown' | 'plain'; onClose: () => void }): ReactNode {
+  const { name, text, format, onClose } = props
+  const prims = dshPrimitives()
+  const MarkdownText = prims?.MarkdownText ?? null
+  const Modal = prims?.Modal ?? null
+  const body = format === 'markdown' && MarkdownText !== null
+    ? <div className="ah-ev-viewer-md"><MarkdownText text={text} labels={MD_LABELS} variant="body" /></div>
+    : <pre className="ah-ev-viewer-pre">{text}</pre>
+  if (Modal !== null) {
+    return <Modal open onClose={onClose} title={name} closeLabel={JOB_TEXT.shotClose} contentClassName="ah-ev-viewer">{body}</Modal>
   }
-  return api.openJobEvidence(input)
+  return <FallbackViewer name={name} onClose={onClose}>{body}</FallbackViewer>
+}
+
+/** 没有 DSH 弹窗时的退路：和截图大图同一种遮罩弹窗，Esc、点遮罩空白处、「关闭」都能关。 */
+function FallbackViewer(props: { name: string; onClose: () => void; children: ReactNode }): ReactNode {
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => { try { dialogRef.current?.focus?.() } catch { /* 聚焦失败不影响显示 */ } }, [])
+  const keyDown = (event: { key: string; shiftKey: boolean; preventDefault(): void; stopPropagation?: () => void }): void => {
+    if (event.key === 'Escape') { try { event.stopPropagation?.() } catch { /* 替身没有也不影响 */ } props.onClose(); return }
+    if (event.key !== 'Tab') return
+    let active: unknown = null
+    try { active = document.activeElement } catch { active = null }
+    if (trapTabIn([dialogRef.current, closeRef.current], active, event.shiftKey)) event.preventDefault()
+  }
+  return (
+    <div className="ah-shot-overlay" onClick={props.onClose}>
+      <div ref={dialogRef} className="ah-shot-dialog ah-ev-viewer" role="dialog" aria-modal="true" tabIndex={-1} aria-label={props.name}
+        onClick={event => { event.stopPropagation() }} onKeyDown={keyDown}>
+        <div className="ah-ev-viewer-head">
+          <strong>{props.name}</strong>
+          <button type="button" ref={closeRef} className="ah-btn ah-shot-dialog-close" onClick={props.onClose}>{JOB_TEXT.shotClose}</button>
+        </div>
+        {props.children}
+      </div>
+    </div>
+  )
 }
 
 /** 「在访达中显示」按系统换说法：苹果电脑叫访达，其余叫文件夹。读不到系统时按苹果电脑。 */
@@ -210,14 +259,22 @@ function revealLabel(): string {
 }
 
 /**
- * 文件小条（W12）：点文件名用电脑上的默认应用打开；旁边的小按钮在访达中显示。
- * 打开由宿主做（优先用 DSH 自带的打开能力），这里只发命令；打不开时在下面一行写原因，带路径时路径可以选中复制。
+ * 文件小条（W12）：点文件名查看——md、txt 这类文本在当前页面上弹窗看（DSH 自带的 Markdown 渲染），
+ * 其余格式（pdf、表格、图片……）交给电脑上的默认应用；旁边的小按钮在访达中显示。
+ * 打不开时在下面一行写原因，带路径时路径可以选中复制。
  */
-export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['evidence'][number]; open?: FileOpener }): ReactNode {
+export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['evidence'][number]; open?: FileOpener; readText?: FileTextReader }): ReactNode {
   const { evidence, shotRef } = props
   const open: FileOpener = props.open ?? defaultFileOpener
+  const readText: FileTextReader = props.readText ?? defaultFileTextReader
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<{ error: string; path: string | null } | null>(null)
+  const [viewing, setViewing] = useState<{ text: string; format: 'markdown' | 'plain'; name: string } | null>(null)
+  const nameRef = useRef<HTMLButtonElement | null>(null)
+  const fail = (error: unknown): void => {
+    setBusy(false)
+    setProblem({ error: error instanceof Error ? error.message : String(error), path: null })
+  }
   const run = (action: 'open' | 'reveal'): void => {
     if (busy) return
     setBusy(true)
@@ -227,17 +284,31 @@ export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['
         setBusy(false)
         if (!result.ok) setProblem({ error: result.error ?? '没能打开', path: typeof result.path === 'string' && result.path !== '' ? result.path : null })
       })
-      .catch((error: unknown) => {
+      .catch(fail)
+  }
+  const view = (): void => {
+    if (busy) return
+    if (!evidenceViewableHere(evidence)) { run('open'); return }
+    setBusy(true)
+    setProblem(null)
+    void readText({ ...shotRef, evidenceId: evidence.id })
+      .then(result => {
         setBusy(false)
-        setProblem({ error: error instanceof Error ? error.message : String(error), path: null })
+        if (result.ok && result.data !== undefined) setViewing(result.data)
+        else setProblem({ error: result.error ?? '没能读出这个文件', path: null })
       })
+      .catch(fail)
+  }
+  const closeViewer = (): void => {
+    setViewing(null)
+    returnFocus(nameRef.current)
   }
   const reveal = revealLabel()
   return (
     <span className="ah-ev-file-wrap">
       <span className="ah-ev-file-row">
-        <button type="button" className="ah-ev-file is-openable" title={JOB_TEXT.fileOpen} aria-label={`${JOB_TEXT.fileOpen}：${evidence.label}`}
-          disabled={busy} onClick={() => { run('open') }}>
+        <button type="button" ref={nameRef} className="ah-ev-file is-openable" title={JOB_TEXT.fileOpen} aria-label={`${JOB_TEXT.fileOpen}：${evidence.label}`}
+          disabled={busy} onClick={view}>
           <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
         </button>
         <button type="button" className="ah-ev-file-reveal" title={reveal} aria-label={`${reveal}：${evidence.label}`}
@@ -251,6 +322,7 @@ export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['
           {problem.path !== null ? <code className="ah-job-preview-path">{problem.path}</code> : null}
         </span>
       ) : null}
+      {viewing !== null ? <FileTextViewer name={viewing.name} text={viewing.text} format={viewing.format} onClose={closeViewer} /> : null}
     </span>
   )
 }

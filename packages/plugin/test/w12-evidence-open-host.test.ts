@@ -108,12 +108,13 @@ describe('openJobEvidence', () => {
   })
 })
 
-describe('locateJobEvidence', () => {
-  it('只按 view 请 core 查，把路径和会话原样交给界面，宿主不调用任何程序', async () => {
+describe('readJobEvidenceText', () => {
+  it('只按 jobId、submissionId、evidenceId 请 core 读，界面传来的路径被忽略，宿主不调用任何程序', async () => {
     const e = env()
-    const { api, seen } = fakeApi({ ok: true, data: { path: MD, action: 'view', sessionId: 'sess-exec' } })
-    expect(await dispatchCommand(api, 'locateJobEvidence', { ...INPUT, action: 'open', path: '/etc/passwd' }, e.deps)).toEqual({ ok: true, data: { path: MD, action: 'view', sessionId: 'sess-exec' } })
-    expect(seen).toEqual([{ ...INPUT, action: 'view' }])
+    const seen: unknown[] = []
+    const api = { readJobEvidenceText: async (input: unknown) => { seen.push(input); return { ok: true, data: { text: '# a', format: 'markdown', name: 'a.md' } } } } as unknown as UiApi
+    expect(await dispatchCommand(api, 'readJobEvidenceText', { ...INPUT, path: '/etc/passwd' }, e.deps)).toEqual({ ok: true, data: { text: '# a', format: 'markdown', name: 'a.md' } })
+    expect(seen).toEqual([INPUT])
     expect(e.hostCalls).toEqual([])
     expect(e.execCalls).toEqual([])
   })

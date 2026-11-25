@@ -98,9 +98,9 @@ export const api = {
    * W12：卡片上的文件证据交给电脑打开（action 为 open）或在访达中显示（reveal）。位置由中心查过后给出，
    * 宿主优先用 DSH 自带的打开能力；失败时结果里带 path，界面显示出来方便复制。
    */
-  /** W12：在 DSH 自带的文件预览里看之前，取检查过的文件路径和交付员工的会话（宿主不打开任何东西）。 */
-  locateJobEvidence: (input: { jobId: string; submissionId: string; evidenceId: string }): Promise<CommandResult<{ path: string; sessionId?: string | null }>> =>
-    postCommand('locateJobEvidence', { ...input }),
+  /** W12：读出一个文本类文件证据（md、txt、csv……），在员工页里用 DSH 的 Markdown 渲染器显示。 */
+  readJobEvidenceText: (input: { jobId: string; submissionId: string; evidenceId: string }): Promise<CommandResult<{ text: string; format: 'markdown' | 'plain'; name: string }>> =>
+    postCommand('readJobEvidenceText', { ...input }),
   openJobEvidence: (input: { jobId: string; submissionId: string; evidenceId: string; action: 'open' | 'reveal' }): Promise<CommandResult & { path?: string }> =>
     postCommand('openJobEvidence', { ...input }),
   /** P74i：交付卡上点「验收通过」。revision 是交付卡视图的修订号（旧数据没有按 0）。 */

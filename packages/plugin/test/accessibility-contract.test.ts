@@ -69,7 +69,8 @@ const commandPalette = read('components/command-palette.tsx')
 // 第 39 轮登记六个真实弹窗挂载点；P48 队友归档新增 bot-archive-dialog（其拦截态
 // BlockedDialog 自带原生 role="dialog"，其余三态复用 ConfirmDialog），挂载点增至七个；
 // P74i 截图大图改为模态弹窗（EvidenceList），挂载点增至八个；
-// P75k 删除「教它技能」弹窗（要员工学某段会话的做法改为对总管说），挂载点减为七个
+// P75k 删除「教它技能」弹窗（要员工学某段会话的做法改为对总管说），挂载点减为七个；
+// W12 文件查看弹窗的退路（取不到 DSH 自带 Modal 时用，EvidenceList 第二处），挂载点增至八个
 // （use-drawer-focus.ts 里的 role="dialog" 只是注释示例）。
 const newBotWizard = read('components/NewBotWizard.tsx')
 const confirmDialog = read('components/confirm-dialog.tsx')
@@ -341,8 +342,9 @@ const headingLevels = (text: string): number[] => {
 describe('WCAG 4.1.2 对话框：模态声明与显式命名一个都不能少', () => {
   const tags = collectDialogTags()
 
-  it('全客户端恰有七个真实弹窗挂载点（新增弹窗需在本契约登记；P75k 起没有教学弹窗）', () => {
+  it('全客户端恰有八个真实弹窗挂载点（新增弹窗需在本契约登记；P75k 起没有教学弹窗；W12 加文件查看退路弹窗）', () => {
     expect(tags.map(t => t.file).sort()).toEqual([
+      'components/EvidenceList.tsx',
       'components/EvidenceList.tsx',
       'components/NewBotWizard.tsx',
       'components/bot-archive-dialog.tsx',
