@@ -675,6 +675,11 @@ export interface UiApi {
    * { kind: 'file', path } 或 { kind: 'url', url }，不合格返回一句中文错误。真正打开由宿主做，宿主只打开这里返回的目标。
    */
   jobPreviewTarget(input: unknown): Promise<CommandResult<import('../job/preview.js').PreviewTarget>>;
+  /**
+   * W12：卡片上的文件证据交给宿主之前的校验（只读）。入参 { jobId, submissionId, evidenceId, action: 'open' | 'reveal' }；
+   * 成功返回检查过的真实绝对路径 { path, action }，不合格返回一句中文错误。真正打开由宿主做。
+   */
+  jobEvidenceOpenTarget(input: unknown): Promise<CommandResult<import('../job/evidence-open.js').EvidenceOpenTarget>>;
   /** P74f：交付卡上点「验收通过」；stage 必须是卡片的阶段（不是最新一张卡时被拒）。 */
   acceptJob(input: unknown): Promise<CommandResult<{ jobId: string; stage: number }>>;
   /** P74f-2：三轮不过卡上选一个办法；option 从 0 起（0 对应 A）；stage 必须是卡片的阶段。 */

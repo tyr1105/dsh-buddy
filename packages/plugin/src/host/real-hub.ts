@@ -9,8 +9,8 @@
  */
 import { execFile } from 'node:child_process'
 import { lstatSync, realpathSync } from 'node:fs'
-import { posix } from 'node:path'
-import { previewRootDir } from '@agent-hub/core'
+import { dirname, posix } from 'node:path'
+import { evidenceOpenable, previewRootDir } from '@agent-hub/core'
 import type { Hub, UiApi, CommandResult } from '@agent-hub/core'
 import type { BotView, MemoryPageView, ProjectView, ResourceView, SettingsView, SkillDetailView, SkillLibraryView, ThreadView } from '../shared/views.js'
 import type { HubFacade, ChangedEvent, ChangeListener } from './hub-facade.js'
@@ -60,7 +60,15 @@ export interface OpenDeps {
   previewRoot?: string
   /** 宿主打开文件之前查看目标用的两个文件操作，可以替换（测试用）；默认用 node:fs 的同步版本。 */
   files?: PreviewFiles
+  /**
+   * W12：DSH 自带的「用默认应用打开 / 在访达中显示」（sessionController.openWorkspacePath）。
+   * 有就优先用它；没有或它报错时，退回下面的系统命令（open / open -R）。
+   */
+  hostOpen?: HostFileOpener
 }
+
+/** 宿主的打开接口：path 是检查过的真实绝对路径；action 为 reveal 时在访达中显示，省略时用默认应用打开。失败抛出。 */
+export type HostFileOpener = (request: { path: string; action?: 'reveal' }) => Promise<void>
 
 /** 打开文件之前的检查要用到的文件操作：不跟随链接地看一个路径，以及解析真实路径。 */
 export interface PreviewFiles {
@@ -154,6 +162,64 @@ export async function openTarget(kind: 'file' | 'url', target: string, deps: Ope
   }
 }
 
+// ---------- 卡片上的文件证据（W12）：交给宿主打开或在访达中显示 ----------
+
+/** 「在访达中显示」用的系统命令：macOS 用 open -R；Windows 用 explorer /select；其余打开所在的文件夹。 */
+export function revealCommandFor(platform: NodeJS.Platform, target: string): { file: string; args: string[] } {
+  if (platform === 'darwin') return { file: 'open', args: ['-R', target] }
+  if (platform === 'win32') return { file: 'explorer.exe', args: [`/select,${target}`] }
+  return { file: 'xdg-open', args: [dirname(target)] }
+}
+
+/**
+ * 宿主这一层对证据文件的第二道检查（core 已经查过）：绝对路径、没有控制字符、不会被当成选项、
+ * 是普通文件且不是符号链接；用默认应用打开时扩展名还得在放行名单里（与 core 同一个函数）。任何出错都按「不满足」处理。
+ */
+export function evidenceFileAllowed(target: string, action: 'open' | 'reveal', deps: OpenDeps): boolean {
+  try {
+    if (target === '' || target.startsWith('-') || /[\u0000-\u001f\u007f]/.test(target)) return false
+    if (!(target.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(target))) return false
+    if (action === 'open' && !evidenceOpenable(target)) return false
+    const info = (deps.files ?? systemPreviewFiles).lstat(target)
+    return info !== null && info.isFile && !info.isSymlink
+  } catch {
+    return false
+  }
+}
+
+/** 打开或显示一个证据文件：先用 DSH 自带的能力，不行再用系统命令；任何失败都返回 ok: false 和路径，绝不抛出。 */
+export async function openEvidenceFile(target: string, action: 'open' | 'reveal', deps: OpenDeps): Promise<OpenResult> {
+  const failed: OpenResult = { ok: false, path: target, error: OPEN_FAILED_TEXT }
+  if (!evidenceFileAllowed(target, action, deps)) return failed
+  if (deps.hostOpen !== undefined) {
+    try {
+      await deps.hostOpen(action === 'reveal' ? { path: target, action: 'reveal' } : { path: target })
+      return { ok: true, path: target }
+    } catch { /* 宿主拒绝或不支持：退回系统命令 */ }
+  }
+  try {
+    const { file, args } = action === 'reveal' ? revealCommandFor(deps.platform, target) : openCommandFor(deps.platform, target)
+    await new Promise<void>((resolve, reject) => {
+      deps.execFile(file, args, { timeout: 15000, windowsHide: true }, error => (error === null ? resolve() : reject(error)))
+    })
+    return { ok: true, path: target }
+  } catch {
+    return failed
+  }
+}
+
+/**
+ * 界面的「打开文件 / 在访达中显示」命令：只认 jobId、submissionId、evidenceId、action，
+ * 位置由 core 查过之后给出；界面传来的路径一律忽略。core 返回错误时原样返回、不调用任何程序。
+ */
+async function openJobEvidenceCommand(api: UiApi, raw: Record<string, unknown>, deps: OpenDeps): Promise<CommandResult | OpenResult> {
+  const action = raw.action === 'reveal' ? 'reveal' : 'open'
+  const checked = await api.jobEvidenceOpenTarget({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId, action })
+  if (!checked.ok) return { ok: false, error: checked.error }
+  if (checked.data === undefined) return bad('没能取得文件的位置')
+  return openEvidenceFile(checked.data.path, checked.data.action, deps)
+}
+
 /** 真正的系统实现：用 node:child_process 的 execFile（参数数组，不经过 shell）。 */
 export const systemOpenDeps: OpenDeps = {
   platform: process.platform,
@@ -183,6 +249,8 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       case 'readJobEvidence': return run(() => api.readJobEvidence({ jobId: raw.jobId, submissionId: raw.submissionId, evidenceId: raw.evidenceId }))
       // P74g：打开预览：只认 jobId，目标由 core 给出，宿主只打开这个目标。
       case 'openJobPreview': return run(() => openJobPreviewCommand(api, raw, deps))
+      // W12：卡片上的文件证据：用默认应用打开或在访达中显示。位置由 core 查过后给出，宿主再查一次。
+      case 'openJobEvidence': return run(() => openJobEvidenceCommand(api, raw, deps))
       // P74i：交付卡与三轮不过卡的按钮、回合上限与「停住了」条目的答复。
       // 都是普通 core 命令：整对象透传，由 core 的 zod 校验（缺哪一项它会用中文说清）。
       case 'acceptJob': return run(() => api.acceptJob(raw))
@@ -300,8 +368,9 @@ export class RealHubFacade implements HubFacade {
   /** 打开预览时用的参数：系统程序加上中心的预览目录（没有传 rootDir 时没有预览目录，文件预览一律不打开）。 */
   private readonly openDeps: OpenDeps
 
-  constructor(private readonly hub: Hub, store?: PushChannelStore, rootDir?: string) {
-    this.openDeps = rootDir === undefined ? systemOpenDeps : { ...systemOpenDeps, previewRoot: previewRootDir(rootDir) }
+  constructor(private readonly hub: Hub, store?: PushChannelStore, rootDir?: string, hostOpen?: HostFileOpener) {
+    const base = rootDir === undefined ? systemOpenDeps : { ...systemOpenDeps, previewRoot: previewRootDir(rootDir) }
+    this.openDeps = hostOpen === undefined ? base : { ...base, hostOpen }
     this.readStoredPushChannel(store)
     // 常驻订阅一次（不挂在 SSE 订阅者上）：主人改设置后立刻刷新缓存。
     try {

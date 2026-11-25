@@ -5,7 +5,7 @@
  * 样例取自 fixture-job.ts（core 的纯函数生成），链接一条在测试里补（样例约定没有链接证据）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { EvidenceList, ShotThumb } from '../src/client/components/EvidenceList.js'
+import { EvidenceList, FileChip, ShotThumb } from '../src/client/components/EvidenceList.js'
 import { clearShotCache, returnFocus } from '../src/client/logic/job.js'
 import { SAMPLE_SHOT_REF, sampleEvidenceItems, sampleReviewPassCard, sampleReviewReturnCard, sampleSubmissionCard } from '../src/shared/fixture-job.js'
 import type { EvidenceItemView } from '../src/shared/views.js'
@@ -41,7 +41,12 @@ describe('证据清单（P74h）', () => {
     // 截图是缩略图组件（子组件不展开，检查传给它的证据说明）。
     const thumbs = findElements(tree, ShotThumb)
     expect(thumbs.map(thumb => (thumb.props.evidence as { summary: string }).summary)).toContain('手机　390 宽')
-    expect(text).toContain('文件报名名单表格.numbers') // 文件小条：小标签加文件名
+    // 文件小条（W12 起是可点的子组件，子组件不展开，检查传给它的证据和定位参数）。
+    const chips = findElements(tree, FileChip)
+    expect(chips.map(chip => (chip.props.evidence as { label: string }).label)).toContain('报名名单表格.numbers')
+    expect(chips[0]!.props.shotRef).toEqual(SAMPLE_SHOT_REF)
+    // 没有定位参数时文件小条仍是一行文字：小标签加文件名。
+    expect(textOf(createHookHost().render(EvidenceList, { items, shotRef: null }))).toContain('文件报名名单表格.numbers')
     expect(text).toContain('依次提交 81 条，第 81 条显示「名额已满」；名单 80 行。') // 测试一句
     expect(text).toContain('链接example.com') // 链接：小标签加主机名
   })
@@ -155,5 +160,46 @@ describe('截图缩略图（P74h）', () => {
     expect(focus).toHaveBeenCalledTimes(1)
     expect(() => returnFocus({})).not.toThrow()
     expect(() => returnFocus(null)).not.toThrow()
+  })
+})
+
+describe('文件小条（W12）', () => {
+  const FILE = sampleEvidenceItems(sampleSubmissionCard).flatMap(item => item.evidence).find(entry => entry.kind === 'file')!
+
+  it('点文件名发「打开」，点旁边的按钮发「在访达中显示」，都带完整定位参数', async () => {
+    const open = vi.fn(async () => ({ ok: true }))
+    const host = createHookHost()
+    const buttons = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: FILE, open }), 'button')
+    expect(buttons.length).toBe(2)
+    expect(textOf(buttons[0])).toContain(FILE.label)
+    ;(buttons[0]!.props.onClick as () => void)()
+    await flush()
+    const again = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: FILE, open }), 'button')
+    ;(again[1]!.props.onClick as () => void)()
+    await flush()
+    expect(open).toHaveBeenNthCalledWith(1, { ...SAMPLE_SHOT_REF, evidenceId: FILE.id, action: 'open' })
+    expect(open).toHaveBeenNthCalledWith(2, { ...SAMPLE_SHOT_REF, evidenceId: FILE.id, action: 'reveal' })
+  })
+
+  it('打不开：下面一行写原因，带路径时显示路径方便复制；再点一次前先清掉', async () => {
+    const open = vi.fn(async () => ({ ok: false, error: '没能自动打开，可以复制这个路径自己打开', path: '/x/交付/报告.md' }))
+    const host = createHookHost()
+    const first = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: FILE, open }), 'button')
+    ;(first[0]!.props.onClick as () => void)()
+    await flush()
+    const tree = host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: FILE, open })
+    const alert = findElements(tree, 'span').find(node => classOf(node) === 'ah-ev-file-error')!
+    expect(textOf(alert)).toContain('没能自动打开')
+    expect(textOf(findElements(alert, 'code')[0])).toBe('/x/交付/报告.md')
+  })
+
+  it('打开中两个按钮都不可点，不会重复发命令', () => {
+    const open = vi.fn(() => new Promise<{ ok: boolean }>(() => { /* 一直不回 */ }))
+    const host = createHookHost()
+    const first = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: FILE, open }), 'button')
+    ;(first[0]!.props.onClick as () => void)()
+    const buttons = findElements(host.render(FileChip, { shotRef: SAMPLE_SHOT_REF, evidence: FILE, open }), 'button')
+    expect(buttons.every(button => button.props.disabled === true)).toBe(true)
+    expect(open).toHaveBeenCalledTimes(1)
   })
 })

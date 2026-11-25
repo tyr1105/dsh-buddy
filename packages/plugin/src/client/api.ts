@@ -94,6 +94,12 @@ export const api = {
    */
   readJobEvidence: (input: { jobId: string; submissionId: string; evidenceId: string }): Promise<CommandResult<{ dataUrl: string }>> =>
     postCommand('readJobEvidence', { ...input }),
+  /**
+   * W12：卡片上的文件证据交给电脑打开（action 为 open）或在访达中显示（reveal）。位置由中心查过后给出，
+   * 宿主优先用 DSH 自带的打开能力；失败时结果里带 path，界面显示出来方便复制。
+   */
+  openJobEvidence: (input: { jobId: string; submissionId: string; evidenceId: string; action: 'open' | 'reveal' }): Promise<CommandResult & { path?: string }> =>
+    postCommand('openJobEvidence', { ...input }),
   /** P74i：交付卡上点「验收通过」。revision 是交付卡视图的修订号（旧数据没有按 0）。 */
   acceptJob: (input: { jobId: string; stage: number; revision?: number }): Promise<CommandResult> =>
     postCommand('acceptJob', { ...input }),

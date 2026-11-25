@@ -102,6 +102,8 @@ const OPTIONAL_PROBES: CapabilityProbe[] = [
   { key: 'sessions.flush', label: '会话落盘（sessions.flush）', paths: [['sessions', 'flush']] },
   { key: 'sessionProjections.snapshot', label: '外部会话标题（sessionProjections.snapshot）', paths: [['sessionProjections', 'snapshot']] },
   { key: 'agents.list', label: '补装已有机器人工具（agents.list）', paths: [['agents', 'list']] },
+  // W12：卡片上的文件用宿主的「用默认应用打开 / 在访达中显示」；缺了退回插件自己调系统 open。
+  { key: 'sessionController.openWorkspacePath', label: '用默认应用打开文件（sessionController.openWorkspacePath）', paths: [['sessionController', 'openWorkspacePath']] },
 ]
 
 /** 安全读一个属性：宿主代理可能抛错，探测绝不能让异常冒出去。 */

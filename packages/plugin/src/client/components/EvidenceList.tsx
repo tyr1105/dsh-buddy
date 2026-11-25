@@ -169,9 +169,69 @@ function evidenceNode(evidence: EvidenceItemView['evidence'][number], shotRef: S
       </span>
     )
   }
+  // W12：有定位参数时文件小条可以点（交给电脑打开），旁边一个「在访达中显示」；没有定位参数（旧数据、预览）时仍是一行文字。
+  if (shotRef !== null) return <FileChip key={evidence.id} shotRef={shotRef} evidence={evidence} />
   return (
     <span key={evidence.id} className="ah-ev-file">
       <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
+    </span>
+  )
+}
+
+/** 打开文件的函数形状：与 client/api.ts 的 openJobEvidence 一致，测试里注入假实现。 */
+export type FileOpener = (input: ShotRef & { evidenceId: string; action: 'open' | 'reveal' }) => Promise<{ ok: boolean; error?: string; path?: string }>
+
+/** 「在访达中显示」按系统换说法：苹果电脑叫访达，其余叫文件夹。读不到系统时按苹果电脑。 */
+function revealLabel(): string {
+  try {
+    const platform = String((globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator?.platform ?? '')
+    if (platform !== '' && !/mac/i.test(platform)) return JOB_TEXT.fileRevealOther
+  } catch { /* 读不到按苹果电脑 */ }
+  return JOB_TEXT.fileReveal
+}
+
+/**
+ * 文件小条（W12）：点文件名用电脑上的默认应用打开；旁边的小按钮在访达中显示。
+ * 打开由宿主做（优先用 DSH 自带的打开能力），这里只发命令；打不开时在下面一行写原因，带路径时路径可以选中复制。
+ */
+export function FileChip(props: { shotRef: ShotRef; evidence: EvidenceItemView['evidence'][number]; open?: FileOpener }): ReactNode {
+  const { evidence, shotRef } = props
+  const open: FileOpener = props.open ?? (input => api.openJobEvidence(input))
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<{ error: string; path: string | null } | null>(null)
+  const run = (action: 'open' | 'reveal'): void => {
+    if (busy) return
+    setBusy(true)
+    setProblem(null)
+    void open({ ...shotRef, evidenceId: evidence.id, action })
+      .then(result => {
+        setBusy(false)
+        if (!result.ok) setProblem({ error: result.error ?? '没能打开', path: typeof result.path === 'string' && result.path !== '' ? result.path : null })
+      })
+      .catch((error: unknown) => {
+        setBusy(false)
+        setProblem({ error: error instanceof Error ? error.message : String(error), path: null })
+      })
+  }
+  const reveal = revealLabel()
+  return (
+    <span className="ah-ev-file-wrap">
+      <span className="ah-ev-file-row">
+        <button type="button" className="ah-ev-file is-openable" title={JOB_TEXT.fileOpen} aria-label={`${JOB_TEXT.fileOpen}：${evidence.label}`}
+          disabled={busy} onClick={() => { run('open') }}>
+          <span className="ah-ev-tag">{evidenceTag(evidence.kind)}</span>{evidence.label}
+        </button>
+        <button type="button" className="ah-ev-file-reveal" title={reveal} aria-label={`${reveal}：${evidence.label}`}
+          disabled={busy} onClick={() => { run('reveal') }}>
+          {busy ? JOB_TEXT.fileOpening : reveal}
+        </button>
+      </span>
+      {problem !== null ? (
+        <span className="ah-ev-file-error" role="alert">
+          <span>{problem.error}</span>
+          {problem.path !== null ? <code className="ah-job-preview-path">{problem.path}</code> : null}
+        </span>
+      ) : null}
     </span>
   )
 }

@@ -3,3 +3,5 @@ export * from './state.js';
 export * from './store.js';
 /** P74r4b：预览目录的位置（宿主打开预览之前据此确认目标在预览目录之内）。 */
 export { previewRootDir } from './preview-copy.js';
+export { evidenceOpenable, EVIDENCE_OPENABLE_EXTS } from './evidence-open.js';
+export type { EvidenceOpenAction, EvidenceOpenTarget } from './evidence-open.js';
