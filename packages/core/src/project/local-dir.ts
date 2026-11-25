@@ -45,8 +45,8 @@ export function foldSegment(segment: string): string {
   return segment.normalize('NFC').toUpperCase().toLowerCase();
 }
 
-/** 把绝对路径切成段（去掉空段，等于去掉多余的斜线和末尾的斜线）。 */
-function segmentsOf(path: string): string[] {
+/** 把绝对路径切成段（去掉空段，等于去掉多余的斜线和末尾的斜线）。W7a 的工作文件夹校验也用它。 */
+export function segmentsOf(path: string): string[] {
   return path.split('/').filter(part => part !== '');
 }
 
@@ -90,6 +90,14 @@ const BAD_CHARS = /[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Cs}\p{Zl}\p{Zp}"\\]|[^\S ]/u;
  * 与半角、全角括号；点不能出现在开头，一段也不能以组合附加符开头（其余位置不限）。
  */
 const SEGMENT_CHARS = /^(?![.\p{M}])[\p{L}\p{N}\p{M} _.\-()（）]+$/u;
+
+/** W7a：工作文件夹与发布位置用同一套字符规则（整条路径不能有的字符、每一段允许的字符）。 */
+export function hasBadPathChars(text: string): boolean {
+  return BAD_CHARS.test(text) || hasInvisibleChars(text);
+}
+export function isPlainSegmentName(segment: string): boolean {
+  return SEGMENT_CHARS.test(segment);
+}
 
 /** 拒绝原因（逐字，接进 localDirRefusal 的 {原因}）。 */
 export const LOCAL_DIR_REASONS = {
@@ -190,7 +198,12 @@ export function localDirEnvOf(ctx: HubContext, realHome?: string): LocalDirEnv {
   add(`${root}/shared`);
   add(`${root}/projects`);
   for (const bot of ctx.store.table('bots').list()) add(bot.homeDir);
-  for (const project of ctx.store.table('projects').list()) add(project.sharedDir);
+  for (const project of ctx.store.table('projects').list()) {
+    add(project.sharedDir);
+    // W7a：主人挂接的工作文件夹只读，发布位置不能落在它里面，也不能是它的上级。
+    add(project.workFolder?.path);
+    add(project.workFolder?.realPath);
+  }
   for (const raw of ctx.settings.workDataPaths ?? []) add(expandHome(raw, home));
   if (home) add(`${home}/.dsh`);
   // P81r1（S7）：主目录经链接时补上真实路径的写法（只加原来就在主目录之下的那几项）。

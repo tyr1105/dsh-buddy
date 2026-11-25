@@ -18,6 +18,7 @@ import { toneClass } from '../logic/job.js'
 import {
   PROJECT_BACKGROUND_EMPTY_TEXT, PROJECT_EMPTY_TEXT, PROJECT_MEMBERS_EMPTY_TEXT, PROJECT_TASKS_EMPTY_TEXT,
   backgroundMetaText, botOptions, canManageProject, canOpenTopic, projectMemberRows, projectPathRows, projectPickRows, projectTaskRows,
+  WORK_FOLDER_EMPTY_TEXT, WORK_FOLDER_LABEL, workFolderConfirmText, workFolderDetachText, workFolderRow,
   type ProjectPathRow, type ProjectStatusAction,
 } from '../logic/project-page.js'
 
@@ -50,8 +51,16 @@ export function PathRow(props: { row: ProjectPathRow }): ReactNode {
 }
 
 /** 选中项目后的四块内容。导出是为了单独测这四块，页面本身只在这个文件里用它。 */
-export function ProjectBoard(props: { row: ProjectViewRow; onOpenTopic: (topicId: string) => void }): ReactNode {
+export function ProjectBoard(props: {
+  row: ProjectViewRow
+  onOpenTopic: (topicId: string) => void
+  /** W7a：挂接或更换工作文件夹（不传时不显示按钮，例如归档项目）。 */
+  onAttachWorkFolder?: () => void
+  /** W7a：取消挂接。 */
+  onDetachWorkFolder?: () => void
+}): ReactNode {
   const { row } = props
+  const folder = workFolderRow(row.project.workFolder)
   const members = projectMemberRows(row)
   const tasks = projectTaskRows(row)
   const backgroundMeta = backgroundMetaText(row.background)
@@ -125,6 +134,19 @@ export function ProjectBoard(props: { row: ProjectViewRow; onOpenTopic: (topicId
       <section className="ah-prj-block" aria-label="项目文件路径">
         <h3>项目文件路径</h3>
         {projectPathRows(row.path).map(item => <PathRow key={item.label} row={item} />)}
+        {folder !== null ? <PathRow row={folder} /> : (
+          <div className="ah-prj-path">
+            <span className="ah-prj-path-label">{WORK_FOLDER_LABEL}</span>
+            <span className="ah-prj-note">{WORK_FOLDER_EMPTY_TEXT}</span>
+          </div>
+        )}
+        {props.onAttachWorkFolder !== undefined ? (
+          <div className="ah-prj-head-actions">
+            <button type="button" className="ah-btn" onClick={props.onAttachWorkFolder}>{folder === null ? '挂接文件夹…' : '更换文件夹…'}</button>
+            {folder !== null && props.onDetachWorkFolder !== undefined
+              ? <button type="button" className="ah-btn ah-btn-ghost" onClick={props.onDetachWorkFolder}>取消挂接</button> : null}
+          </div>
+        ) : null}
       </section>
     </div>
   )
@@ -158,11 +180,17 @@ export function ProjectPage(props: {
   onNewProjectOpened?: () => void
   /** 项目保存成功：把项目 id 交给父层，页面和左栏立刻选中它。 */
   onProjectSaved?: (projectId: string) => void
+  /** W7a：打开宿主的选择文件夹；返回 null 表示取消。不传时不显示挂接按钮。 */
+  pickFolder?: () => Promise<string | null>
 }): ReactNode {
   /** 编辑弹窗：null=没开；editingId 为 null 表示新建。只记 id，状态动作后才能读到最新的项目。 */
   const [form, setForm] = useState<{ editingId: string | null } | null>(null)
   /** 叠在弹窗上的二次确认：归档，或恢复已归档的项目。 */
-  const [confirming, setConfirming] = useState<'archive' | 'restore' | null>(null)
+  const [confirming, setConfirming] = useState<'archive' | 'restore' | 'detachFolder' | null>(null)
+  /** W7a：选好了、等主人确认挂接的文件夹（null=没有）。 */
+  const [pendingFolder, setPendingFolder] = useState<string | null>(null)
+  /** 选择文件夹或挂接失败时，在页面上就近说一句（没有弹窗可放时）。 */
+  const [folderError, setFolderError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
@@ -287,6 +315,33 @@ export function ProjectPage(props: {
     }
   }
 
+  /** W7a：选文件夹，选好后弹确认；取消选择什么都不做。 */
+  const startAttachFolder = async (): Promise<void> => {
+    if (props.pickFolder === undefined) return
+    setError(null)
+    setFolderError(null)
+    try {
+      const picked = await props.pickFolder()
+      if (picked !== null && picked.trim() !== '') setPendingFolder(picked.trim())
+    } catch (e) {
+      setFolderError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const confirmAttachFolder = async (target: ProjectViewRow, path: string): Promise<void> => {
+    if (await runCommand('setProjectWorkFolder', { projectId: target.project.id, path })) {
+      setPendingFolder(null)
+      showSuccess('已挂接。项目成员现在可以读这个文件夹。')
+    }
+  }
+
+  const confirmDetachFolder = async (target: ProjectViewRow): Promise<void> => {
+    if (await runCommand('setProjectWorkFolder', { projectId: target.project.id, path: null })) {
+      setConfirming(null)
+      showSuccess('已取消挂接。')
+    }
+  }
+
   const confirmTarget = editing ?? row
   const archived = row !== null && !canManageProject(row.project.status)
 
@@ -328,7 +383,12 @@ export function ProjectPage(props: {
                 : <button type="button" className="ah-btn" onClick={() => { setError(null); setNote(null); setForm({ editingId: row.project.id }) }}>编辑</button>}
             </div>
           </header>
-          <ProjectBoard row={row} onOpenTopic={props.onOpenTopic} />
+          <ProjectBoard row={row} onOpenTopic={props.onOpenTopic}
+            {...(archived || props.pickFolder === undefined ? {} : {
+              onAttachWorkFolder: () => void startAttachFolder(),
+              onDetachWorkFolder: () => { setError(null); setFolderError(null); setConfirming('detachFolder') },
+            })} />
+          {folderError !== null ? <p className="ah-settings-error" role="alert">{folderError}</p> : null}
         </>
       )}
 
@@ -352,6 +412,18 @@ export function ProjectPage(props: {
           onCancel={() => { if (!busy) setConfirming(null) }} onConfirm={() => void confirmArchive(confirmTarget)}
           confirmText="归档项目"
           text={`归档后，「${confirmTarget.project.name}」只读，里面的会话不能再发言。项目和记录都还在，可以恢复。`} />
+      ) : null}
+      {pendingFolder !== null && row !== null ? (
+        <ConfirmDialog title={`挂接工作文件夹：${row.project.name}`} busy={busy} error={error} tone="primary"
+          onCancel={() => { if (!busy) { setPendingFolder(null); setError(null) } }} onConfirm={() => void confirmAttachFolder(row, pendingFolder)}
+          confirmText="挂接（只读）"
+          text={workFolderConfirmText(row.project.name, pendingFolder)} />
+      ) : null}
+      {confirming === 'detachFolder' && row !== null && row.project.workFolder != null ? (
+        <ConfirmDialog title={`取消挂接：${row.project.name}`} busy={busy} error={error}
+          onCancel={() => { if (!busy) setConfirming(null) }} onConfirm={() => void confirmDetachFolder(row)}
+          confirmText="取消挂接"
+          text={workFolderDetachText(row.project.name, row.project.workFolder.path)} />
       ) : null}
       {confirming === 'restore' && confirmTarget !== null ? (
         <ConfirmDialog title={`恢复项目：${confirmTarget.project.name}`} busy={busy} error={error} tone="primary"

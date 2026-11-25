@@ -34,6 +34,7 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     // 项目容器（F08 / V2-PH4-01）：projectView 只读，十二条项目与任务命令先满足形状。
     projectView: () => ({ projects: [] }) as any,
     saveProject: record('saveProject') as any,
+    setProjectWorkFolder: record('setProjectWorkFolder') as any,
     pauseProject: record('pauseProject') as any,
     resumeProject: record('resumeProject') as any,
     completeProject: record('completeProject') as any,
@@ -548,5 +549,19 @@ describe('RealHubFacade / LazyHubFacade / DisabledHub', () => {
     lazy.setImpl(new DisabledHub('已停用'))
     const project = await lazy.project()
     expect(project.counts.total).toBe(0)
+  })
+})
+
+describe('W7a setProjectWorkFolder 透传', () => {
+  it('整对象原样交给 core（挂接与取消）', async () => {
+    const api = fakeApi()
+    const attach = { projectId: 'prj_1', path: '/Users/demo/code/shop' }
+    const detach = { projectId: 'prj_1', path: null }
+    await dispatchCommand(api, 'setProjectWorkFolder', attach)
+    await dispatchCommand(api, 'setProjectWorkFolder', detach)
+    expect(api.calls).toEqual([
+      { name: 'setProjectWorkFolder', args: [attach] },
+      { name: 'setProjectWorkFolder', args: [detach] },
+    ])
   })
 })

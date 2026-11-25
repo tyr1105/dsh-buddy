@@ -6,7 +6,7 @@ import type { Bot, GuardDecision } from '../model/index.js';
 import { parseInput } from '../engine/validation.js';
 import { posix } from 'node:path';
 import { classifyToolCall, TOOL_SHAPES } from './classify.js';
-import { classifyPath, isProtected, mostDangerous, resolveGatePath, type Classification, type GateContext } from './paths.js';
+import { classifyPath, isProtected, isQuietRefusal, mostDangerous, resolveGatePath, type Classification, type GateContext } from './paths.js';
 import { lexShell, type ShellJoin } from './shell-lexer.js';
 import { unwrap } from './wrappers.js';
 import { commandArguments } from './tool-targets.js';
@@ -173,13 +173,13 @@ function classifyLinkCreation(tool: string, args: unknown, gctx: GateContext): C
         const locations = linkLocationsOf(item.words);
         const perDir = item.dirs.map(dir => locations
             .map(location => ({ item: classifyPath(location, true, dir), path: resolveGatePath(location, dir) }))
-            .filter(({ item: hit, path }) => hit.cls === 'protected' && (hit.subclass === 'skill_dir_readonly' || isProtected(path, dir)))
+            .filter(({ item: hit, path }) => hit.cls === 'protected' && (isQuietRefusal(hit.subclass) || isProtected(path, dir)))
             .map(({ item: hit }) => hit));
         const hitDirs = perDir.filter(hits => hits.length > 0);
         if (hitDirs.length === 0) continue;
         if (hitDirs.length < perDir.length) { verdicts.push({ cls: 'protected', subclass: 'skill_dir_readonly', reason: AMBIGUOUS_LINK_REASON }); continue; }
         const worst = hitDirs.map(hits => mostDangerous(hits));
-        const counts = (hit: Classification): boolean => hit.subclass !== 'skill_dir_readonly';
+        const counts = (hit: Classification): boolean => !isQuietRefusal(hit.subclass);
         verdicts.push(worst.every(counts) ? mostDangerous(worst) : worst.find(hit => !counts(hit))!);
     }
     return verdicts.length > 0 ? mostDangerous(verdicts) : null;
@@ -251,7 +251,7 @@ export function guardToolCallSync(ctx: HubContext, sessionId: string, tool: stri
         if (action.cls === 'protected') {
             // P75e：中心维护的技能库三处写入被拒但不计越界——这三处以前允许写，旧会话里的员工照旧写不是有意越界，
             // 计越界会让员工被停用（方案 16 节第 10 项的裁定）；回合结束有核对恢复兜底。
-            if (action.subclass === 'skill_dir_readonly') return { allow: false, message: action.reason };
+            if (isQuietRefusal(action.subclass)) return { allow: false, message: action.reason };
             defer(recordViolation(ctx, bot.id, action.reason));
             return { allow: false, message: action.reason };
         }

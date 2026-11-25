@@ -272,3 +272,22 @@ describe('命令入参', () => {
     expect(buildSaveBackgroundInput('prj_new', values, null)).toBeNull()
   })
 })
+
+describe('W7a 工作文件夹', () => {
+  it('没挂接时没有路径行；挂了显示目录名、完整路径进悬停提示', async () => {
+    const { workFolderRow, WORK_FOLDER_LABEL } = await import('../src/client/logic/project-page.js')
+    expect(workFolderRow(null)).toBeNull()
+    expect(workFolderRow(undefined)).toBeNull()
+    expect(workFolderRow({ path: '/Users/demo/code/shop-site' })).toEqual({
+      label: WORK_FOLDER_LABEL, value: '/Users/demo/code/shop-site', display: 'shop-site/', title: '/Users/demo/code/shop-site',
+    })
+  })
+
+  it('确认话说清只读、凭据除外、非成员要先问', async () => {
+    const { workFolderConfirmText } = await import('../src/client/logic/project-page.js')
+    const text = workFolderConfirmText('网店', '/Users/demo/code/shop-site')
+    expect(text).toContain('不能新建、修改或删除')
+    expect(text).toContain('凭据文件除外')
+    expect(text).toContain('会先问你')
+  })
+})

@@ -246,6 +246,8 @@ export function dispatchCommand(api: UiApi, name: string, raw: Record<string, un
       // 的形状全部由 core DispatchTaskSchema 把关，边界不挑字段。其余状态流转只收 id，
       // 缺参在边界直接中文报错、不进引擎。
       case 'saveProject': return run(() => api.saveProject(raw))
+      // W7a：挂接工作文件夹，整对象透传给 core 校验（projectId、path 或 null）。
+      case 'setProjectWorkFolder': return run(() => api.setProjectWorkFolder(raw))
       case 'pauseProject': return run(() => api.pauseProject(reqStr(raw, 'id')))
       case 'resumeProject': return run(() => api.resumeProject(reqStr(raw, 'id')))
       case 'completeProject': return run(() => api.completeProject(reqStr(raw, 'id')))

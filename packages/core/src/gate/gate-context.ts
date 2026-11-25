@@ -17,6 +17,7 @@ import type { Bot } from '../model/index.js';
 import { normalizeProjectSharedDir } from '../project/shared-dir.js';
 import { isReadonlySkillTurn } from '../skill/keys.js';
 import { tmpAlias, within, type GateContext } from './paths.js';
+import { allWorkFolderRoots, memberWorkFolderRoots } from '../project/work-folder.js';
 
 /** 宿主在每次工具调用时报进来的沙箱情况（由插件的工具钩子现查现报，不缓存）。 */
 export interface ToolCallHostReport {
@@ -81,6 +82,8 @@ export function gateContextFor(ctx: HubContext, bot: Bot, host?: ToolCallHostRep
     // 复盘回合不带项目目录（R5）：「成员写项目文件夹不用审批」也是本卡的放宽，复盘时一律不生效，
     // 经中心代写（hub_outbox_submit）也一样，照旧按「复盘只允许写自己的 work、MEMORY.md 与 playbooks」拒绝。
     projectDirs: reflection ? [] : memberProjectDirs(ctx, bot.id),
+    // W7a：工作文件夹只读，复盘回合也一样（只读回合照样可以读本人项目的工作文件夹）。
+    workFolders: allWorkFolderRoots(ctx), memberWorkFolders: memberWorkFolderRoots(ctx, bot.id),
     // P74r16a：中心根目录在符号链接后面时，把它的真实路径带进来，路径解析时换回设置里的写法（沙箱开不开都一样）。
     ...(ctx.runtime?.realRootDir ? { realRootDir: ctx.runtime.realRootDir } : {}),
     // 两个字段只在宿主明确确认沙箱时才出现：没确认时连临时目录也不认，完全按旧规则走。

@@ -55,6 +55,7 @@ import {
   approveProjectContextProposal, rejectProjectContextProposal, saveProjectContext,
 } from '../project/context-service.js';
 import { ensureProjectSharedDir } from '../project/shared-dir.js';
+import { setProjectWorkFolder } from '../project/work-folder.js';
 import { dispatchTask } from '../project/dispatch.js';
 import { createProjectTopic } from '../project/topics.js';
 import { KnowledgeBaseConfigSchema, knowledgeHost } from '../model/knowledge-base.js';
@@ -168,6 +169,8 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
       await ensureProjectSharedDir(ctx, project);
       return project;
     }),
+    // W7a：挂接、更换、取消项目的工作文件夹（只读）；要读磁盘核对位置，走统一命令出口。
+    setProjectWorkFolder: raw => run('setProjectWorkFolder', () => setProjectWorkFolder(ctx, raw)),
     pauseProject: id => run('pauseProject', () => pauseProject(ctx, id)),
     resumeProject: id => run('resumeProject', () => resumeProject(ctx, id)),
     completeProject: id => run('completeProject', () => completeProject(ctx, id)),
