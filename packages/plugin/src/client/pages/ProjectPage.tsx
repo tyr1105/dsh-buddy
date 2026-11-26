@@ -164,6 +164,8 @@ export function ProjectPage(props: {
   /** 叠在弹窗上的二次确认：归档，或恢复已归档的项目。 */
   const [confirming, setConfirming] = useState<'archive' | 'restore' | null>(null)
   const [busy, setBusy] = useState(false)
+  /** W1：打开项目对话失败时就近说一句。 */
+  const [convError, setConvError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -215,6 +217,20 @@ export function ProjectPage(props: {
   const closeForm = (): void => { if (!busy) setForm(null) }
 
   /** 跑一条命令：成功刷新，失败把 core 的中文错误留给弹窗。返回是否成功。 */
+  /** W1：打开（必要时新建）项目对话并进去。 */
+  const openConversation = async (projectId: string): Promise<void> => {
+    if (busy) return
+    setConvError(null)
+    try {
+      const result = await props.run('openProjectConversation', { projectId })
+      if (!result.ok) { setConvError(result.error); return }
+      const topicId = (result.data as { topicId?: string } | undefined)?.topicId
+      if (topicId) { await props.onRefresh(); props.onOpenTopic(topicId) }
+    } catch (e) {
+      setConvError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const runCommand = async (name: string, input: Record<string, unknown>): Promise<boolean> => {
     if (busy) return false
     setBusy(true)
@@ -323,12 +339,17 @@ export function ProjectPage(props: {
               {canOpenTopic(row.project.status) ? (
                 <button type="button" className="ah-btn ah-btn-primary" onClick={() => props.onNewTopic(row.project.id)}>新开会话</button>
               ) : null}
+              {/* W1：项目对话（在这个项目里直接跟总管说话）。正式入口在 W2 放进左栏，这里先给一个按钮方便验收。 */}
+              {canOpenTopic(row.project.status) ? (
+                <button type="button" className="ah-btn" disabled={busy} onClick={() => void openConversation(row.project.id)}>项目对话</button>
+              ) : null}
               {archived
                 ? <button type="button" className="ah-btn" onClick={() => { setError(null); setConfirming('restore') }}>恢复项目</button>
                 : <button type="button" className="ah-btn" onClick={() => { setError(null); setNote(null); setForm({ editingId: row.project.id }) }}>编辑</button>}
             </div>
           </header>
           <ProjectBoard row={row} onOpenTopic={props.onOpenTopic} />
+          {convError !== null ? <p className="ah-settings-error" role="alert">{convError}</p> : null}
         </>
       )}
 

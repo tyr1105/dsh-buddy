@@ -333,7 +333,9 @@ export const AgreementSchema = z.strictObject({
   botId: recordId('b'), // 总管
   projectId: recordId('prj'),
   topicId: recordId('ptp'),
-  originThread: nonempty, // 约定卡发在哪个线程（固定为总管私聊，即总管 id）
+  originThread: nonempty, // 约定卡发在哪个线程：总管私聊（总管 id），或 W1 起的项目对话（那个主题 id）
+  // W1：这份约定的项目是不是为它新建的（约定卡「归属」一行据此写「新建项目」）。旧数据没有这一项，按不是新建处理。
+  projectCreated: z.boolean({ error: '必须是布尔值' }).optional(),
   title: line(D.TITLE_MAX_CHARS),
   state: AgreementStateSchema,
   versions: z.array(AgreementVersionSchema).min(1, '至少 1 个版本').max(D.VERSION_MAX, `最多 ${D.VERSION_MAX} 个版本`),

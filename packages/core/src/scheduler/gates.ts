@@ -56,6 +56,7 @@ export function evaluateGates(entry: QueueEntry, snapshot: GateSnapshot, now: nu
     if (skillRun.tidyBusy === true) return blocked('concurrency', now + SKILL_DEFAULTS.TIDY_RETRY_MS);
   }
   // 1–3：先处理生命周期、同机器人互斥和正在等主人回答的同一事项。
+  // W1b：总管的「同机器人互斥」是同一条线互斥（s.running 只看同一条线，见 snapshot.ts），不同项目的线可以同时跑。
   if (!bot || !['active', 'probation'].includes(bot.lifecycle)) return blocked('paused', null, true);
   // P73r1（R5）：听吩咐的员工不接受自主来源的候选。升级前已在队列里的旧候选、运行中被改成听吩咐之后的旧候选，
   // 都在这里丢弃（P73r2：用专门的「on_demand」拦截原因，评估日志写「听吩咐」；drop 为真时调度会把它移出队列）。
@@ -97,8 +98,10 @@ export function evaluateGates(entry: QueueEntry, snapshot: GateSnapshot, now: nu
   if (previous !== undefined && now < previous + settings.subjectCooldownMs && !entry.urgent && !entry.ownerInitiated && !paceExempt && !['owner_message', 'approval_decided'].includes(entry.reason.kind)) {
     return blocked('cooldown', previous + settings.subjectCooldownMs);
   }
-  if (!entry.urgent && !entry.ownerInitiated && !paceExempt && entry.reason.kind !== 'approval_decided' && bot.lastThinkAt !== null) {
-    const until = bot.lastThinkAt + effectivePaceMinMs(bot, settings, s.quota.light);
+  // W1b：总管分线时最短间隔按这条线自己的上一次思考算（别的项目线刚想过，不挡这条线）。
+  const lastThinkAt = s.laneLastThinkAt !== undefined ? s.laneLastThinkAt : bot.lastThinkAt;
+  if (!entry.urgent && !entry.ownerInitiated && !paceExempt && entry.reason.kind !== 'approval_decided' && lastThinkAt !== null) {
+    const until = lastThinkAt + effectivePaceMinMs(bot, settings, s.quota.light);
     if (now < until) return blocked('pace_min', until);
   }
   // 6：员工自己发起的工作只剩一条上限：每位每天最多 botDailyTurnBudget 个回合（只数员工自己发起的回合，口径见 quota/usage.ts 的 isSelfWork）。
@@ -149,7 +152,10 @@ export function evaluateGates(entry: QueueEntry, snapshot: GateSnapshot, now: nu
   if (!entry.ownerInitiated && now < s.startedAt + settings.startupQuietMs) return blocked('startup_quiet', s.startedAt + settings.startupQuietMs);
   if (!entry.ownerInitiated && s.lastDispatchAt !== null && now < s.lastDispatchAt + settings.dispatchGapMs) return blocked('dispatch_gap', s.lastDispatchAt + settings.dispatchGapMs);
   const ownerPresent = s.ownerActiveAt !== null && s.ownerActiveAt <= now && now - s.ownerActiveAt < settings.ownerAwayAfterMs;
-  if (s.runningCount >= (ownerPresent ? settings.ownerActiveConcurrentThinks : settings.maxConcurrentThinks)) return blocked('concurrency');
+  // W1b：你亲自叫总管（在某个项目对话或私聊里跟总管说话）时按平时的并发上限算，不按「你在场时」的更低上限：
+  // 否则你在一个项目里跟总管说话时，另一个项目里你说的话要等前一个回合结束，分线就白分了。其他候选照旧。
+  const ownerAtChief = entry.ownerInitiated === true && s.lane !== undefined;
+  if (s.runningCount >= (ownerPresent && !ownerAtChief ? settings.ownerActiveConcurrentThinks : settings.maxConcurrentThinks)) return blocked('concurrency');
   // 9：notBefore 也是明确的最早执行时间，不允许高优先级绕过未到时的重排。
   const retryAt = Math.max(s.retryAt ?? now, entry.notBefore);
   if (retryAt > now) return blocked('retry_backoff', retryAt);

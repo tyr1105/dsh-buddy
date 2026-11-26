@@ -1,4 +1,5 @@
 /** 工具共用入口：先验证参数与身份，再检查等级；即使直接调用 handler 也不会绕过权限。 */
+import { ownsSession } from '../scheduler/lanes.js';
 import { z } from 'zod';
 import type { HubContext } from '../engine/context.js';
 import { parseInput } from '../engine/validation.js';
@@ -31,7 +32,8 @@ export function getToolBot(ctx: HubContext, input: ToolContext): Bot {
     const bot = ctx.store.table('bots').get(toolCtx.botId);
     if (!bot)
         throw new Error('botId：机器人不存在');
-    if (bot.sessionId !== toolCtx.sessionId)
+    // W1b：总管第二条线用备用会话，也是这位员工的会话。
+    if (!ownsSession(bot, toolCtx.sessionId))
         throw new Error('sessionId：不属于这个机器人');
     if (toolCtx.wakeId) {
         const wake = ctx.store.table('wakes').get(toolCtx.wakeId);

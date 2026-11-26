@@ -174,13 +174,15 @@ function wasDelivered(wake: WakeTicket, now: number): boolean {
  * 例外：重试对应的原回合没有真正投递过（投递失败、投递前被打断）、或找不到原唤醒单时，这个重试就是第一个真正开始的回合，照数，
  * 否则这样的回合一个名额都不占。
  */
-export function selfWorkUsageToday(ctx: HubContext, botId: string, now: number, after?: number): { turns: number } {
+export function selfWorkUsageToday(ctx: HubContext, botId: string, now: number, after?: number, inLane?: (wake: WakeTicket) => boolean): { turns: number } {
   const dayStart = startOfLocalDay(now, ctx.settings.timezone);
   const role = ctx.store.table('bots').get(botId)?.role;
   const wakes = ctx.store.table('wakes');
   const turns = wakes.count(wake => wake.botId === botId
     && wake.startedAt >= dayStart && wake.startedAt <= now
     && (after === undefined || wake.startedAt > after)
+    // W1b：总管按项目分线时只数同一条线上的回合（每日上限按线算）；不传时照旧数全部。
+    && (inLane === undefined || inLane(wake))
     && wasDelivered(wake, now)
     && isSelfWork(wake, role)
     // 重试的原回合是证据里的第一个唤醒单编号；它真正投递过，这个重试就不另占名额。

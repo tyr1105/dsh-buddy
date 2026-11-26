@@ -1,4 +1,5 @@
 /** 回合事件按会话归属推进；重复终态不再记账，单个宿主或文件异常只记本机器人的错误。 */
+import { botForSession, remainingLanesText } from '../scheduler/lanes.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { interruptWake } from './interrupt.js';
 import type { HubContext } from '../engine/context.js';
@@ -87,7 +88,11 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
         const commit = wake.commitId ? ctx.store.table('commits').get(wake.commitId) : null;
         const waiting = !wake.ownerDirect && (commit?.ownerQuestion || commit?.outcome === 'needs_owner');
         const blocked = !wake.ownerDirect && commit?.outcome === 'blocked';
-        ctx.store.table('bots').patch(bot.id, { activity: waiting ? 'waiting_owner' : blocked ? 'blocked' : 'watching',
+        // W1b：总管别的项目线还有回合在跑时，状态仍是「在想」，写同时在处理几个项目。
+        const stillOpen = remainingLanesText(ctx, bot.id, wake.id);
+        ctx.store.table('bots').patch(bot.id, stillOpen !== null
+            ? { activity: 'thinking', activityText: stillOpen, lastThinkAt: bot.lastThinkAt === null || !wake.commitId ? at : bot.lastThinkAt, updatedAt: at }
+            : { activity: waiting ? 'waiting_owner' : blocked ? 'blocked' : 'watching',
             activityText: waiting ? '在等主人回复' : blocked ? blockedActivityText(commit.blocker, wake.jobId) : '继续关注变化',
             lastThinkAt: bot.lastThinkAt === null || !wake.commitId ? at : bot.lastThinkAt, updatedAt: at });
         // P63：主题回合失败不再单独重试，下面按「这一棒跳过」推进讨论，重试只会隔一会儿插错话。
@@ -154,7 +159,7 @@ async function synthesizeNoCommit(ctx: HubContext, wake: WakeTicket, at: number)
 export async function onTurnEvent(ctx: HubContext, raw: TurnEvent): Promise<void> {
     try {
         const e = parseInput(TurnEventSchema, raw, '回合事件');
-        const bot = ctx.store.table('bots').list(b => b.sessionId === e.sessionId)[0];
+        const bot = botForSession(ctx, e.sessionId);
         if (!bot)
             return;
         let wake = findOpenWake(ctx, e.sessionId);

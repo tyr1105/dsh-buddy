@@ -10,6 +10,7 @@ import { selfWorkUsageToday } from '../quota/usage.js';
 import { parseSkillKey, skillRunOfKey } from '../skill/keys.js';
 import { busyWithJob } from '../skill/tidy-sources.js';
 import { startOfLocalDay } from '../util/time.js';
+import { laneOf, usesLanes } from './lanes.js';
 /**
  * P74c：候选属于哪件事时，闸门需要知道的这件事的事实（只读快照）。
  * participants 是执行者、核对人（如有）和总管；turnsLeft 是还剩几个执行链回合；
@@ -52,6 +53,13 @@ export interface GateSnapshot {
   ownerHoldUntil?: number | null;
   /** P76d：「用我的额度」放行的事（本窗口有效）。可以省略（等于没有）。 */
   borrowJobIds?: string[];
+  /**
+   * W1b：候选所在的线（总管按项目分线，见 scheduler/lanes.ts）；不分线的员工是主线。可以省略（旧的手写快照不带）。
+   * 分线时 running、subjectWakeAt、selfTurnsToday、等你回答几项都只看同一条线。
+   */
+  lane?: string;
+  /** W1b：分线时这条线最近一次思考的时刻（最短间隔按它算）；不分线的员工不带，闸门照旧用 bot.lastThinkAt。 */
+  laneLastThinkAt?: number | null;
 }
 
 /**
@@ -121,6 +129,17 @@ function jobGateInfo(ctx: HubContext, jobId: string | undefined): JobGateInfo | 
     reopenPending: ctx.store.table('agreements').get(job.agreementId)?.state === 'pending', reviewerId: job.reviewerId };
 }
 
+/** W1b：这条线最近一次思考的时刻：这条线上真正投递过的回合里最晚的结束时刻（还没结束的按开始时刻）；没有为 null。 */
+function laneLastThinkAt(wakes: readonly WakeTicket[], botId: string, inLane: (wake: WakeTicket) => boolean): number | null {
+  let latest: number | null = null;
+  for (const wake of wakes) {
+    if (wake.botId !== botId || wake.dispatchedAt == null || !inLane(wake)) continue;
+    const at = wake.endedAt ?? wake.startedAt;
+    if (latest === null || at > latest) latest = at;
+  }
+  return latest;
+}
+
 /** 老版本没有事项键的唤醒单，从证据恢复已知键；无法还原时只使用稳定来源键。 */
 function subjectsForWake(ctx: HubContext, wake: WakeTicket): string[] {
   const keys = new Set<string>();
@@ -137,18 +156,22 @@ function subjectsForWake(ctx: HubContext, wake: WakeTicket): string[] {
   return [...keys];
 }
 /** 汇总运行、预算和事项冷却事实，给闸门提供同一时刻的判断依据。subjectKey 供技能类候选带出所属记录（P75g）。 */
-export function buildSnapshot(ctx: HubContext, botId: string, now: number, jobId?: string | null, subjectKey?: string | null): GateSnapshot {
+export function buildSnapshot(ctx: HubContext, botId: string, now: number, jobId?: string | null, subjectKey?: string | null, topicId?: string | null): GateSnapshot {
   const wakes = ctx.store.table('wakes').list();
+  const bot = ctx.store.table('bots').get(botId);
+  // W1b：总管按（总管、项目）分线；其他员工只有主线，下面的 inLane 对他们恒为真，结果与原来一字不差。
+  const lanes = usesLanes(bot);
+  const lane = laneOf(ctx, bot, { topicId: topicId ?? null, jobId: jobId ?? null });
+  const inLane = (fields: { topicId?: string | null; jobId?: string | null }): boolean => !lanes || laneOf(ctx, bot, fields) === lane;
   // delivering 同样占位，避免异步投递尚未落 running 时重复选择。
   const running = wakes.filter(w => w.status === 'running' || w.status === 'delivering' || (w.status === 'committed' && w.endedAt === null));
   const subjectWakeAt = new Map<string, number>();
-  for (const wake of wakes.filter(w => w.botId === botId && w.startedAt <= now && w.status !== 'delivering')) {
+  for (const wake of wakes.filter(w => w.botId === botId && w.startedAt <= now && w.status !== 'delivering' && inLane(w))) {
     // 无会话的 error 是投递失败，没有真正唤醒，不施加六小时冷却。
     if (wake.dispatchedAt === null || (wake.dispatchedAt === undefined && wake.status === 'error' && wake.sessionId === null)) continue;
     for (const key of subjectsForWake(ctx, wake)) subjectWakeAt.set(key, Math.max(subjectWakeAt.get(key) ?? -Infinity, wake.startedAt));
   }
-  const selfTurnsToday = selfWorkUsageToday(ctx, botId, now).turns;
-  const bot = ctx.store.table('bots').get(botId);
+  const selfTurnsToday = selfWorkUsageToday(ctx, botId, now, undefined, lanes ? inLane : undefined).turns;
   // P76d：额度的三项事实（红灯种类、你自己要用的截止时刻、「用我的额度」放行的事）都读额度记录。
   const quota = getQuotaState(ctx, now);
   const plan = getQuotaPlan(ctx, now);
@@ -159,8 +182,11 @@ export function buildSnapshot(ctx: HubContext, botId: string, now: number, jobId
   // F07：提问和审批是「有人在等你回复」；提议与告警只是告知，不冻结自唤醒。
   // 已过期但还没来得及关掉的卡片不参与判断，避免把一分钟的时间缝算成还在等。
   const ownerAsks = ctx.store.table('inbox').list(i => i.botId === botId && i.status === 'open'
-    && (i.type === 'question' || i.type === 'approval') && (i.expiresAt === null || i.expiresAt > now));
-  return { bot, running: running.some(w => w.botId === botId), runningCount: running.length,
+    && (i.type === 'question' || i.type === 'approval') && (i.expiresAt === null || i.expiresAt > now) && inLane({ topicId: i.topicId ?? null }));
+  // 最短间隔：这条线没想过就不挡；想过时取它与 bot.lastThinkAt 的较早者——上一次思考就在这条线上时两者一致，结果与原来相同。
+  const laneThink = lanes && bot?.lastThinkAt != null ? laneLastThinkAt(wakes, botId, inLane) : null;
+  const laneFacts = lanes ? { lane, laneLastThinkAt: laneThink === null || bot?.lastThinkAt == null ? null : Math.min(bot.lastThinkAt, laneThink) } : {};
+  return { bot, running: running.some(w => w.botId === botId && inLane(w)), runningCount: running.length, ...laneFacts,
     ownerActiveAt: ctx.runtime.ownerActiveAt, lastDispatchAt: ctx.runtime.lastDispatchAt, startedAt: ctx.runtime.startedAt,
     quota, selfTurnsToday, redKind, ownerHoldUntil: plan.ownerHoldUntil, borrowJobIds: plan.borrowJobIds,
     openQuestionSubjects: new Set(ctx.store.table('inbox').list(i => i.botId === botId && i.type === 'question' && i.status === 'open').map(i => i.subjectKey)),

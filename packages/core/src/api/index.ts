@@ -58,6 +58,7 @@ import {
 import { ensureProjectSharedDir } from '../project/shared-dir.js';
 import { dispatchTask } from '../project/dispatch.js';
 import { createProjectTopic } from '../project/topics.js';
+import { openProjectConversation } from '../project/conversation.js';
 import { KnowledgeBaseConfigSchema, knowledgeHost } from '../model/knowledge-base.js';
 import { checkKnowledgeConnection } from '../knowledge/index.js';
 import type { UiApi } from './types.js';
@@ -216,6 +217,7 @@ export function createUiApi(ctx: HubContext, afterCommand: () => Promise<void>):
       return result;
     }),
     createProjectTopic: raw => run('createProjectTopic', () => createProjectTopic(ctx, raw)),
+    openProjectConversation: raw => run('openProjectConversation', () => openProjectConversation(ctx, raw)),
     taskBlock: id => run('taskBlock', () => taskBlock(ctx, id)),
     taskResume: id => run('taskResume', () => taskResume(ctx, id)),
     reportDone: id => run('reportDone', () => reportDone(ctx, id)),

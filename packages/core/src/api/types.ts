@@ -363,6 +363,8 @@ export interface ThreadMessageView {
  */
 export interface AgreementCardView {
   agreementId: string; title: string; projectId: string; topicId: string; topicTitle: string | null;
+  /** W1：「归属：项目「X」」或「归属：新建项目「X」」（中心生成）。可省略：旧的手写样例不带，界面按没有处理。 */
+  projectLine?: string;
   versionNo: number; latestNo: number;
   state: 'pending' | 'superseded' | 'locked' | 'replaced'; stateLabel: string;
   agreementState: 'pending' | 'locked' | 'withdrawn';
@@ -640,6 +642,8 @@ export interface UiApi {
   dispatchTask(input: unknown): Promise<CommandResult<ProjectTask>>;
   /** P63：在项目里开一个主题，text 就是第一句话；消息发给负责人或被 @ 的队友。之后发消息用 sendMessage(topicId, text)，读楼层用 thread(topicId)。 */
   createProjectTopic(input: unknown): Promise<CommandResult<{ topicId: string }>>;
+  /** W1：打开项目的「项目对话」（没有就建一条，总管不是成员时加进去）。之后发消息用 sendMessage(topicId, text)，主人的话交给总管。 */
+  openProjectConversation(input: unknown): Promise<CommandResult<{ topicId: string }>>;
   taskBlock(id: string): Promise<CommandResult<ProjectTask>>;
   taskResume(id: string): Promise<CommandResult<ProjectTask>>;
   reportDone(id: string): Promise<CommandResult<ProjectTask>>;

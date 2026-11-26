@@ -71,6 +71,7 @@ function fakeApi(): UiApi & { calls: Array<{ name: string; args: unknown[] }> } 
     dispatchTask: record('dispatchTask') as any,
     // P63：开项目主题，整对象透传由 core zod 校验。
     createProjectTopic: record('createProjectTopic') as any,
+    openProjectConversation: record('openProjectConversation') as any,
     taskBlock: record('taskBlock') as any,
     taskResume: record('taskResume') as any,
     reportDone: record('reportDone') as any,
@@ -284,6 +285,13 @@ describe('dispatchCommand：命令表与边界校验', () => {
     expect(api.calls).toEqual([{ name: 'attachTaskArtifact', args: [attachInput] }])
     expect(api.calls[0]!.args[0]).toBe(attachInput)
   })
+  it('W1 openProjectConversation 整对象透传', async () => {
+    const api = fakeApi()
+    const input = { projectId: 'prj_1' }
+    await dispatchCommand(api, 'openProjectConversation', input)
+    expect(api.calls).toEqual([{ name: 'openProjectConversation', args: [input] }])
+  })
+
   it('P63 createProjectTopic 整对象透传，业务错误由 core 用中文返回', async () => {
     const api = fakeApi()
     const input = { projectId: 'prj_1', text: '第一句话' }

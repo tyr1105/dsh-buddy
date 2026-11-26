@@ -177,15 +177,21 @@ describe('新建约定', () => {
     expect(fix.ctx.store.table('projects').count()).toBe(projects);
     expect(fix.ctx.store.table('projectTopics').get(out.agreement.topicId)!.projectId).toBe(fix.project.id);
   });
-  it('给了总管不是成员、已暂停或不存在的项目 id 被拒，且没有建主题', async () => {
+  it('W1：给了总管不是成员的进行中项目 id：放进去，总管加入成员', async () => {
     const fix = await setup();
     const foreign = saveProject(fix.ctx, { name: '别人的项目', memberBotIds: [fix.exec.id] });
+    const out = await draft(fix, { projectId: foreign.id });
+    expect(out.agreement.projectId).toBe(foreign.id);
+    expect(fix.ctx.store.table('projects').get(foreign.id)!.memberBotIds).toEqual([fix.exec.id, fix.chief.id]);
+  });
+  it('给了已暂停或不存在的项目 id 被拒，且没有建主题', async () => {
+    const fix = await setup();
     const paused = saveProject(fix.ctx, { name: '暂停的项目', memberBotIds: [fix.chief.id] });
     fix.ctx.store.table('projects').patch(paused.id, { status: 'paused' });
     const snap = watchWrites(fix.ctx);
     const before = snap();
-    for (const projectId of [foreign.id, paused.id, 'prj_0000000099']) {
-      await expect(draft(fix, { projectId })).rejects.toThrow('projectId：项目不存在、不在进行中，或你不是成员');
+    for (const projectId of [paused.id, 'prj_0000000099']) {
+      await expect(draft(fix, { projectId })).rejects.toThrow('projectId：项目不存在或不在进行中');
     }
     // 只有 ownerWake 落的主人消息和对应的 thread 行数变化；项目、主题、约定表不变。
     const after = snap();

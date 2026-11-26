@@ -33,6 +33,7 @@ import {
   assertAgreementBeforeLaunch, mergeContentInput, ownerWordProblems, resolveBasis, resolveLaunchLocalDir, type AgreementSubmitInput,
 } from './agreement-content.js';
 import { createAgreementHome } from './agreement-home.js';
+import { conversationProjectOfWake } from './conversation.js';
 import { writeAgreementTag } from './agreement-category.js';
 import { pendingOwnerConfirmOf, TEAM_PENDING_AGREEMENT_ERROR } from '../team/owner-confirm.js';
 import { activeJobOfAgreement, onReopenPending, onReopenWithdrawn, onAgreementLocked } from '../job/agreement-hooks.js';
@@ -292,6 +293,11 @@ async function createNew(
   ctx: HubContext, botId: string, wake: WakeTicket, message: ThreadMessage, input: AgreementSubmitInput,
 ): Promise<SubmitResult> {
   const title = requireField(input.title, 'title', '新建约定时');
+  // W1：在项目对话里提的约定，没写 projectId 就放进这个项目（不新建项目）；卡片也落在项目对话里。
+  // 写了别的项目时尊重总管的判断（主人在这个项目里提了属于另一个项目的事）。私聊里照旧：写了就放进那个项目，没写由中心新建。
+  const conversation = conversationProjectOfWake(ctx, wake);
+  const projectId = input.projectId ?? conversation?.id;
+  const originThread = conversation !== null && wake.topicId ? wake.topicId : botId;
   // 总管同时最多 PENDING_PER_CHIEF_MAX 份待确认约定。
   // P74e：只数「没有正在做的事」的待确认约定；执行中的事重新确认的那些不占这个名额。
   const pendings = ctx.store.table('agreements').list(row => row.botId === botId && row.state === 'pending' && activeJobOfAgreement(ctx, row.id) === null);
@@ -306,17 +312,17 @@ async function createNew(
   // P74r18a：同时校验对外发布要去的位置不出现在「这次做」「怎样算做完」里；校验的是合并之后生效的内容。
   assertAgreementBeforeLaunch(merged);
   const content = parseWithPaths(AgreementContentSchema,
-    { ...merged, decided: resolveBasis(ctx, botId, input.decided ?? [], input.projectId ?? null) }, '约定内容');
+    { ...merged, decided: resolveBasis(ctx, botId, input.decided ?? [], projectId ?? null) }, '约定内容');
   // P72g A3（P74r1 恢复）：本回合已经用 hub_send 叫过员工动手，就不能再提交新约定（拒绝并在私聊落旁白）。
   assertNoMessageBeforeNewAgreement(ctx, botId, wake, title);
   // 约定标题长度已由参数层限制；建家（可能新建项目）一定排在全部校验之后。
   const chief = ctx.store.table('bots').get(botId)!;
-  const { project, topic } = await createAgreementHome(ctx, chief, { title, summary: content.summary, projectId: input.projectId });
+  const { project, topic, created } = await createAgreementHome(ctx, chief, { title, summary: content.summary, projectId });
 
   const now = ctx.clock.now();
   const version = newVersion(1, 'pending', 'draft', message, wake, content, [], '', now);
   const agreement = AgreementSchema.parse({
-    id: newId('agr', ctx.rng), botId, projectId: project.id, topicId: topic.id, originThread: botId, title,
+    id: newId('agr', ctx.rng), botId, projectId: project.id, topicId: topic.id, originThread, ...(created ? { projectCreated: true } : {}), title,
     state: 'pending', versions: [version], inboxId: null, withdrawn: null, createdAt: now, updatedAt: now,
   });
   // P75b：新建一定写类别标签（没填按默认类别）；约定写入失败时不写标签，标签写入失败时撤回约定（见 commit）。

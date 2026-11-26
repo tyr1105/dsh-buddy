@@ -170,6 +170,16 @@ export function agreementRapport(ctx: HubContext, botId: string): { adopted: num
   return adopted === 0 && total === 0 ? null : { adopted, total };
 }
 
+/**
+ * W1：约定卡上的「归属」一行：这件事放在哪个项目里。项目是为这件事新建的写「新建项目」。
+ * 项目已被删除时写「项目已删除」。
+ */
+export function projectLineOf(ctx: HubContext, agreement: Agreement): string {
+  const project = ctx.store.table('projects').get(agreement.projectId);
+  if (!project) return '归属：项目已删除';
+  return agreement.projectCreated === true ? `归属：新建项目「${project.name}」` : `归属：项目「${project.name}」`;
+}
+
 /** 一张约定卡（约定的某一个版本）的完整视图。 */
 export function agreementCardView(ctx: HubContext, agreement: Agreement, version: AgreementVersion): AgreementCardView {
   const latest = agreement.versions[agreement.versions.length - 1]!;
@@ -189,6 +199,7 @@ export function agreementCardView(ctx: HubContext, agreement: Agreement, version
   return {
     agreementId: agreement.id, title: agreement.title, projectId: agreement.projectId, topicId: agreement.topicId,
     topicTitle: ctx.store.table('projectTopics').get(agreement.topicId)?.title ?? null,
+    projectLine: projectLineOf(ctx, agreement),
     versionNo: version.no, latestNo: latest.no,
     state: version.state, stateLabel: VERSION_STATE_LABELS[version.state], agreementState: agreement.state,
     canConfirm: agreement.state === 'pending' && version.no === latest.no && version.state === 'pending' && version.cardMessageId !== null,

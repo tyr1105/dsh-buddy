@@ -90,7 +90,7 @@ export interface TeamAnswerInfo {
 export function ackText(step: TeamStep, answer: TeamAnswerInfo): string {
   if (step === 1) {
     if (answer.fallback === true && answer.typedText !== undefined) {
-      return `已记下：你的原话「${truncateQuote(answer.typedText)}」，按以上都有处理。`;
+      return `已记下：你说的是「${truncateQuote(answer.typedText)}」，看不出偏哪一类，先按三类都有来安排。`;
     }
     switch (answer.value) {
       case 'software': return '已记下：以做软件产品为主。';

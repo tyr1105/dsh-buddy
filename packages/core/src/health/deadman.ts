@@ -21,7 +21,7 @@ export function computeExpectedBy(bot: Pick<Bot, 'nextThinkAt'>, earliestUrgentP
 function postponedUntil(ctx: HubContext, bot: Bot, now: number): number | null {
   const entry = ctx.store.table('queue').list(q => q.botId === bot.id)[0];
   if (entry) {
-    const gate = evaluateGates(entry, buildSnapshot(ctx, bot.id, now, entry.jobId, entry.subjectKey), now, ctx.settings);
+    const gate = evaluateGates(entry, buildSnapshot(ctx, bot.id, now, entry.jobId, entry.subjectKey, entry.topicId), now, ctx.settings);
     if (!gate.pass && !gate.drop) return Math.max(gate.until ?? now + ctx.settings.tickMs, now);
   }
   const last = ctx.store.log('appraisals').recent(1, row => row.botId === bot.id && row.at <= now)[0];

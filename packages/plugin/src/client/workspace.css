@@ -1647,6 +1647,8 @@ nav[data-dsh-buddy-nav-cell='true'] { margin-top: 34px; }
 /* 「来源」与「起因」两行（起因是提问的版本才有）：与修订记录里来源一行同一种小字。 */
 .ah-agr-origin { display: grid; gap: 2px; }
 .ah-agr-src { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
+/* W1：约定卡上的「归属」一行（这件事放进哪个项目），与「来源」一行同样的小字。 */
+.ah-agr-project { margin: 0; font-size: 12px; color: var(--dsw-alias-text-secondary); overflow-wrap: anywhere; }
 .ah-job-fallback { flex-basis: 100%; }
 
 /* P74i：交付卡、三轮不过卡、回执。颜色、字号、间距沿用插件现有样式变量。 */

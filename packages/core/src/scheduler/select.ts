@@ -40,7 +40,7 @@ export function selectNext(ctx: HubContext, now: number): QueueEntry | null {
   for (const entry of orderByJobDue(ctx, listQueue(ctx))) {
     // P74c：执行链候选带上它的 jobId，快照才会收齐这件事的状态、剩余回合与「等你回答」条目。
     // P75g：技能类候选带上事项键，快照才会收齐所属复盘记录的剩余回合与参与者状态。
-    const snapshot = buildSnapshot(ctx, entry.botId, now, entry.jobId, entry.subjectKey);
+    const snapshot = buildSnapshot(ctx, entry.botId, now, entry.jobId, entry.subjectKey, entry.topicId);
     const gate = evaluateGates(entry, snapshot, now, ctx.settings);
     if (gate.pass) return entry;
     // 本轮感知可能刚刷新过原始期限；拦截时同步保存延后，防止健康步骤早于 pump 的时间缝误报。

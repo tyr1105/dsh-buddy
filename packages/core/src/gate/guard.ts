@@ -1,4 +1,5 @@
 /** 工具守卫是机器人会话的统一入口：普通会话不受影响，机器人越界仅隔离自己，宿主钩子永不抛异常。 */
+import { botForSession } from '../scheduler/lanes.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { z } from 'zod';
 import type { HubContext } from '../engine/context.js';
@@ -210,7 +211,7 @@ export function guardToolCallSync(ctx: HubContext, sessionId: string, tool: stri
         parseInput(z.strictObject({ sessionId: z.string().min(1), tool: z.string().min(1) }), { sessionId, tool }, '工具守卫');
         // 先识别打断过的身份：拒绝是落实主人的停止意图，不算越界，也不新建审批。
         if (wasOwnerInterrupted(ctx, sessionId)) return { allow: false, message: '主人已打断本回合，无需再执行工具，请停止处理' };
-        const bot = ctx.store.table('bots').list(b => b.sessionId === sessionId)[0];
+        const bot = botForSession(ctx, sessionId) ?? undefined;
         if (!bot)
             return { allow: true };
         if (!['active', 'probation'].includes(bot.lifecycle)) {
@@ -319,7 +320,7 @@ export function guardToolCallSync(ctx: HubContext, sessionId: string, tool: stri
 export function onHostApprovalRequestSync(ctx: HubContext, sessionId: string, tool: string, summary: string, defer: (effect: Promise<unknown>) => void): 'deny' | 'pass' {
     // 迟到审批不能让主人刚取消的会话继续，也不能再打扰主人或累计机器人故障。
     if (wasOwnerInterrupted(ctx, sessionId)) return 'deny';
-    const bot = ctx.store.table('bots').list(b => b.sessionId === sessionId)[0];
+    const bot = botForSession(ctx, sessionId) ?? undefined;
     if (!bot)
         return 'pass';
     try {
@@ -339,7 +340,7 @@ export function onHostApprovalRequestSync(ctx: HubContext, sessionId: string, to
 export async function guardToolCall(ctx: HubContext, sessionId: string, tool: string, args: unknown, host?: ToolCallHostReport): Promise<GuardDecision> {
     const effects: Promise<unknown>[] = [];
     let verified: Classification | undefined;
-    const bot = ctx.store.table('bots').list(b => b.sessionId === sessionId)[0];
+    const bot = botForSession(ctx, sessionId) ?? undefined;
     if (bot) {
         try { const context = nativeGateContext(ctx, bot, host); verified = await checkGitBoundaries(ctx.fs, classifyToolCall(tool, args, context), context); }
         catch (error) { return { allow: false, message: `动作检查失败，未执行：${error instanceof Error ? error.message : String(error)}` }; }

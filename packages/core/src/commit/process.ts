@@ -1,3 +1,4 @@
+import { ownsSession } from '../scheduler/lanes.js';
 import { recordViolation } from '../gate/guard.js';
 /** 交账先锁定唯一记录，再更新状态与派生文件；文件失败保留真实交账并显式报告，避免重复执行副作用。 */
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
@@ -44,7 +45,7 @@ export async function processCommit(ctx: HubContext, rawContext: ToolContext, ra
         // 先校验类型，再统一空值；避免模型传入文字 null 冒充给主人回复或主动汇报。
         const args = { ...input, reply: optionalMessageText(input.reply), report: optionalMessageText(input.report) };
         const bot = ctx.store.table('bots').get(toolCtx.botId);
-        if (!bot || bot.sessionId !== toolCtx.sessionId)
+        if (!bot || !ownsSession(bot, toolCtx.sessionId))
             throw new Error('交账 botId 与 sessionId 不匹配');
         let wake = toolCtx.wakeId ? ctx.store.table('wakes').get(toolCtx.wakeId) : findOpenWake(ctx, toolCtx.sessionId);
         if (toolCtx.wakeId && !wake)

@@ -166,7 +166,7 @@ describe('三问：打字', () => {
     const fix = await teamHub();
     okData(await fix.hub.api.sendMessage(fix.chief!.id, '帮我随便弄点东西'));
     expect(theSetup(fix.ctx)).toMatchObject({ step: 2, answers: { work: 'mixed', workText: '帮我随便弄点东西' } });
-    expect(thread(fix.ctx, fix.chief!.id).map(row => row.text)).toContain('已记下：你的原话「帮我随便弄点东西」，按以上都有处理。');
+    expect(thread(fix.ctx, fix.chief!.id).map(row => row.text)).toContain('已记下：你说的是「帮我随便弄点东西」，看不出偏哪一类，先按三类都有来安排。');
     expectNoModelWork(fix.ctx);
   });
 
