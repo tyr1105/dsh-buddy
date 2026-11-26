@@ -63,6 +63,16 @@ export function templateLine(candidate: Pick<TeamCandidateView, 'templateName' |
   return `模板：${candidate.templateName}　${candidate.dutyLabel}${note}`
 }
 
+/** W11：「在这个项目里做：…」（总管按项目挑人时写的工作）。 */
+export function workLine(candidate: Pick<TeamCandidateView, 'work'>): string {
+  return `在这个项目里做：${candidate.work ?? ''}`
+}
+
+/** W11：「按这个项目调整了：员工说明、技能」；没调整返回 null。 */
+export function adjustedLine(candidate: Pick<TeamCandidateView, 'adjusted'>): string | null {
+  return candidate.adjusted.length === 0 ? null : `按这个项目调整了：${candidate.adjusted.join('、')}`
+}
+
 /** 「适合做：…」。 */
 export function fitLine(candidate: Pick<TeamCandidateView, 'fitFor'>): string {
   return `适合做：${candidate.fitFor}`

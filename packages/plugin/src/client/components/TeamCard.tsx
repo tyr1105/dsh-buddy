@@ -23,7 +23,7 @@ import { Avatar } from './Ui.js'
 import { PersonalityLines } from './PersonalityLines.js'
 import { isSendEnter } from '../logic/thread.js'
 import {
-  MBTI_AXES, TEAM_TEXT, alternateClickable, candidateEditable, confirmInput, editInput, estimateLine, failureText, fitLine,
+  MBTI_AXES, TEAM_TEXT, alternateClickable, candidateEditable, confirmInput, editInput, estimateLine, failureText, fitLine, workLine, adjustedLine,
   isPendingCard, rosterOverflow, mbtiAxisChoice, mbtiWithAxis, nameInputLabel, openEditorLabel, readonlyLine, shouldSubmitRename, swapIndexOf, templateLine,
   type TeamEditAction,
 } from '../logic/team-card.js'
@@ -181,7 +181,11 @@ export function TeamCard(props: {
             ) : null}
             <span className="ah-team-tpl">{templateLine(candidate)}</span>
           </div>
-          <p className="ah-team-fit">{fitLine(candidate)}</p>
+          {/* W11：总管按项目挑的人，直接写他在这个项目里做什么；规则表推荐的仍写模板的「适合做」。 */}
+          {candidate.work !== null
+            ? <p className="ah-team-fit ah-team-work">{workLine(candidate)}</p>
+            : <p className="ah-team-fit">{fitLine(candidate)}</p>}
+          {adjustedLine(candidate) !== null ? <p className="ah-team-reason">{adjustedLine(candidate)}</p> : null}
           <PersonalityLines lines={candidate.personality.lines} label={`${TEAM_TEXT.mbtiLabel} ${candidate.personality.type}`} />
           <div className="ah-team-kv">
             {kvNode(candidate, 'mbti', editable)}
@@ -242,6 +246,7 @@ export function TeamCard(props: {
         <span className="ah-card-title">{card.title}</span>
         <span className={`ah-team-state${card.state === 'confirmed' ? ' is-ok' : ''}`}>{card.stateLabel}</span>
       </div>
+      {pending && card.sourceNote !== null ? <p className="ah-team-note ah-team-source" role="note">{card.sourceNote}</p> : null}
       {pending
         ? card.candidates.map(candidateNode)
         : <ul className="ah-team-lines">{card.candidates.map(candidate => <li key={candidate.key} className={candidate.removed ? 'is-removed' : undefined}>{readonlyLine(candidate)}</li>)}</ul>}

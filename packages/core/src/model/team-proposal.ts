@@ -47,6 +47,8 @@ export const TeamSetupSchema = z.strictObject({
   answers: TeamAnswersSchema,
   questionMessageIds: z.array(recordId('m')), // 三问各自的消息 id，按问的顺序
   proposalId: recordId('tpr').nullable(),
+  // W11：答完第三问、请总管按项目挑人的时间；null 或缺省表示还没请（旧记录没有这一项）。
+  pickRequestedAt: timestamp.nullable().optional(),
   createdAt: timestamp,
   updatedAt: timestamp,
 });
@@ -88,7 +90,9 @@ export const TeamCandidateSchema = z.strictObject({
   key: z.enum(['c1', 'c2', 'c3'], { error: '候选编号必须是 c1、c2、c3 之一' }),
   templateId: nonempty, // 当前模板（「换一位」后会变）
   // 规则表给出的建议值，生成后不再改（「换一位」时整体换成新模板的建议值）。
-  suggested: z.strictObject({ templateId: nonempty, name: nameText, mbti: MbtiTypeSchema, modelTier: ModelTierSchema }),
+  // W11：总管按项目调整过员工说明时，建议值里也记下调整后的说明（「恢复建议值」和区分谁改的都靠它）；规则表推荐和旧记录没有这一项。
+  suggested: z.strictObject({ templateId: nonempty, name: nameText, mbti: MbtiTypeSchema, modelTier: ModelTierSchema,
+    brief: z.string({ error: '必须是文字' }).nullable().optional() }),
   name: nameText,
   mbti: MbtiTypeSchema,
   modelTier: ModelTierSchema,
@@ -99,6 +103,11 @@ export const TeamCandidateSchema = z.strictObject({
   alternates: z.array(z.strictObject({ templateId: nonempty, mbti: MbtiTypeSchema, label: nonempty })).max(2, '备选最多 2 个'),
   swappedFrom: nonempty.nullable(), // 「换一位」之前的模板 id，用于来历
   outcome: TeamOutcomeSchema.nullable(),
+  // W11：总管按项目挑人时写的「在这个项目里做什么」；规则表推荐和旧记录没有这一项。
+  work: z.string({ error: '必须是文字' }).refine(value => value.trim().length > 0 && [...value].length <= D.PICK_WORK_MAX_CHARS,
+    `要做的工作必须是 1 到 ${D.PICK_WORK_MAX_CHARS} 字`).nullable().optional(),
+  // W11：总管按项目选的预置技能编号；null 或缺省表示用模板自带的。
+  skills: z.array(nonempty).max(12, '技能最多 12 项').nullable().optional(),
 });
 export type TeamCandidate = z.infer<typeof TeamCandidateSchema>;
 
@@ -122,6 +131,9 @@ export const TeamProposalSchema = z.strictObject({
   decidedAt: timestamp.nullable(),
   decidedVia: z.enum(['button', 'inbox', 'text', 'chief']).nullable(),
   rosterAfter: z.number().int().min(0).nullable(), // 确认时在册人数（含总管）
+  // W11：初始组队卡由谁挑的人：chief 是总管按项目挑的，default 是总管没能参与、按规则表给的默认推荐。
+  // 旧记录和按需加人的卡没有这一项。
+  pickedBy: z.enum(['chief', 'default'], { error: '挑人来源必须是 chief、default 之一' }).optional(),
   createdAt: timestamp,
   updatedAt: timestamp,
 }).superRefine((proposal, ctx) => {

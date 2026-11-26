@@ -9,6 +9,7 @@ import { newId } from '../util/ids.js';
 import { toolJsonSchema } from './json-schema.js';
 import { HUB_EVENT_SCOPES } from '../api/event-scopes.js';
 import { isReadonlySkillTurn } from '../skill/keys.js';
+import { isPickTurn } from '../team/pick-key.js';
 import { recordCentralToolOk, type CentralToolKind } from '../commit/claim-evidence.js';
 import { recordOwnerTurnFromTool } from '../job/owner-turns.js';
 /**
@@ -88,6 +89,9 @@ export function defineTool<T>(name: string, description: string, schema: z.ZodTy
                 // P75r5c（H2）：学习回合同样只读（变体是复盘，或事项键是技能类的键）。
                 if (isReadonlySkillTurn(wake) && reflectionWrites.includes(name))
                     throw new Error('反思回合只读；其他事项留到下一回合');
+                // W11：挑人回合只做挑人这一件事，其他写操作留到主人下一次交代。
+                if (isPickTurn(wake) && reflectionWrites.includes(name) && !(name === 'hub_team_propose' && (args as { mode?: string }).mode === 'initial'))
+                    throw new Error('这一回合只挑初始团队：调用 hub_team_propose，mode 写 initial；其他事项留到主人交代时再做');
                 const result = await run(ctx, toolCtx, args);
                 // P85：本回合里办成了事的中心工具记一笔，交账时的完成声明核对据此放行对应的说法（不影响工具结果）。
                 if (result.ok && wake) {

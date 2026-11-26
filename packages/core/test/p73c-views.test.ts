@@ -11,7 +11,7 @@ import { ackText, INITIAL_CONCLUSION, TEAM_OPENING_TEXT, TEAM_QUESTIONS } from '
 import { TEAM_DECLINED_TEXT, TEAM_NO_NEED_TEXT, TEAM_READY_TEXT } from '../src/team/proposals.js';
 import { TEAM_PROJECT_NOTE, TEAM_REASK_TEXT } from '../src/team/setup.js';
 import { BOT_TEMPLATES, TURN_TOKEN_RANGE_TEXT } from '../src/team/templates.js';
-import { answerAll, expectNoModelWork, okData, presetBot, teamHub, theProposal, theSetup, thread } from './p73c-fixtures.js';
+import { answerAll, expectNoModelWork, okData, pickFallsBack, presetBot, teamHub, theProposal, theSetup, thread } from './p73c-fixtures.js';
 
 const day = 24 * 3_600_000;
 const NOW = Date.parse('2026-11-05T10:00:00+08:00');
@@ -191,6 +191,7 @@ describe('给主人看的文字', () => {
     okData(await fix.hub.api.answerTeamQuestion({ setupId: theSetup(fix.ctx).id, step: 1, choice: 'mixed' }));
     okData(await fix.hub.api.answerTeamQuestion({ setupId: theSetup(fix.ctx).id, step: 2, choice: 'yes', folderPath: '/Users/x/demo' }));
     okData(await fix.hub.api.answerTeamQuestion({ setupId: theSetup(fix.ctx).id, step: 3, choice: 'each_step' }));
+    await pickFallsBack(fix);
     const id = theProposal(fix.ctx).id;
     okData(await fix.hub.api.editTeamCandidate({ proposalId: id, rev: 1, key: 'c1', action: 'rename', value: '小工' }));
     okData(await fix.hub.api.editTeamCandidate({ proposalId: id, rev: 2, key: 'c2', action: 'remove' }));

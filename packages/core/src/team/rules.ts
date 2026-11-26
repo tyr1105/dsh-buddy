@@ -39,7 +39,7 @@ export const TEAM_QUESTIONS: readonly [TeamQuestion, TeamQuestion, TeamQuestion]
       { value: 'mixed', label: '以上都有' },
     ],
     suggested: null,
-    note: '第 1 问，共 3 问。也可以直接在输入框里写。',
+    note: '第 1 问，共 3 问。也可以直接用一句话说说你的项目，总管挑人时会看。',
   },
   {
     step: 2,

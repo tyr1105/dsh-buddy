@@ -30,7 +30,7 @@ describe('三问文字', () => {
     expect(TEAM_QUESTIONS[2].options.map(item => item.value)).toEqual(['decisions', 'each_done', 'each_step']);
     expect(TEAM_QUESTIONS.map(item => item.suggested)).toEqual([null, null, 'decisions']);
     expect(TEAM_QUESTIONS.map(item => item.note)).toEqual([
-      '第 1 问，共 3 问。也可以直接在输入框里写。', '第 2 问，共 3 问', '第 3 问，共 3 问。答完我就给出推荐。',
+      '第 1 问，共 3 问。也可以直接用一句话说说你的项目，总管挑人时会看。', '第 2 问，共 3 问', '第 3 问，共 3 问。答完我就给出推荐。',
     ]);
   });
 

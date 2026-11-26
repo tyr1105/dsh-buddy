@@ -8,8 +8,11 @@
  * 复盘回合禁止调用：在 tools/common.ts 的 reflectionWrites 里登记。
  */
 import { z } from 'zod';
+import { MbtiTypeSchema } from '../model/enums.js';
 import { recordId } from '../model/primitives.js';
+import { TEAM_DEFAULTS as D } from '../config/defaults.js';
 import { runTeamPropose } from '../team/addition.js';
+import { runInitialPick } from '../team/pick.js';
 import { defineTool } from './common.js';
 
 /** 带长度范围的一段文字：去首尾空白，1 到 max 字（按完整字符计）。 */
@@ -20,8 +23,18 @@ function limited(max: number, label: string) {
 
 /** 参数：根节点是对象，不用联合类型（模型接口对联合类型的识别不稳定）。 */
 export const HubTeamProposeInputSchema = z.strictObject({
-  mode: z.enum(['propose', 'revise', 'withdraw']).optional()
-    .describe('propose 推荐新员工（省略即 propose）；revise 按主人的话修改待确认的组队卡；withdraw 撤下待确认的组队卡'),
+  mode: z.enum(['propose', 'revise', 'withdraw', 'initial']).optional()
+    .describe('propose 推荐新员工（省略即 propose）；revise 按主人的话修改待确认的组队卡；withdraw 撤下待确认的组队卡；initial 主人答完组队三问后，按项目挑初始团队'),
+  candidates: z.array(z.strictObject({
+    template: limited(40, 'candidates.template').describe('模板名（唤醒包「可推荐的模板」里的名字）'),
+    work: limited(D.PICK_WORK_MAX_CHARS, 'candidates.work').describe(`这位在这个项目里具体做什么工作，不超过 ${D.PICK_WORK_MAX_CHARS} 字`),
+    name: limited(20, 'candidates.name').optional().describe('可选：名字；省略用模板名'),
+    brief: limited(D.BRIEF_MAX_CHARS, 'candidates.brief').optional().describe(`可选：按这个项目改写的员工说明全文（这个岗位怎么做事），不超过 ${D.BRIEF_MAX_CHARS} 字；省略用模板原文`),
+    mbti: MbtiTypeSchema.optional().describe('可选：MBTI 性格；省略用模板的'),
+    modelTier: z.enum(['standard', 'light']).optional().describe('可选：模型档位 standard 或 light；省略用模板的；轻档不可用时自动换成标准档'),
+    skills: z.array(limited(40, 'candidates.skills')).max(12, 'candidates.skills：最多 12 项').optional().describe('可选：带哪几个预置技能（写编号，唤醒包「可选技能」里有）；省略用模板自带的'),
+  }), { error: 'candidates：必须是列表' }).min(1, 'candidates：至少挑 1 位').max(D.INITIAL_MAX, `candidates：最多挑 ${D.INITIAL_MAX} 位`).optional()
+    .describe(`initial 必填：挑的 1 到 ${D.INITIAL_MAX} 位，每位写 template 和 work，可按项目调整 name、brief、mbti、modelTier、skills`),
   proposalId: recordId('tpr').optional().describe('组队卡编号（唤醒包「组队」段里有）；revise、withdraw 必填'),
   template: limited(40, 'template').optional()
     .describe('模板名或模板编号，写模板名即可（唤醒包「可推荐的模板」里的名字）；propose 必填；revise 时表示换成这个模板'),
@@ -34,7 +47,7 @@ export const HubTeamProposeInputSchema = z.strictObject({
 });
 
 /** 工具说明：模型看到的全部使用规则。 */
-const DESCRIPTION = '（仅总管）推荐新员工，或修改、撤下待确认的组队卡。只能在主人发话、确认或回答叫醒的回合里用。propose：约定已固定、在岗员工里缺少需要的角色、而且以后还会反复用到时，推荐一位：template 写模板名即可（唤醒包「可推荐的模板」里的名字），agreementId 写这份约定，needReason 写这件事为什么需要这个角色，residentReason 写为什么值得常驻；卡片在你交账后发给主人，确认前不要把这件事交给任何人。revise：主人要改卡上某位的员工说明或换成别的模板时，proposalId 写卡片编号，name 写卡上的名字，brief 写完整的员工说明（整段替换），或 template 写新模板名。withdraw：proposalId 写卡片编号，reason 写原因。一句话用一次：同一条主人消息只能产生一张组队卡，也只能修改同一张卡一次。你不能替主人确认入职。';
+const DESCRIPTION = '（仅总管）推荐新员工，或修改、撤下待确认的组队卡。只能在主人发话、确认或回答叫醒的回合里用。propose：约定已固定、在岗员工里缺少需要的角色、而且以后还会反复用到时，推荐一位：template 写模板名即可（唤醒包「可推荐的模板」里的名字），agreementId 写这份约定，needReason 写这件事为什么需要这个角色，residentReason 写为什么值得常驻；卡片在你交账后发给主人，确认前不要把这件事交给任何人。revise：主人要改卡上某位的员工说明或换成别的模板时，proposalId 写卡片编号，name 写卡上的名字，brief 写完整的员工说明（整段替换），或 template 写新模板名。withdraw：proposalId 写卡片编号，reason 写原因。一句话用一次：同一条主人消息只能产生一张组队卡，也只能修改同一张卡一次。initial：只在唤醒包「组队」段写着「等你挑人」时用一次，按主人的原话和项目背景，从可推荐的模板里挑 1 到 3 位最需要的人，candidates 每位写 template 和 work（他在这个项目里具体做什么）；模板只是起点，可以按项目调整 name、brief（员工说明）、mbti、modelTier、skills，执行风格和红线改不了；宁少勿多，用不上的角色不要凑数；initial 的卡片在调用成功时立刻发出，卡前的结论由中心按 work 写好，这一回合的 reply 不再发给主人。你不能替主人确认入职。';
 
 export const hubTeamPropose = defineTool('hub_team_propose', DESCRIPTION, HubTeamProposeInputSchema, 'L1', async (ctx, tc, args) => {
   // 取本回合的唤醒单：宿主给了 wakeId 就用它；没给就找这个员工当前打开的唤醒单（口径与 hub_agreement_submit 一致）。
@@ -44,5 +57,7 @@ export const hubTeamPropose = defineTool('hub_team_propose', DESCRIPTION, HubTea
       && (['running', 'delivering'].includes(row.status) || (row.status === 'committed' && row.endedAt === null)))
       .sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
   if (!wake) throw new Error('组队卡只能在回合里提出或修改');
-  return { ok: true, text: await runTeamPropose(ctx, tc.botId, wake, args) };
+  if (args.mode === 'initial') return { ok: true, text: await runInitialPick(ctx, tc.botId, wake, args.candidates) };
+  const { candidates: _candidates, mode, ...rest } = args;
+  return { ok: true, text: await runTeamPropose(ctx, tc.botId, wake, { ...rest, ...(mode !== undefined ? { mode } : {}) }) };
 });

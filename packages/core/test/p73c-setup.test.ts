@@ -7,8 +7,10 @@ import { createHub } from '../src/engine/hub.js';
 import { NO_CHIEF_ALERT_CODE } from '../src/team/chief.js';
 import { TEAM_OPENING_TEXT, TEAM_QUESTIONS } from '../src/team/rules.js';
 import { TEAM_PROJECT_NOTE, TEAM_REASK_TEXT } from '../src/team/setup.js';
+import { CHIEF_PICKING_TEXT, PICK_WAIT_TEXT } from '../src/team/pick-request.js';
+import { PICK_FALLBACK_PREFIX } from '../src/team/proposals.js';
 import {
-  answerAll, expectNoModelWork, modelCalls, okData, pick, presetBot, teamHub, theProposal, theSetup, thread,
+  answerAll, expectNoModelWork, expectOnlyPickTurn, modelCalls, okData, pick, pickFallsBack, presetBot, teamHub, theProposal, theSetup, thread,
 } from './p73c-fixtures.js';
 
 describe('启动：自动建总管并开始三问', () => {
@@ -74,7 +76,7 @@ describe('启动：自动建总管并开始三问', () => {
 });
 
 describe('三问：点选', () => {
-  it('5. 每问落主人消息、「已记下」和下一问；答完落结论句、卡片和「待你处理」条目；全程没有投递唤醒', async () => {
+  it('5. 每问落主人消息、「已记下」和下一问；答完总管说要先看项目，只排挑人这一个回合；挑人没成时落结论句、卡片和「待你处理」条目', async () => {
     const fix = await teamHub();
     const { ctx, chief } = fix;
     okData(await pick(fix, 1, 'software'));
@@ -87,18 +89,28 @@ describe('三问：点选', () => {
     okData(await pick(fix, 2, 'no'));
     expect(theSetup(ctx)).toMatchObject({ step: 3, answers: { hasProject: false, projectId: null } });
     okData(await pick(fix, 3, 'each_done'));
+    // W11：答完第三问，总管先说一句要看项目，状态行写挑人中，只排挑人这一个回合，还没有卡。
+    expect(thread(ctx, chief!.id).at(-1)!.text).toBe(PICK_WAIT_TEXT);
+    // 挑人回合一投递，状态行由中心改写为「正在处理：按你的项目挑人」；还没投递时是 CHIEF_PICKING_TEXT。
+    expect([CHIEF_PICKING_TEXT, '正在处理：按你的项目挑人']).toContain(ctx.store.table('bots').get(chief!.id)!.activityText);
+    expect(ctx.store.table('teamProposals').count()).toBe(0);
+    expectOnlyPickTurn(ctx);
+    await pickFallsBack(fix);
     const rows = thread(ctx, chief!.id);
-    const tail = rows.slice(-4);
-    expect(tail.map(row => row.kind)).toEqual(['chat', 'chat', 'chat', 'team']);
-    // 顺序：主人的选择、「已记下」、结论句（在前）、卡片（在后）。
+    const tail = rows.slice(-5);
+    expect(tail.map(row => row.kind)).toEqual(['chat', 'chat', 'chat', 'chat', 'team']);
+    // 顺序：主人的选择、「已记下」、总管说要看项目、结论句（在前）、卡片（在后）。
     expect(tail[0]).toMatchObject({ from: 'owner', text: '每件事做完都告诉我' });
     expect(tail[1]!.text).toBe('已记下：每件事做完都告诉你。');
-    expect(tail[2]!.text).toContain('我建议先安排 3 位');
-    expect(tail[3]).toMatchObject({ from: chief!.id, refId: theProposal(ctx).id });
+    expect(tail[2]!.text).toBe(PICK_WAIT_TEXT);
+    expect(tail[3]!.text).toContain('我建议先安排 3 位');
+    expect(tail[3]!.text.startsWith(PICK_FALLBACK_PREFIX('no_card'))).toBe(true);
+    expect(tail[4]).toMatchObject({ from: chief!.id, refId: theProposal(ctx).id });
+    expect(theProposal(ctx).pickedBy).toBe('default');
     expect(theSetup(ctx)).toMatchObject({ state: 'proposed', proposalId: theProposal(ctx).id, answers: { notify: 'each_done' } });
     expect(ctx.store.table('inbox').list(row => row.status === 'open')).toHaveLength(1);
     expect(ctx.store.table('bots').get(chief!.id)!.activityText).toBe('等你确认新员工');
-    expectNoModelWork(ctx);
+    expectOnlyPickTurn(ctx);
   });
 
   it('6. 第二问点「有」带文件夹：建了项目（负责人与成员都是总管，背景含路径）；不带文件夹报错不前进', async () => {
@@ -156,10 +168,13 @@ describe('三问：打字', () => {
     expect(ctx.store.table('projects').list()[0]).toMatchObject({ name: 'demo', ownerBotId: chief!.id });
 
     okData(await hub.api.sendMessage(chief!.id, '随便'));
-    expect(theSetup(ctx)).toMatchObject({ state: 'proposed', answers: { notify: 'decisions' } });
+    expect(theSetup(ctx)).toMatchObject({ state: 'asking', answers: { notify: 'decisions' } });
     expect(thread(ctx, chief!.id).map(row => row.text)).toContain('已记下：只在需要你拍板时找你。');
+    expectOnlyPickTurn(ctx);
+    await pickFallsBack(fix);
+    expect(theSetup(ctx)).toMatchObject({ state: 'proposed' });
     expect(theProposal(ctx).candidates).toHaveLength(3);
-    expectNoModelWork(ctx);
+    expectOnlyPickTurn(ctx);
   });
 
   it('7b. 第一问打字没命中关键词：按以上都有处理，「已记下」引用原话；命中两类也按以上都有', async () => {
@@ -206,6 +221,6 @@ describe('三问：重复作答与模板库', () => {
     expect(theSetup(fix.ctx).state).toBe('asking');
     const proposal = await answerAll(fix);
     expect(proposal.candidates.map(row => row.templateId)).toEqual(['designer', 'reviewer']);
-    expect(modelCalls(fix.ctx)).toEqual([]);
+    expectOnlyPickTurn(fix.ctx);
   });
 });

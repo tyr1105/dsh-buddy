@@ -63,7 +63,7 @@ export async function hireCandidates(ctx: HubContext, proposal: TeamProposal): P
       const model = tierToModel(candidate.modelTier, tiers);
       const bot = await createBotInternal(ctx, {
         name: candidate.name, role: template.role, mbti: candidate.mbti, brief: candidate.brief ?? template.brief,
-        presetSkillIds: [...template.presetSkillIds], aspirations: [...template.aspirations],
+        presetSkillIds: [...(candidate.skills ?? template.presetSkillIds)], aspirations: [...template.aspirations],
         temperament: template.temperament, speechStyle: template.speechStyle, model,
       }, {
         source: proposal.kind === 'initial' ? 'team_initial' : 'team_addition',

@@ -6,7 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { expireInbox } from '../src/outreach/inbox.js';
 import { botMbti } from '../src/personality/profile.js';
-import { declineByText } from '../src/team/proposals.js';
+import { declineByText, PICK_FALLBACK_PREFIX } from '../src/team/proposals.js';
 import { archiveRows, suggestArchiveFor } from '../src/team/archive-suggestion.js';
 import { sendMail } from '../src/peer/index.js';
 import { buildCandidate } from '../src/appraisal/think.js';
@@ -15,7 +15,7 @@ import { buildSnapshot, evaluateGates } from '../src/scheduler/gates.js';
 import type { HubContext } from '../src/engine/context.js';
 import type { WakeKind } from '../src/model/index.js';
 import {
-  answerAll, expectNoModelWork, modelCalls, okData, openTeamInbox, presetBot, teamHub, teamInboxItems,
+  answerAll, expectOnlyPickTurn, modelCalls, pickFallsBack, okData, openTeamInbox, presetBot, teamHub, teamInboxItems,
   theProposal, theSetup, thread, type TeamFix,
 } from './p73c-fixtures.js';
 
@@ -54,13 +54,14 @@ describe('生成初始组队卡', () => {
     }
     expect(proposal.candidates[0]!.alternates.map(row => row.templateId)).toEqual(['engineer', 'product-manager']);
     const rows = thread(fix.ctx, fix.chief!.id);
-    const conclusion = rows.findIndex(row => row.text.startsWith('我建议先安排 3 位'));
+    // W11：这是总管没能挑人时的默认推荐，结论句前面先说明一句。
+    const conclusion = rows.findIndex(row => row.text.startsWith(`${PICK_FALLBACK_PREFIX('no_card')}我建议先安排 3 位`));
     const card = rows.findIndex(row => row.kind === 'team');
     expect(conclusion).toBeGreaterThan(-1);
     expect(card).toBe(conclusion + 1);
     expect(rows[card]).toMatchObject({ refId: proposal.id, text: '组队卡：初始团队，待你确认' });
     expect(proposal.cardMessageId).toBe(rows[card]!.id);
-    expectNoModelWork(fix.ctx);
+    expectOnlyPickTurn(fix.ctx);
   });
 
   it('10b. 目录里有轻量模型时评审员建议轻档；推荐 0 位时不发卡，总管说明，三问转 done', async () => {
@@ -74,6 +75,7 @@ describe('生成初始组队卡', () => {
     okData(await none.hub.api.answerTeamQuestion({ setupId: theSetup(none.ctx).id, step: 1, choice: 'watch' }));
     okData(await none.hub.api.answerTeamQuestion({ setupId: theSetup(none.ctx).id, step: 2, choice: 'no' }));
     okData(await none.hub.api.answerTeamQuestion({ setupId: theSetup(none.ctx).id, step: 3, choice: 'decisions' }));
+    await pickFallsBack(none);
     expect(none.ctx.store.table('teamProposals').count()).toBe(0);
     expect(theSetup(none.ctx)).toMatchObject({ state: 'done', proposalId: null });
     expect(thread(none.ctx, none.chief!.id).at(-1)!.text).toBe('现有员工已能覆盖这类事。你可以直接把事情交给我。');
@@ -153,7 +155,7 @@ describe('卡内修改', () => {
     expect(openTeamInbox(ctx)[0]!.id).toBe(inboxId);
     expect(ctx.store.log('thread').all()).toHaveLength(messagesBefore);
     expect(modelCalls(ctx)).toHaveLength(calls);
-    expectNoModelWork(ctx);
+    expectOnlyPickTurn(ctx);
   });
 
   it('11b. 轻档不可用时改轻档被拒；换到已在册的模板被拒', async () => {
@@ -207,7 +209,7 @@ describe('确认入职', () => {
       text: '团队已就位。你交代的第一件真实的事，就是他们的试用；做完后我会告诉你每位做得怎样。现在可以直接把事情交给我。' });
     expect(theSetup(ctx).state).toBe('done');
     expect(ctx.store.table('bots').get(chief!.id)!.activityText).toBe('继续关注变化');
-    expectNoModelWork(ctx);
+    expectOnlyPickTurn(ctx);
   });
 
   it('12b. 轻档的建议被保留时，入职的评审员用目录里的轻量模型', async () => {
@@ -293,7 +295,7 @@ describe('确认入职', () => {
     expect(teamInboxItems(fix.ctx)[0]!.status).toBe('withdrawn');
     expect(thread(fix.ctx, fix.chief!.id).at(-1)).toMatchObject({ from: 'hub', kind: 'system', text: '你选择不新增员工。' });
     expect(theSetup(fix.ctx).state).toBe('done');
-    expectNoModelWork(fix.ctx);
+    expectOnlyPickTurn(fix.ctx);
   });
 
   it('确认命令的 rev 与卡片不一致被拒；已处理的卡不能再确认或修改', async () => {
@@ -359,7 +361,7 @@ describe('拒绝口令与「待你处理」', () => {
     expect(answered).toMatchObject({ status: 'answered', answer: '确认，2 位入职' });
     expect(theProposal(ctx)).toMatchObject({ state: 'confirmed', decidedVia: 'inbox' });
     expect(ctx.store.table('bots').list(row => row.role !== 'chief').map(row => row.name)).toEqual(['工程师', '设计师']);
-    expectNoModelWork(ctx);
+    expectOnlyPickTurn(ctx);
   });
 
   it('18. 兜底：条目 id 被清空后跑一次 tick，补建一条条目，开着的条目只有一条；卡片消息缺失时补发', async () => {

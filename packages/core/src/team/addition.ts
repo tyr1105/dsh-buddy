@@ -57,14 +57,14 @@ export function recommendableTemplateNames(): string {
  * 通用校验：调用者是总管，回合由主人发起。返回总管的 id。
  * 等级（L1）和复盘回合禁止由工具框架负责，这里只管这两条。
  */
-function assertChiefOwnerTurn(ctx: HubContext, botId: string, wake: WakeTicket): void {
+export function assertChiefOwnerTurn(ctx: HubContext, botId: string, wake: WakeTicket): void {
   const bot = ctx.store.table('bots').get(botId);
   if (!bot || bot.role !== 'chief') throw new Error('只有总管能推荐新员工');
   if (wake.ownerInitiated !== true) throw new Error('组队卡只能在主人发话、确认或回答叫醒的回合里提出或修改');
 }
 
 /** 找模板并做模板自身的校验（第 4 条）：找得到、不是总管类。 */
-function resolveTemplate(ref: string): BotTemplate {
+export function resolveTemplate(ref: string): BotTemplate {
   const template = findTemplate(ref);
   if (template === null) throw new Error(`template：没有叫「${ref.trim()}」的模板。可推荐的模板：${recommendableTemplateNames()}`);
   if (template.role === 'chief') throw new Error('template：总管全队只能有一位');
@@ -72,7 +72,7 @@ function resolveTemplate(ref: string): BotTemplate {
 }
 
 /** 模板与名册的冲突（第 6、7 条）：全队一位且已有；同一模板已有在岗员工。 */
-function assertTemplateFree(ctx: HubContext, template: BotTemplate): void {
+export function assertTemplateFree(ctx: HubContext, template: BotTemplate): void {
   const holders = templateHolders(ctx, template);
   if (template.uniquePerTeam && holders.length > 0) {
     const onDuty = holders.find(isOnDuty);
@@ -92,7 +92,7 @@ function fullRosterError(ctx: HubContext): string {
 }
 
 /** 候选的建议档位：模板的默认档位；轻档不可用时取标准档。 */
-function tierFor(template: BotTemplate, lightAvailable: boolean): TeamModelTier {
+export function tierFor(template: BotTemplate, lightAvailable: boolean): TeamModelTier {
   const wanted = defaultTierFor(template.id);
   return wanted === 'light' && !lightAvailable ? 'standard' : wanted;
 }

@@ -15,6 +15,7 @@ import {
   type TeamCandidate, type TeamModelTier, type TeamProposal, type TeamSetup,
 } from '../model/team-proposal.js';
 import { TEAM_QUESTIONS, type TeamStep } from '../team/rules.js';
+import { defaultTierFor } from '../team/proposal-edit.js';
 import { cachedTiers, liveBots, rosterHasTemplate, teamRoster } from '../team/roster.js';
 import { BOT_TEMPLATES, TURN_TOKEN_RANGE_TEXT, type BotTemplate } from '../team/templates.js';
 import { localParts } from '../util/time.js';
@@ -49,6 +50,10 @@ export const TeamCandidateViewSchema = z.strictObject({
   dutyLabel: z.string(),
   uniqueNote: z.string().nullable(),
   fitFor: z.string(),
+  /** W11：总管按项目挑人时写的「在这个项目里做什么」；规则表推荐的为 null。 */
+  work: z.string().nullable(),
+  /** W11：总管按项目调整过、和模板不同的项（员工说明、性格、模型档位、技能），没有为空列表。 */
+  adjusted: z.array(z.string()),
   personality: z.strictObject({
     type: z.string(),
     lines: z.array(z.strictObject({ code: z.string(), text: z.string() })),
@@ -86,6 +91,8 @@ export const TeamCardViewSchema = z.strictObject({
   footer: z.strictObject({ rosterText: z.string(), idleText: z.string(), tokenText: z.string() }),
   confirmLabel: z.string(),
   note: z.string().nullable(),
+  /** W11：这张初始卡是谁挑的人；总管没能参与、按默认推荐时是一句说明，其余为 null。 */
+  sourceNote: z.string().nullable(),
 });
 export type TeamCardView = z.infer<typeof TeamCardViewSchema>;
 
@@ -167,6 +174,21 @@ function historyOf(proposal: TeamProposal, candidate: TeamCandidate, templates: 
   return parts.length === 0 ? null : parts.join('；');
 }
 
+/** W11：总管按项目调整过的项（只看总管给的建议值，主人在卡上改的另有「恢复建议值」）。 */
+function adjustedItems(candidate: TeamCandidate, template: BotTemplate | undefined, lightAvailable: boolean): string[] {
+  if (template === undefined || candidate.swappedFrom !== null || candidate.work == null) return [];
+  const items: string[] = [];
+  // 名字：模板名或重名时自动加的序号（工程师2）不算改名。
+  if (candidate.suggested.name !== template.name && !new RegExp(`^${template.name}\\d+$`).test(candidate.suggested.name)) items.push('名字');
+  if ((candidate.suggested.brief ?? null) !== null) items.push('员工说明');
+  if (candidate.suggested.mbti !== template.mbti) items.push('性格');
+  const wanted = defaultTierFor(template.id);
+  const plain = wanted === 'light' && !lightAvailable ? 'standard' : wanted;
+  if (candidate.suggested.modelTier !== plain) items.push('模型档位');
+  if (candidate.skills != null) items.push('技能');
+  return items;
+}
+
 /** 一位候选的视图。 */
 function candidateView(proposal: TeamProposal, candidate: TeamCandidate, input: TeamCardViewInput): TeamCandidateView {
   const template = input.templates.find(row => row.id === candidate.templateId);
@@ -188,6 +210,9 @@ function candidateView(proposal: TeamProposal, candidate: TeamCandidate, input: 
     dutyLabel: template?.dutyLabel ?? '',
     uniqueNote: template?.uniquePerTeam === true ? '全队一位' : null,
     fitFor: template?.fitFor ?? '',
+    // 换过模板之后，原来写的工作说的是别人，不再显示。
+    work: candidate.work != null && candidate.swappedFrom === null ? candidate.work : null,
+    adjusted: adjustedItems(candidate, template, light),
     personality: {
       type: candidate.mbti,
       lines: (mbtiBehaviorLines(candidate.mbti) ?? []).map(line => ({ code: line.code, text: line.text })),
@@ -216,11 +241,15 @@ function candidateView(proposal: TeamProposal, candidate: TeamCandidate, input: 
       return { index, label: alternate.label, disabled: reason !== null, reason };
     }),
     removed: candidate.removed,
-    briefChanged: candidate.brief !== null,
+    // W11：总管按项目调整的说明另在 adjusted 里写，这里只标主人后来让改的。
+    briefChanged: candidate.brief !== null && candidate.brief !== (candidate.suggested.brief ?? null),
     canRemove: pending && proposal.kind === 'initial',
     historyText: historyOf(proposal, candidate, input.templates, light),
   };
 }
+
+/** W11：默认推荐（总管没有参与挑人）时卡上的说明。 */
+export const TEAM_DEFAULT_PICK_NOTE = '这是默认推荐，总管没有参与挑人。';
 
 /** 一张组队卡的完整视图。纯函数：同一输入两次调用结果深相等。 */
 export function teamCardView(proposal: TeamProposal, input: TeamCardViewInput): TeamCardView {
@@ -247,6 +276,7 @@ export function teamCardView(proposal: TeamProposal, input: TeamCardViewInput): 
     note: proposal.state !== 'pending' ? null : initial
       ? '想调整员工说明或技能，直接在输入框告诉总管，或入职后在员工卡片里修改。想换成模板库里的其他人，也直接在输入框说。'
       : '不新增也可以：回复「不新增」，由总管自己完成，预计多用 1 到 2 个回合。',
+    sourceNote: proposal.pickedBy === 'default' ? TEAM_DEFAULT_PICK_NOTE : null,
   };
 }
 

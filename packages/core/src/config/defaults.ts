@@ -182,6 +182,9 @@ export const TEAM_DEFAULTS = {
   REASON_MAX_CHARS: 80, // 按需加人的两层理由（P73d 用）
   PACKET_MAX_BYTES: 1.5 * KIB, // 唤醒包「组队」段的上限（P73d 用）
   CAT_STAY_MS: 60 * SECOND, // 报到当天猫在新工位旁坐多久（P73f 用）
+  PICK_TIMEOUT_MS: 90 * SECOND, // W11：答完三问后等总管挑人的上限，超过就按规则表出默认推荐
+  PICK_WORK_MAX_CHARS: 80, // W11：总管挑人时写的「这位在这个项目里做什么」
+  PICK_PACKET_MAX_BYTES: 4 * KIB, // W11：唤醒包「组队」段在挑人回合的上限（要放下主人原话、项目背景和模板清单）
 } as const;
 
 /**

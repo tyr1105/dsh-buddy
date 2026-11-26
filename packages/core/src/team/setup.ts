@@ -24,6 +24,8 @@ import { postThread } from '../outreach/thread.js';
 import { newId } from '../util/ids.js';
 import { TeamSetupSchema, type TeamAnswers, type TeamSetup } from '../model/team-proposal.js';
 import { createInitialProposal } from './proposals.js';
+import { isAwaitingPick } from './pick-key.js';
+import { pickFallbackReason, requestChiefPick } from './pick-request.js';
 import { ackText, matchTypedAnswer, TEAM_OPENING_TEXT, TEAM_QUESTIONS, type TeamStep } from './rules.js';
 import { freeTemplateName } from './templates.js';
 import { liveBots, liveChief } from './roster.js';
@@ -239,7 +241,20 @@ async function finishAnswer(ctx: HubContext, setup: TeamSetup, resolved: Resolve
   const project = setup.step === 2 && resolved.value === 'yes' ? await createSetupProject(ctx, chief, resolved.folderPath!) : null;
   const saved = recordAnswer(ctx, setup, resolved, project);
   ctx.emit(HUB_EVENT_SCOPES.thread, setup.chiefId);
-  if (setup.step === 3) await createInitialProposal(ctx, saved);
+  // W11：第三问答完不再直接查表，而是请总管按项目挑人；总管没能出卡时由 sweepTeamSetup 按规则表兜底。
+  if (setup.step === 3) await startPick(ctx, saved);
+}
+
+/**
+ * 第三问答完：在册没有空位（推荐 0 位）时不必请总管，直接走原来的固定句；
+ * 其余情况请总管挑人。读模型目录在 createInitialProposal 里，这里不用等。
+ */
+async function startPick(ctx: HubContext, setup: TeamSetup): Promise<void> {
+  if (liveBots(ctx).length >= ctx.settings.maxBots) {
+    await createInitialProposal(ctx, setup);
+    return;
+  }
+  requestChiefPick(ctx, setup);
 }
 
 // ---------------------------------------------------------------------------
@@ -301,12 +316,15 @@ function currentAskingSetup(ctx: HubContext, threadId: string): TeamSetup | null
 export function sweepTeamSetup(ctx: HubContext): void {
   for (const setup of ctx.store.table('teamSetups').list(row => row.state === 'asking' && row.proposalId === null && row.answers.notify !== null)) {
     if (inflight.get(ctx)?.has(setup.id)) continue;
+    // W11：正在等总管挑人的，只在该兜底时才按规则表出卡；兜底原因写进结论句。
+    const fallback = isAwaitingPick(setup) ? pickFallbackReason(ctx, setup) : undefined;
+    if (fallback === null) continue;
     // P73r3 S3：有一种卡待确认（约定卡或组队卡）时不补发组队卡；等它确认或撤下后再补。
     if (pendingOwnerConfirmOf(ctx, setup.chiefId) !== null) continue;
     const busy = inflight.get(ctx) ?? new Set<string>();
     inflight.set(ctx, busy);
     busy.add(setup.id);
-    track(ctx, createInitialProposal(ctx, setup).then(() => undefined)
+    track(ctx, createInitialProposal(ctx, setup, fallback === undefined ? {} : { fallback }).then(() => undefined)
       .catch(error => { ctx.logger.error(`三问 ${setup.id} 补生成组队卡失败`, error); })
       .finally(() => { busy.delete(setup.id); }));
   }

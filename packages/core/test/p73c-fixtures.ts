@@ -11,6 +11,8 @@ import type { TeamProposal, TeamSetup } from '../src/model/team-proposal.js';
 import { createBotHome } from '../src/memory/files.js';
 import { botFixture } from './model-fixtures.js';
 import { okData } from './c04-api-fixtures.js';
+import { settleTeamSetup, sweepTeamSetup } from '../src/team/setup.js';
+import { PICK_SUBJECT_PREFIX } from '../src/team/pick-key.js';
 
 export { okData };
 
@@ -58,6 +60,19 @@ export function expectNoModelWork(ctx: TestCtx): void {
   expect(ctx.store.table('wakes').list()).toEqual([]);
 }
 
+/**
+ * W11：三问答完后，除了总管的那一个挑人回合，没有别的模型调用：
+ * 队列为空，唤醒单都是挑人回合，宿主只为它投递。
+ */
+export function expectOnlyPickTurn(ctx: TestCtx): void {
+  expect(ctx.store.table('queue').list()).toEqual([]);
+  const wakes = ctx.store.table('wakes').list();
+  expect(wakes.length).toBeLessThanOrEqual(1);
+  for (const wake of wakes) expect(wake.subjectKey?.startsWith(PICK_SUBJECT_PREFIX)).toBe(true);
+  // 第一回合由宿主建会话时一并投递（createSession），之后的回合才走 deliver；两者合计每个回合至多各一次。
+  expect(modelCalls(ctx).length).toBeLessThanOrEqual(wakes.length * 2);
+}
+
 /** 某个线程里的全部消息，从旧到新。 */
 export function thread(ctx: TestCtx, threadId: string): ThreadMessage[] {
   return ctx.store.log('thread').all().filter(row => row.thread === threadId);
@@ -80,11 +95,30 @@ export async function pick(fix: TeamFix, step: 1 | 2 | 3, choice: string, extra:
   return fix.hub.api.answerTeamQuestion({ setupId: theSetup(fix.ctx).id, step, choice, ...extra });
 }
 
-/** 三问全部点选答完（软件类、没有项目、只在拍板时），得到初始组队卡。 */
+/**
+ * W11：答完第三问后总管的挑人回合没能排上（把排队的挑人候选撤掉），跑一次兜底检查，按规则表出默认推荐。
+ * P73c 这一批测试测的是规则表出卡之后的流程（卡内修改、确认、拒绝……），默认推荐走的正是这条路；
+ * 总管真的挑人的流程在 w11-chief-pick.test.ts。
+ */
+export async function pickFallsBack(fix: TeamFix): Promise<void> {
+  for (const row of fix.ctx.store.table('queue').list(entry => entry.subjectKey.startsWith(PICK_SUBJECT_PREFIX))) {
+    fix.ctx.store.table('queue').remove(row.id);
+  }
+  // 已经投递出去的挑人回合：当作出错结束（假宿主不会真的跑回合）。
+  const now = fix.ctx.clock.now();
+  for (const wake of fix.ctx.store.table('wakes').list(row => row.subjectKey?.startsWith(PICK_SUBJECT_PREFIX) === true && row.endedAt === null)) {
+    fix.ctx.store.table('wakes').patch(wake.id, { status: 'error', endedAt: now, error: '测试：挑人回合没能完成' });
+  }
+  sweepTeamSetup(fix.ctx);
+  await settleTeamSetup(fix.ctx);
+}
+
+/** 三问全部点选答完（软件类、没有项目、只在拍板时），总管没能挑人，得到默认推荐的初始组队卡。 */
 export async function answerAll(fix: TeamFix, work = 'software'): Promise<TeamProposal> {
   okData(await pick(fix, 1, work));
   okData(await pick(fix, 2, 'no'));
   okData(await pick(fix, 3, 'decisions'));
+  await pickFallsBack(fix);
   return theProposal(fix.ctx);
 }
 
