@@ -83,6 +83,22 @@ function activeProjects(ctx: HubContext): Project[] {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/**
+ * 总管在私聊里被叫醒、主人原话里点了某个进行中项目的名字时，中心写一句判断（放进「主人对你说」段）。
+ * 为什么要有：真机实测里主人说「给卡牌馆前端加一个……」，总管却把约定放进了自己负责的另一个项目。
+ * 只认完整项目名（至少 2 个字）；点了多个时都列出，由总管判断；没点名字时返回 null。
+ */
+export function chiefNamedProjectsNote(ctx: HubContext, bot: Bot, entry: Pick<QueueEntry, 'topicId'>, ownerTexts: readonly string[]): string | null {
+  if (bot.role !== 'chief' || entry.topicId) return null;
+  const text = ownerTexts.join('\n');
+  const named = activeProjects(ctx).filter(project => [...project.name.trim()].length >= 2 && text.includes(project.name.trim()));
+  if (named.length === 0) return null;
+  const list = named.slice(0, 3).map(project => `「${clip(project.name, 40)}」（${project.id}）`).join('、');
+  return named.length === 1
+    ? `中心判断：主人原话里点了项目${list}；这件事要提约定时，projectId 填它，不要因为你负责别的项目就放进别的项目。`
+    : `中心判断：主人原话里点了这几个项目：${list}；提约定时按主人说的事属于哪一个来填 projectId。`;
+}
+
 /** 总管不在主题里被叫醒（私聊）时的「进行中的项目」段；没有进行中的项目时返回 null。 */
 export function buildChiefProjectsSection(ctx: HubContext, bot: Bot, entry: Pick<QueueEntry, 'topicId'>): PacketSection | null {
   if (bot.role !== 'chief' || entry.topicId) return null;

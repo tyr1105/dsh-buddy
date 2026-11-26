@@ -114,6 +114,20 @@ describe('W1：主人在项目对话里说话交给总管', () => {
     expect(packet).toContain('在某个进行中的项目上加功能、改东西、补内容，都算属于它');
   });
 
+  it('私聊里主人点了某个进行中项目的名字：「主人对你说」里写明归属；没点名字时不写', async () => {
+    const plain = await setup();
+    wangProject(plain);
+    await ownerSays(plain, plain.chief.id, '在吗');
+    expect(lastPacket(plain, plain.chief)).not.toContain('主人原话里点了');
+    const fix = await setup();
+    const project = wangProject(fix);
+    // 真机实测：主人说「给卡牌馆前端加……」，总管却放进了自己负责的另一个项目。
+    await ownerSays(fix, fix.chief.id, '给官网改版加一个首页轮播图');
+    const packet = lastPacket(fix, fix.chief);
+    expect(packet).toContain(`中心判断：主人原话里点了项目「官网改版」（${project.id}）；这件事要提约定时，projectId 填它`);
+    expect(packet).not.toContain(`「季度战役」（${fix.project.id}）`);
+  });
+
   it('projectId 的参数说明不再限于「你自己负责的」项目', () => {
     const description = AgreementSubmitInputSchema.shape.projectId.description ?? '';
     expect(description).not.toContain('你自己负责');

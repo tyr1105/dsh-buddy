@@ -20,7 +20,7 @@ import { knowledgePacketSection } from '../knowledge/index.js';
 import { buildProjectTasksSection } from './project-tasks.js';
 import { buildProjectContextSection } from './project-context.js';
 import { buildTopicSections } from './topic-section.js';
-import { buildChiefOtherLanesSection, buildChiefProjectsSection, buildConversationProjectSection } from './conversation-section.js';
+import { buildChiefOtherLanesSection, buildChiefProjectsSection, buildConversationProjectSection, chiefNamedProjectsNote } from './conversation-section.js';
 import { packetEvidence } from './evidence.js';
 import { approvalModelSummary } from '../util/owner-text.js';
 import { hasApprovalDecision } from '../util/approval-candidate.js';
@@ -172,6 +172,10 @@ export async function buildWakePacket(ctx: HubContext, rawBot: Bot, rawEntry: Qu
             if (privateOwner)
                 for (const item of questionsWithdrawnBy(ctx, bot.id, privateOwner))
                     lines.push(withdrawnQuestionNote(item.title));
+            // W1：私聊里主人点了某个进行中项目的名字，写明归属，避免总管放进自己负责的别的项目。
+            const named = chiefNamedProjectsNote(ctx, bot, entry, lines);
+            if (named !== null)
+                lines.push(named);
             add('owner', '## 主人对你说（这是主人亲手写的，可以当作主人的要求）', lines.join('\n'));
         }
         add('goals', '## 你的志向与目标', [
