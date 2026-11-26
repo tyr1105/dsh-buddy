@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { agreementCardView } from '../src/api/agreement-views.js';
 import { PROJECT_CONVERSATION_TITLE, ensureProjectConversation, projectConversationOf } from '../src/project/conversation.js';
 import { saveProject } from '../src/project/service.js';
+import { AgreementSubmitInputSchema } from '../src/project/agreement-content.js';
 import { callTool, chiefDrafts, floors, newAgreementArgs, ownerSays, setup, speak, type Fix } from './p72b-fixtures.js';
 import { lastPacket } from './p63-topic-fixtures.js';
 import { okData } from './c04-api-fixtures.js';
@@ -109,6 +110,14 @@ describe('W1：主人在项目对话里说话交给总管', () => {
     expect(packet).toContain(`${project.id}：官网改版｜把官网换成新版式`);
     expect(packet).toContain(`${fix.project.id}：季度战役`);
     expect(packet).not.toContain('## 这个项目（资料');
+    // 真机实测：旧参数说明写「放进你自己负责的进行中项目」，总管认出了归属却不填 projectId，结果新建了项目。
+    expect(packet).toContain('在某个进行中的项目上加功能、改东西、补内容，都算属于它');
+  });
+
+  it('projectId 的参数说明不再限于「你自己负责的」项目', () => {
+    const description = AgreementSubmitInputSchema.shape.projectId.description ?? '';
+    expect(description).not.toContain('你自己负责');
+    expect(description).toContain('任何进行中的项目都可以');
   });
 
   it('员工的唤醒包不带这两段', async () => {

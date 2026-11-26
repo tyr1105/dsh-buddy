@@ -106,7 +106,7 @@ export const AgreementSubmitInputSchema = z.strictObject({
   agreementId: recordId('agr').optional().describe('要修改或撤下的约定 id；新建时省略'),
   mode: z.enum(['draft', 'revise', 'amend', 'withdraw']).optional()
     .describe('draft 新建；revise 待确认时修订，或已固定后重大改动重新请主人确认；amend 已固定后的小改动直接生效；withdraw 撤下待确认的约定。省略时按约定状态取 draft 或 revise。revise 时：没有变的条目逐字照抄上一版：改了字的条目，中心都会列为「暂停，等你确认」，执行者会停下这一条。草图和标题里与这次改动有关的内容一并改。'),
-  projectId: recordId('prj').optional().describe('仅新建时可填：放进你自己负责的进行中项目；省略则为这件事新建项目'),
+  projectId: recordId('prj').optional().describe('仅新建时可填：这件事属于哪个进行中的项目，就填那个项目的编号（见「进行中的项目」，任何进行中的项目都可以，不要求你是成员）；只有哪个都不沾边时才省略，省略就为这件事新建项目。在项目对话里提的约定省略时放进这个项目'),
   title: line(D.TITLE_MAX_CHARS).optional().describe(`约定标题，不超过 ${D.TITLE_MAX_CHARS} 字；新建时必填，修订时不写表示沿用，写了表示改标题（新版本固定后主题的标题随之改）。标题只写这件事是什么，不写人数、日期这类以后可能改的内容。`),
   changeNote: line(D.CHANGE_NOTE_MAX_CHARS).optional().describe(`本版改了什么，一句话，不超过 ${D.CHANGE_NOTE_MAX_CHARS} 字；revise 和 amend 必填；约定各栏和这句话都会显示给主人看，称呼写「你」，不写「主人」`),
   reason: line(D.WITHDRAW_REASON_MAX_CHARS).optional().describe(`撤下的理由，不超过 ${D.WITHDRAW_REASON_MAX_CHARS} 字；withdraw 必填`),
