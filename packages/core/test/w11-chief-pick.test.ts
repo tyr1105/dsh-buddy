@@ -17,6 +17,8 @@ import { PICK_WAIT_TEXT } from '../src/team/pick-request.js';
 import { PICK_FALLBACK_PREFIX } from '../src/team/proposals.js';
 import { settleTeamSetup, sweepTeamSetup } from '../src/team/setup.js';
 import type { Bot } from '../src/model/index.js';
+import { buildCandidate } from '../src/appraisal/think.js';
+import { enqueue } from '../src/scheduler/queue.js';
 import { commitArgs } from './c03-turn-fixtures.js';
 import { okData, pick, teamHub, theProposal, theSetup, thread, type TeamFix } from './p73c-fixtures.js';
 
@@ -80,15 +82,18 @@ describe('总管挑人成功', () => {
       ],
     });
     expect(result).toMatchObject({ ok: true });
-    // 交账前不发卡：卡片跟在总管的回复后面。
-    expect(fix.ctx.store.table('teamProposals').list()[0]!.cardMessageId).toBeNull();
-    await chiefCommits(fix, '我挑了两位：工程师做页面和数据，设计师先出原型。');
+    // 不等交账：调用成功就落结论、发卡，结论由中心按 work 写。
+    const rows = thread(fix.ctx, fix.chief!.id);
+    const card = rows.findIndex(row => row.kind === 'team');
+    expect(card).toBeGreaterThan(0);
+    expect(rows[card - 1]!.text).toBe('我按你的项目挑了 2 位：工程师，搭卡牌馆的列表页和详情页，接入现有卡牌数据；设计师，出收藏页和卡牌详情的页面原型。确认前不会入职，卡上可以换人或去掉。');
+    expect(fix.ctx.store.table('inbox').count(row => row.status === 'open' && row.subjectKey.startsWith('team:'))).toBe(1);
+    await chiefCommits(fix, '有想换的直接在卡上改。');
+    // 交账后不再发第二张卡。
+    expect(thread(fix.ctx, fix.chief!.id).filter(row => row.kind === 'team')).toHaveLength(1);
     const proposal = theProposal(fix.ctx);
     expect(proposal).toMatchObject({ kind: 'initial', state: 'pending', pickedBy: 'chief', wakeId: wake.id });
     expect(theSetup(fix.ctx)).toMatchObject({ state: 'proposed', proposalId: proposal.id });
-    const rows = thread(fix.ctx, fix.chief!.id);
-    const card = rows.findIndex(row => row.kind === 'team');
-    expect(rows[card - 1]!.text).toContain('我挑了两位');
     // 轻档不可用：总管要的轻档被换成标准档。
     expect(proposal.candidates.map(row => [row.templateId, row.mbti, row.modelTier, row.work])).toEqual([
       ['engineer', 'ISTJ', 'standard', '搭卡牌馆的列表页和详情页，接入现有卡牌数据'],
@@ -195,5 +200,48 @@ describe('退回默认推荐', () => {
     await settleTeamSetup(fix.ctx);
     expect(theProposal(fix.ctx).pickedBy).toBe('default');
     expect(thread(fix.ctx, fix.chief!.id).some(row => row.text.startsWith(PICK_FALLBACK_PREFIX('no_card')))).toBe(true);
+  });
+
+  it('挑人回合出错（没出卡）：不排重试，下一次兜底检查立刻出默认推荐', async () => {
+    const fix = await teamHub();
+    await answeredWithWords(fix, CARD_SITE);
+    await fix.hub.onTurnEvent({ type: 'error', sessionId: chiefOf(fix).sessionId!, at: fix.ctx.clock.now(), errorText: '交账格式不对' });
+    expect(fix.ctx.store.table('queue').count(row => row.botId === fix.chief!.id)).toBe(0);
+    sweepTeamSetup(fix.ctx);
+    await settleTeamSetup(fix.ctx);
+    expect(theProposal(fix.ctx).pickedBy).toBe('default');
+    expect(thread(fix.ctx, fix.chief!.id).some(row => row.text.startsWith(PICK_FALLBACK_PREFIX('no_card')))).toBe(true);
+  });
+
+  it('兜底检查不把别的回合的重试当成总管还在挑', async () => {
+    const fix = await teamHub();
+    await answeredWithWords(fix, CARD_SITE);
+    await chiefCommits(fix, '我想一想。');
+    // 一条留在队列里的重试候选（比如更早的回合出错留下的），它不会出这张卡。
+    enqueue(fix.ctx, buildCandidate(fix.ctx, { botId: fix.chief!.id, kind: 'retry', score: fix.ctx.settings.c02.deadmanRetryScore,
+      evidence: [], summary: '上轮出错', ownerSummary: '稍后重试', notBefore: fix.ctx.clock.now() + 60_000, now: fix.ctx.clock.now() }));
+    expect(fix.ctx.store.table('queue').count(row => row.botId === fix.chief!.id && row.reason.kind === 'retry')).toBe(1);
+    sweepTeamSetup(fix.ctx);
+    await settleTeamSetup(fix.ctx);
+    expect(theProposal(fix.ctx).pickedBy).toBe('default');
+  });
+});
+
+describe('总管已出卡但交账失败', () => {
+  it('卡片和结论已经发出；回合出错后不重试，也不再出默认卡', async () => {
+    const fix = await teamHub();
+    await answeredWithWords(fix, CARD_SITE);
+    const result = await callTool(fix, 'hub_team_propose', { mode: 'initial', candidates: [{ template: '研究员', work: '整理写作素材和选题' }] });
+    expect(result).toMatchObject({ ok: true });
+    await fix.hub.onTurnEvent({ type: 'error', sessionId: chiefOf(fix).sessionId!, at: fix.ctx.clock.now(), errorText: '交账格式不对' });
+    expect(fix.ctx.store.table('queue').count(row => row.botId === fix.chief!.id)).toBe(0);
+    sweepTeamSetup(fix.ctx);
+    await settleTeamSetup(fix.ctx);
+    const proposals = fix.ctx.store.table('teamProposals').list();
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.pickedBy).toBe('chief');
+    const rows = thread(fix.ctx, fix.chief!.id);
+    expect(rows.filter(item => item.kind === 'team')).toHaveLength(1);
+    expect(rows.some(item => item.text.startsWith('我按你的项目挑了 1 位：研究员，整理写作素材和选题'))).toBe(true);
   });
 });

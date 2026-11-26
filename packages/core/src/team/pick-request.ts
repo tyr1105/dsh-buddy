@@ -65,7 +65,8 @@ export function pickFallbackReason(ctx: HubContext, setup: TeamSetup): 'timeout'
   const queued = ctx.store.table('queue').list(row => row.subjectKey === key);
   // 主人在等的时候又跟总管说了话，那条候选可能和挑人候选合并、事项键换成主人消息的；
   // 唤醒包里照样有「等你挑人」，所以总管名下任何在排队或在进行的回合都算还有机会出卡。
-  const chiefBusy = ctx.store.table('queue').count(row => row.botId === setup.chiefId) > 0
+  // 重试候选不算：挑人回合本身不重试（turn/events.ts），别的回合的重试不会出这张卡，等它只会拖到超时。
+  const chiefBusy = ctx.store.table('queue').count(row => row.botId === setup.chiefId && row.reason.kind !== 'retry') > 0
     || ctx.store.table('wakes').count(row => row.botId === setup.chiefId && isOpenWake(row) && row.startedAt >= setup.pickRequestedAt!) > 0;
   if (ctx.clock.now() - setup.pickRequestedAt! >= D.PICK_TIMEOUT_MS) {
     for (const row of queued) ctx.store.table('queue').remove(row.id);

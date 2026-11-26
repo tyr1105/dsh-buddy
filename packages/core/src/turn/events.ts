@@ -28,6 +28,7 @@ import { flushJobHooks } from '../job/agreement-hooks.js';
 import { attachMemoryReply } from '../memory/service.js';
 import { ensureNotesShown } from '../memory/note-reply.js';
 import { addSkillTurnTokens, onSkillTurnEnd } from '../skill/run.js';
+import { isPickTurn } from '../team/pick-key.js';
 import { postLearnCards } from '../skill/learn-card.js';
 import { parseSkillKey } from '../skill/keys.js';
 /** 清理的只可能是本次放行前的旧候选，回合进行期间主人新发的消息必须保留。 */
@@ -59,6 +60,8 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
     // P76r2（R2、R3）：技能类回合（复盘、核对、改写、整理、学习）不排通用的重试，也不排额度打断之后的重排：
     // 技能记录自己的补排与兜底（skill/run.ts）负责，否则会多出一个没有技能段、不受任何上限约束的普通回合，学习还会多一条主人一侧的候选。
     const skillWake = parseSkillKey(wake.subjectKey ?? null) !== null;
+    // W11：挑人回合不重试，失败后由三问的兜底检查直接出默认推荐（重试只会在默认卡发出后再花一次额度）。
+    const pickWake = isPickTurn(wake);
     try {
         await verifyProtectedFiles(ctx, wake.botId);
     }
@@ -91,7 +94,7 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
             activityText: waiting ? '在等主人回复' : blocked ? blockedActivityText(commit.blocker, wake.jobId) : '继续关注变化',
             lastThinkAt: bot.lastThinkAt === null || !wake.commitId ? at : bot.lastThinkAt, updatedAt: at });
         // P63：主题回合失败不再单独重试，下面按「这一棒跳过」推进讨论，重试只会隔一会儿插错话。
-        if (errorText && options.noRetry !== true && bot.retryAt !== null && !wake.topicId && !skillWake)
+        if (errorText && options.noRetry !== true && bot.retryAt !== null && !wake.topicId && !skillWake && !pickWake)
             enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'retry',
                 score: ctx.settings.c02.deadmanRetryScore, evidence: [wake.id], summary: `上轮出错，按退避重试：${errorText}`,
                 ownerSummary: '上轮处理出错，稍后重新尝试', notBefore: bot.retryAt, now: at,
@@ -109,7 +112,7 @@ export async function finishTurn(ctx: HubContext, wakeId: string, at: number, st
     // P76r2（R6）：总管替主人派出的活（chiefDispatch）属于主人交代的事，被额度打断同样重排（它的感知在投递时已被消费，不重排就没人再叫醒）。
     // P76r2（R2、R3）：技能类回合除外（见上面 skillWake），由技能记录补排。
     const ownerSideWake = (wake.ownerInitiated && !wake.ownerDirect) || Boolean(wake.topicId) || wake.chiefDispatch === true;
-    if (failure?.action === 'quota' && !skillWake && (wake.jobId || ownerSideWake) && ['active', 'probation'].includes(bot.lifecycle)) {
+    if (failure?.action === 'quota' && !skillWake && !pickWake && (wake.jobId || ownerSideWake) && ['active', 'probation'].includes(bot.lifecycle)) {
         const redUntil = ctx.store.table('quota').get('quota')?.redUntil ?? at;
         enqueue(ctx, buildCandidate(ctx, { botId: bot.id, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
             evidence: [wake.id], summary: '额度用完，恢复后继续上一轮的事', ownerSummary: '在等额度恢复后继续', notBefore: redUntil, now: at,

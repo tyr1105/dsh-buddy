@@ -28,6 +28,7 @@ import { sweepJobOutcomes } from '../job/after-accept.js';
 import { refundSkillTurn, sweepSkillRuns } from '../skill/run.js';
 import { sweepWeeklyTidy } from '../skill/tidy.js';
 import { parseSkillKey } from '../skill/keys.js';
+import { isPickTurn } from '../team/pick-key.js';
 
 // 已清理日期仅作加速；新实例首次仍读取持久化审计，成功后才缓存。
 const prunedDays = new WeakMap<HubContext, string>();
@@ -69,7 +70,8 @@ async function checkHealth(ctx: HubContext, now: number, hooks: TickHooks): Prom
           if (bot.activity === 'thinking') ctx.store.table('bots').patch(bot.id, { activity: 'watching', activityText: '投递失败，等待重排', updatedAt: now });
           // 主题回合不重试：这一棒已经跳过，讨论继续往下走，隔一会儿再叫它只会插错话。
           // P76r2（R2）：技能类回合（含学习）不排通用重试：refundSkillTurn 已把参与者改回排队中，技能候选还在队列里，由技能记录的兜底负责。
-          if (!wake.topicId && parseSkillKey(wake.subjectKey ?? null) === null) hooks.offer(buildCandidate(ctx, { botId: wake.botId, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
+          // W11：挑人回合同样不排重试，由三问兜底出默认推荐。
+          if (!wake.topicId && parseSkillKey(wake.subjectKey ?? null) === null && !isPickTurn(wake)) hooks.offer(buildCandidate(ctx, { botId: wake.botId, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
             evidence: [wake.id], summary: error, ownerSummary: '上次唤醒没有送达，稍后重新尝试', notBefore: result.retryAt!, now,
             // P74c、P76r1：重试沿用原回合的归属（你发起、总管派出、主题、事情编号）。
             ...retryCarry(wake, bot.role) }));

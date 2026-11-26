@@ -47,7 +47,7 @@ export const HubTeamProposeInputSchema = z.strictObject({
 });
 
 /** 工具说明：模型看到的全部使用规则。 */
-const DESCRIPTION = '（仅总管）推荐新员工，或修改、撤下待确认的组队卡。只能在主人发话、确认或回答叫醒的回合里用。propose：约定已固定、在岗员工里缺少需要的角色、而且以后还会反复用到时，推荐一位：template 写模板名即可（唤醒包「可推荐的模板」里的名字），agreementId 写这份约定，needReason 写这件事为什么需要这个角色，residentReason 写为什么值得常驻；卡片在你交账后发给主人，确认前不要把这件事交给任何人。revise：主人要改卡上某位的员工说明或换成别的模板时，proposalId 写卡片编号，name 写卡上的名字，brief 写完整的员工说明（整段替换），或 template 写新模板名。withdraw：proposalId 写卡片编号，reason 写原因。一句话用一次：同一条主人消息只能产生一张组队卡，也只能修改同一张卡一次。initial：只在唤醒包「组队」段写着「等你挑人」时用一次，按主人的原话和项目背景，从可推荐的模板里挑 1 到 3 位最需要的人，candidates 每位写 template 和 work（他在这个项目里具体做什么）；模板只是起点，可以按项目调整 name、brief（员工说明）、mbti、modelTier、skills，执行风格和红线改不了；宁少勿多，用不上的角色不要凑数。你不能替主人确认入职。';
+const DESCRIPTION = '（仅总管）推荐新员工，或修改、撤下待确认的组队卡。只能在主人发话、确认或回答叫醒的回合里用。propose：约定已固定、在岗员工里缺少需要的角色、而且以后还会反复用到时，推荐一位：template 写模板名即可（唤醒包「可推荐的模板」里的名字），agreementId 写这份约定，needReason 写这件事为什么需要这个角色，residentReason 写为什么值得常驻；卡片在你交账后发给主人，确认前不要把这件事交给任何人。revise：主人要改卡上某位的员工说明或换成别的模板时，proposalId 写卡片编号，name 写卡上的名字，brief 写完整的员工说明（整段替换），或 template 写新模板名。withdraw：proposalId 写卡片编号，reason 写原因。一句话用一次：同一条主人消息只能产生一张组队卡，也只能修改同一张卡一次。initial：只在唤醒包「组队」段写着「等你挑人」时用一次，按主人的原话和项目背景，从可推荐的模板里挑 1 到 3 位最需要的人，candidates 每位写 template 和 work（他在这个项目里具体做什么）；模板只是起点，可以按项目调整 name、brief（员工说明）、mbti、modelTier、skills，执行风格和红线改不了；宁少勿多，用不上的角色不要凑数；initial 的卡片在调用成功时立刻发出，卡前的结论由中心按 work 写好，reply 只补一句。你不能替主人确认入职。';
 
 export const hubTeamPropose = defineTool('hub_team_propose', DESCRIPTION, HubTeamProposeInputSchema, 'L1', async (ctx, tc, args) => {
   // 取本回合的唤醒单：宿主给了 wakeId 就用它；没给就找这个员工当前打开的唤醒单（口径与 hub_agreement_submit 一致）。

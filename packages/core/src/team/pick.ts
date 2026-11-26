@@ -19,6 +19,8 @@ import type { MbtiType } from '../model/enums.js';
 import { PRESET_SKILLS } from '../config/preset-skills.js';
 import type { WakeTicket } from '../model/wake.js';
 import { writeOutreachAudit } from '../outreach/audit.js';
+import { postThread } from '../outreach/thread.js';
+import { postTeamCard } from './cards.js';
 import { newId } from '../util/ids.js';
 import { assertChiefOwnerTurn, assertTemplateFree, resolveTemplate, tierFor } from './addition.js';
 import { pendingOwnerConfirmOf } from './owner-confirm.js';
@@ -32,7 +34,7 @@ import { awaitingPickOf } from './pick-key.js';
 export { awaitingPickOf, isAwaitingPick, isPickTurn, pickSubjectKey, PICK_SUBJECT_PREFIX } from './pick-key.js';
 
 /** 工具成功后的回执（给总管看）。 */
-export const PICK_DONE_TEXT = '组队卡已记下，交账后发给主人。用一两句话告诉主人你挑了谁、各做什么；确认前不会入职。';
+export const PICK_DONE_TEXT = '组队卡已经发给主人了，卡前也替你写好了挑了谁、各做什么。reply 只写一句短话（比如哪里可以再商量），不要重复卡上的内容；这一回合到此为止。';
 
 /** 总管挑人时给的一位：模板、在这个项目里做什么，以及可选的按项目调整。 */
 export interface InitialPickArg {
@@ -62,7 +64,9 @@ function resolveSkills(refs: readonly string[]): string[] {
  * 全部校验在写入之前做完：调用者是总管、回合由主人发起、确实在等挑人、人数 1 到上限、
  * 模板存在且不是总管、同一张卡不重复、不与在册员工冲突、名字不重、技能存在。
  * 总管可以按项目调整名字、员工说明、性格、模型档位、技能；执行风格、红线、全队一位这些仍取模板，改不了。
- * 轻档不可用时一律换成标准档。卡片和挑人回合的回复一起，在交账后发出（postTeamCardsOfWake）。
+ * 轻档不可用时一律换成标准档。
+ * 写表后立刻落一句固定的结论（挑了谁、各做什么）并发卡，不等交账：
+ * 实测交账要多等十秒左右，而且交账失败时卡片会没有结论、还会多跑一次重试。总管的 reply 只补一句。
  */
 export async function runInitialPick(ctx: HubContext, botId: string, wake: WakeTicket, picks: readonly InitialPickArg[] | undefined): Promise<string> {
   assertChiefOwnerTurn(ctx, botId, wake);
@@ -121,7 +125,16 @@ export async function runInitialPick(ctx: HubContext, botId: string, wake: WakeT
   ctx.store.table('teamProposals').put(proposal);
   saveSetup(ctx, setup, { state: 'proposed', proposalId: proposal.id });
   writeOutreachAudit(ctx, 'team_pick', { proposalId: proposal.id, setupId: setup.id, templateIds: templates.map(t => t.id) }, botId);
+  postThread(ctx, { thread: botId, from: botId, kind: 'chat', text: pickConclusion(candidates) });
+  postTeamCard(ctx, proposal);
   setChiefActivityText(ctx, botId, CHIEF_WAITING_TEXT);
+  ctx.emit(HUB_EVENT_SCOPES.thread, botId);
   ctx.emit(HUB_EVENT_SCOPES.bot, botId);
   return PICK_DONE_TEXT;
+}
+
+/** 发卡前总管落的一句结论：挑了谁、各做什么（由代码按卡片内容生成，不靠模型回复）。 */
+export function pickConclusion(candidates: readonly TeamCandidate[]): string {
+  const list = candidates.map(candidate => `${candidate.name}，${candidate.work ?? ''}`.replace(/，$/, ''));
+  return `我按你的项目挑了 ${candidates.length} 位：${list.join('；')}。确认前不会入职，卡上可以换人或去掉。`;
 }

@@ -9,6 +9,7 @@ import { buildSnapshot, evaluateGates } from '../scheduler/gates.js';
 import { nextLocalTime } from '../util/time.js';
 import { retryCarry } from '../scheduler/retry.js';
 import { parseSkillKey } from '../skill/keys.js';
+import { isPickTurn } from '../team/pick-key.js';
 import { raiseAlert } from './alerts.js';
 
 /** 选最早的下一次思考或紧急变化再加宽限，形成掉线检测截止点。 */
@@ -65,7 +66,7 @@ export function checkDeadman(ctx: HubContext, now: number): Candidate[] {
     // 证据第一项放原唤醒单的编号：原回合真正投递过时，这个重试不另占当天名额（quota/usage.ts 的 selfWorkUsageToday）。
     // 没有原唤醒单（没有回合卡住，只是该动没动）时不带，照旧按常规规则算。技能类唤醒单也不带：技能类回合的补排由技能记录负责（R2）。
     const original = orphan ? open.find(w => w.status === 'delivering' && now - w.startedAt > ctx.settings.c02.deliveryTimeoutMs) : undefined;
-    const carried = original !== undefined && parseSkillKey(original.subjectKey ?? null) === null;
+    const carried = original !== undefined && parseSkillKey(original.subjectKey ?? null) === null && !isPickTurn(original);
     result.push(buildCandidate(ctx, { botId: bot.id, kind: 'retry', score: ctx.settings.c02.deadmanRetryScore,
       summary: `${bot.name} 超过应思考时刻，检查是否掉线`, ownerSummary: '超过约定时间没有响应，重新唤醒',
       evidence: carried ? [original!.id, alert.id] : [alert.id], subjectKey: `deadman:${bot.id}`, now,
