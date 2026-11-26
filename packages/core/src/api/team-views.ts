@@ -178,6 +178,8 @@ function historyOf(proposal: TeamProposal, candidate: TeamCandidate, templates: 
 function adjustedItems(candidate: TeamCandidate, template: BotTemplate | undefined, lightAvailable: boolean): string[] {
   if (template === undefined || candidate.swappedFrom !== null || candidate.work == null) return [];
   const items: string[] = [];
+  // 名字：模板名或重名时自动加的序号（工程师2）不算改名。
+  if (candidate.suggested.name !== template.name && !new RegExp(`^${template.name}\\d+$`).test(candidate.suggested.name)) items.push('名字');
   if ((candidate.suggested.brief ?? null) !== null) items.push('员工说明');
   if (candidate.suggested.mbti !== template.mbti) items.push('性格');
   const wanted = defaultTierFor(template.id);

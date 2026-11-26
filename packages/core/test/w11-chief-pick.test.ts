@@ -78,7 +78,7 @@ describe('总管挑人成功', () => {
       mode: 'initial',
       candidates: [
         { template: '工程师', work: '搭卡牌馆的列表页和详情页，接入现有卡牌数据', brief, skills: ['build-self-check'] },
-        { template: '设计师', work: '出收藏页和卡牌详情的页面原型', mbti: 'INFP', modelTier: 'light' },
+        { template: '设计师', work: '出收藏页和卡牌详情的页面原型', name: '原型师', mbti: 'INFP', modelTier: 'light' },
       ],
     });
     expect(result).toMatchObject({ ok: true });
@@ -86,10 +86,11 @@ describe('总管挑人成功', () => {
     const rows = thread(fix.ctx, fix.chief!.id);
     const card = rows.findIndex(row => row.kind === 'team');
     expect(card).toBeGreaterThan(0);
-    expect(rows[card - 1]!.text).toBe('我按你的项目挑了 2 位：工程师，搭卡牌馆的列表页和详情页，接入现有卡牌数据；设计师，出收藏页和卡牌详情的页面原型。确认前不会入职，卡上可以换人或去掉。');
+    expect(rows[card - 1]!.text).toBe('我按你的项目挑了 2 位：工程师，搭卡牌馆的列表页和详情页，接入现有卡牌数据；原型师，出收藏页和卡牌详情的页面原型。确认前不会入职，卡上可以换人或去掉。');
     expect(fix.ctx.store.table('inbox').count(row => row.status === 'open' && row.subjectKey.startsWith('team:'))).toBe(1);
     await chiefCommits(fix, '有想换的直接在卡上改。');
-    // 交账后不再发第二张卡。
+    // 交账后不再发第二张卡；总管的 reply 不再落（结论已经说过），也没有「机器人没有回复」。
+    expect(thread(fix.ctx, fix.chief!.id).some(row => row.text === '有想换的直接在卡上改。' || row.text === '机器人没有回复')).toBe(false);
     expect(thread(fix.ctx, fix.chief!.id).filter(row => row.kind === 'team')).toHaveLength(1);
     const proposal = theProposal(fix.ctx);
     expect(proposal).toMatchObject({ kind: 'initial', state: 'pending', pickedBy: 'chief', wakeId: wake.id });
@@ -104,12 +105,12 @@ describe('总管挑人成功', () => {
     expect(view.sourceNote).toBeNull();
     expect(view.candidates.map(row => [row.work, row.adjusted, row.briefChanged])).toEqual([
       ['搭卡牌馆的列表页和详情页，接入现有卡牌数据', ['员工说明', '技能'], false],
-      ['出收藏页和卡牌详情的页面原型', ['性格'], false],
+      ['出收藏页和卡牌详情的页面原型', ['名字', '性格'], false],
     ]);
 
     okData(await fix.hub.api.confirmTeamProposal({ proposalId: proposal.id, rev: proposal.rev }));
     const engineer = fix.ctx.store.table('bots').list(bot => bot.name === '工程师')[0]!;
-    const designer = fix.ctx.store.table('bots').list(bot => bot.name === '设计师')[0]!;
+    const designer = fix.ctx.store.table('bots').list(bot => bot.name === '原型师')[0]!;
     expect(engineer.presetSkillIds).toEqual(['build-self-check']);
     expect(botMbti(fix.ctx, designer.id)).toBe('INFP');
     expect(engineer.brief).toBe(brief);

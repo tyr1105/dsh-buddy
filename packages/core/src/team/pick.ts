@@ -34,7 +34,7 @@ import { awaitingPickOf } from './pick-key.js';
 export { awaitingPickOf, isAwaitingPick, isPickTurn, pickSubjectKey, PICK_SUBJECT_PREFIX } from './pick-key.js';
 
 /** 工具成功后的回执（给总管看）。 */
-export const PICK_DONE_TEXT = '组队卡已经发给主人了，卡前也替你写好了挑了谁、各做什么。reply 只写一句短话（比如哪里可以再商量），不要重复卡上的内容；这一回合到此为止。';
+export const PICK_DONE_TEXT = '组队卡已经发给主人了，卡前也替你写好了挑了谁、各做什么。这一回合到此为止，reply 不会再发给主人，写一句「已出卡」即可。';
 
 /** 总管挑人时给的一位：模板、在这个项目里做什么，以及可选的按项目调整。 */
 export interface InitialPickArg {

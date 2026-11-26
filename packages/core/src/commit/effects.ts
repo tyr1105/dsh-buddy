@@ -11,6 +11,7 @@ import { personalityBehavior, personalityReport } from '../personality/behavior.
 import { writeOutreachAudit } from '../outreach/audit.js';
 import { postAgreementCards } from '../project/agreement-cards.js';
 import { postTeamCardsOfWake } from '../team/cards.js';
+import { isPickTurn } from '../team/pick-key.js';
 import { eventsOf } from '../job/store.js';
 import { attachMemoryReply } from '../memory/service.js';
 import { parseSkillKey } from '../skill/keys.js';
@@ -68,6 +69,10 @@ export async function routeCommit(ctx: HubContext, commit: Commit, wake: WakeTic
     if (job && reply !== null && eventsOf(ctx, job.id).some(event => event.actor === botId && event.at >= wake.startedAt
         && ['submitted', 'reviewed', 'answered', 'forwarded', 'escalated', 'asked'].includes(event.kind)))
         reply = null;
+    // W11：挑人回合里总管已经出了组队卡，中心在卡前替它落了结论（挑了谁、各做什么），reply 不再落，免得主人连看两句同样的话。
+    const pickedHere = isPickTurn(wake) && ctx.store.table('teamProposals').count(row => row.wakeId === wake.id && row.pickedBy === 'chief') > 0;
+    if (pickedHere)
+        reply = null;
     // P76h：交账不再推送（员工提问、目标验收提问、汇报都只落线程和「待你处理」）；goalQuestions 保留为参数，调用方不用改。
     void goalQuestions;
     // 执行链回合：用 work 类型（折叠进「工作往来」），refId 是交账 id（视图据此写「谁 → 谁」）；不出现「机器人没有回复」。
@@ -87,7 +92,7 @@ export async function routeCommit(ctx: HubContext, commit: Commit, wake: WakeTic
             ctx.logger.error(`「已记住」挂靠失败，交账 ${commit.id} 已保留`, error);
         }
     }
-    else if (wake.reason.kind === 'owner_message' && !wake.ownerDirect)
+    else if (wake.reason.kind === 'owner_message' && !wake.ownerDirect && !pickedHere)
         postThread(ctx, { thread, from: 'hub', kind: 'system', text: '机器人没有回复', refId: commit.id });
     // P75i：总管这一回合请主人选会话（teach）建了「待你处理」的条目时，回复落下之后紧跟着在总管私聊落一张提问卡；
     // 没有回复时也落。出错只记日志（回合结束时 turn/events.ts 还会检查一次）。
